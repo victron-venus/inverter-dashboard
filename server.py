@@ -182,12 +182,12 @@ def get_dashboard_html() -> str:
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
     <style>
         :root {
-            --bg-light: #f5f5f5; --bg-card: #ffffff; --border: #e0e0e0;
-            --text: #333333; --text-dim: #666666; --accent: #00a080;
-            --solar: #e67e00; --grid: #3a7abd; --battery: #5cb318; --consumption: #d9534f;
+            --bg-dark: #0a0a0a; --bg-card: #151515; --border: #2a2a2a;
+            --text: #e0e0e0; --text-dim: #666; --accent: #00d4aa;
+            --solar: #f5a623; --grid: #4a90d9; --battery: #7ed321; --consumption: #e74c3c;
         }
-        body { background: var(--bg-light); color: var(--text); font-family: 'Segoe UI', sans-serif; }
-        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        body { background: var(--bg-dark); color: var(--text); font-family: 'Segoe UI', sans-serif; }
+        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
         .card-header { background: transparent; border-bottom: 1px solid var(--border); font-weight: 600; text-transform: uppercase; font-size: 0.7rem; color: var(--text-dim); padding: 6px 12px; }
         .card-body { padding: 8px 12px; }
         .stat-value { font-size: 1.6rem; font-weight: 700; line-height: 1; }
@@ -195,16 +195,30 @@ def get_dashboard_html() -> str:
         .stat-sub { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
         .toggle-btn { cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 0.45rem; font-weight: 600; border: 1px solid var(--border); transition: all 0.15s; display: inline-block; margin: 1px; }
         .toggle-btn.on { background: #2e7d32; border-color: #4caf50; color: #fff; }
-        .toggle-btn.off { background: #f0f0f0; color: #999; border-color: #ddd; }
-        .toggle-btn:hover { transform: scale(1.02); filter: brightness(0.95); }
+        .toggle-btn.off { background: #1a1a1a; color: #555; }
+        .toggle-btn:hover { transform: scale(1.02); filter: brightness(1.1); }
         .text-solar { color: var(--solar); } .text-grid { color: var(--grid); } .text-battery { color: var(--battery); } .text-consumption { color: var(--consumption); } .text-accent { color: var(--accent); }
-        .daily-stats { font-size: 0.75rem; color: var(--text-dim); padding: 8px 12px; background: #fff; border: 1px solid var(--border); border-radius: 6px; font-family: monospace; }
+        .daily-stats { font-size: 0.75rem; color: var(--text-dim); padding: 8px 12px; background: #0d0d0d; border-radius: 6px; font-family: monospace; }
+        .daily-stats .highlight { color: var(--solar); }
+        .daily-stats .money { color: #4caf50; }
+        .daily-stats .dim { color: #555; }
+        .daily-stats .detail { color: #888; font-size: 0.7rem; }
         .chart-wrap { height: 200px; }
         .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
         .status-dot.online { background: #4caf50; } .status-dot.offline { background: #f44336; }
         .ws-status { position: fixed; top: 10px; right: 10px; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; }
         .ws-status.connected { background: #2e7d32; color: #fff; }
         .ws-status.disconnected { background: #c62828; color: #fff; }
+        #console { font-family: 'JetBrains Mono', monospace; font-size: 0.45rem; background: #000; color: #0f0; padding: 6px; height: 180px; overflow-y: auto; border-radius: 6px; }
+        /* Light theme */
+        body.light {
+            --bg-dark: #f5f5f5; --bg-card: #ffffff; --border: #ddd;
+            --text: #222; --text-dim: #555;
+        }
+        body.light .card { box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        body.light #console { background: #f0f0f0; color: #000; }
+        body.light .daily-stats { background: #e8e8e8; }
+        body.light .toggle-btn.off { background: #ddd; color: #666; }
     </style>
 </head>
 <body>
@@ -229,6 +243,11 @@ def get_dashboard_html() -> str:
                      class="toggle-btn" :class="val ? 'on' : 'off'"
                      @click="send('toggle', {entity: 'input_boolean.' + key})">
                     {{ formatKey(key) }}
+                </div>
+                <div class="ms-auto">
+                    <div class="toggle-btn" @click="toggleTheme" id="theme-btn">
+                        <i class="fas" :class="isDark ? 'fa-sun' : 'fa-moon'"></i>
+                    </div>
                 </div>
             </div>
         </div>
@@ -352,10 +371,22 @@ const { createApp, ref, computed, onMounted, onUnmounted, watch, nextTick } = Vu
 
 createApp({
     setup() {
-        const state = ref({booleans: {}, features: {}, limits: {min: -2300, max: 2250}, console: []});
+        const state = ref({booleans: {}, features: {}, limits: {min: -2300, max: 2250}, console: [], daily_stats: {}});
         const wsConnected = ref(false);
         const mqttConnected = ref(false);
         const chartEl = ref(null);
+        const isDark = ref(localStorage.getItem('theme') !== 'light');
+        
+        function toggleTheme() {
+            isDark.value = !isDark.value;
+            document.body.classList.toggle('light', !isDark.value);
+            localStorage.setItem('theme', isDark.value ? 'dark' : 'light');
+        }
+        
+        // Restore theme on load
+        if (!isDark.value) {
+            document.body.classList.add('light');
+        }
         let ws = null;
         let chart = null;
         let reconnectTimer = null;
@@ -458,40 +489,37 @@ createApp({
         
         const dailyStatsHtml = computed(() => {
             const ds = state.value.daily_stats || {};
-            const s = state.value;
             
             const prod = (ds.produced_today || 0).toFixed(2);
             const dollars = (ds.produced_dollars || 0).toFixed(2);
             const grid = (ds.grid_kwh || 0).toFixed(2);
-            const gridDollars = (ds.grid_dollars || 0).toFixed(2);
+            const gridCost = (parseFloat(grid) * 0.31).toFixed(2);
             
-            // Solar breakdown: mppt + tasmota with individual values
-            const mpptKwh = (ds.mppt_kwh || []).map(v => v.toFixed(2) + 'kW');
-            const tasmotaKwh = (ds.tasmota_kwh || []).map(v => v.toFixed(2) + 'kW');
-            const mpptDollars = (ds.mppt_dollars || []).map(v => v.toFixed(2));
-            const tasmotaDollars = (ds.tasmota_dollars || []).map(v => v.toFixed(2));
+            // Battery stats (use original field names from inverter-control)
+            const batIn = (ds.battery_in || 0).toFixed(2);
+            const batOut = (ds.battery_out || 0).toFixed(2);
+            const batInY = (ds.battery_in_yesterday || 0).toFixed(2);
+            const batOutY = (ds.battery_out_yesterday || 0).toFixed(2);
+            const batDelta = (parseFloat(batIn) - parseFloat(batOut)).toFixed(2);
+            const batDeltaY = (parseFloat(batInY) - parseFloat(batOutY)).toFixed(2);
             
-            let solarBreakdown = '';
-            if (mpptKwh.length || tasmotaKwh.length) {
-                const allKwh = [...mpptKwh, ...tasmotaKwh].join('+');
-                const allDollars = [...mpptDollars, ...tasmotaDollars].join('+');
-                solarBreakdown = ` ${allKwh}(${allDollars})`;
-            }
+            // Solar breakdown: tasmota + mppt individual
+            const tasmotaDaily = ds.tasmota_daily || [];
+            const mpptDaily = ds.mppt_daily || [];
+            const pvTotalDaily = ds.pv_total_daily || 0;
             
-            // Battery stats
-            const battIn = (ds.battery_in_kwh || 0).toFixed(2);
-            const battInDollars = (ds.battery_in_dollars || 0).toFixed(2);
-            const battOut = (ds.battery_out_kwh || 0).toFixed(2);
-            const battOutDollars = (ds.battery_out_dollars || 0).toFixed(2);
-            const battDelta = (ds.battery_delta_kwh || 0).toFixed(2);
-            const battDeltaDollars = (ds.battery_delta_dollars || 0).toFixed(2);
+            let solarParts = [];
+            tasmotaDaily.forEach(v => { if (v > 0) solarParts.push(v.toFixed(2) + 'kW'); });
+            const mpptDailyStr = mpptDaily.map(v => v.toFixed(2)).join('+');
+            solarParts.push(pvTotalDaily.toFixed(2) + 'kW(' + mpptDailyStr + ')');
+            const solarDetailStr = `<span class="detail">${solarParts.join('+')}</span>`;
             
-            let result = `<span style="color:#e67e00">☀️ ${prod}kWh${solarBreakdown}</span> <span style="color:#5cb318">($${dollars})</span>`;
-            result += ` | Grid: ${grid}kWh <span style="color:#d9534f">($${gridDollars})</span>`;
-            
-            if (ds.battery_in_kwh !== undefined) {
-                result += ` | 🔋 In: ${battIn}kWh (${battInDollars}), Out: ${battOut}kWh (${battOutDollars}); Δ: ${battDelta}kWh (${battDeltaDollars})`;
-            }
+            let result = `<span class="highlight">☀️ ${prod}kWh</span> ${solarDetailStr} `;
+            result += `<span class="money">($${dollars})</span> | `;
+            result += `Grid: ${grid}kWh <span class="money">($${gridCost})</span> | `;
+            result += `🔋 In: ${batIn}kWh <span class="dim">(${batInY})</span>, `;
+            result += `Out: ${batOut}kWh <span class="dim">(${batOutY})</span>; `;
+            result += `Δ: ${batDelta}kWh <span class="dim">(${batDeltaY})</span>`;
             
             return result;
         });
@@ -540,9 +568,9 @@ createApp({
         });
         
         return {
-            state, wsConnected, mqttConnected, chartEl,
+            state, wsConnected, mqttConnected, chartEl, isDark,
             essClass, essText, solarDetail, evCharging, evPower, sortedLoads, dailyStatsHtml, batteryIndividual,
-            send, formatPower, formatKey, formatUptime
+            send, formatPower, formatKey, formatUptime, toggleTheme
         };
     }
 }).mount('#app');
