@@ -16,6 +16,22 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+
+  # Watchtower: Auto-updates containers when new images are available
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=3600
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_INCLUDE_RESTARTING=true
+      - TZ=America/Los_Angeles
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"

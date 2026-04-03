@@ -25,6 +25,16 @@ MQTT_HOST = os.getenv('MQTT_HOST', '192.168.160.150')
 MQTT_PORT = int(os.getenv('MQTT_PORT', '1883'))
 WEB_PORT = int(os.getenv('WEB_PORT', '8080'))
 
+# Version (read from VERSION file or fallback)
+def get_version():
+    try:
+        with open('VERSION', 'r') as f:
+            return f.read().strip()
+    except:
+        return 'dev'
+
+VERSION = get_version()
+
 # State
 current_state: Dict[str, Any] = {}
 console_lines: list = []
@@ -164,7 +174,12 @@ async def dashboard():
 @app.get("/api/state")
 async def api_state():
     """REST fallback"""
-    return {**current_state, 'console': console_lines}
+    return {**current_state, 'console': console_lines, 'dashboard_version': VERSION}
+
+@app.get("/api/version")
+async def api_version():
+    """Get dashboard version"""
+    return {'version': VERSION}
 
 
 def get_dashboard_html() -> str:
@@ -363,6 +378,7 @@ def get_dashboard_html() -> str:
         HA: {{ state.ha_connected ? 'Connected' : 'Disconnected' }}
         &nbsp;|&nbsp; Uptime: {{ formatUptime(state.uptime || 0) }}
         &nbsp;|&nbsp; MQTT: {{ mqttConnected ? 'OK' : 'Disconnected' }}
+        &nbsp;|&nbsp; Dashboard: v{{ state.dashboard_version || '?' }}
     </div>
 </div>
 
