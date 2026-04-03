@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  inverter-dashboard:
+    image: vmedvedev/inverter-dashboard:latest
+    container_name: inverter-dashboard
+    ports:
+      - "8080:8080"
+    environment:
+      - MQTT_HOST=${MQTT_HOST:-192.168.160.150}
+      - MQTT_PORT=${MQTT_PORT:-1883}
+      - WEB_PORT=8080
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/state')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
