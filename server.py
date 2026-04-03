@@ -75,7 +75,7 @@ async def broadcast_state():
     if not ws_clients:
         return
     
-    data = {**current_state, 'console': console_lines}
+    data = {**current_state, 'console': console_lines, 'dashboard_version': VERSION}
     message = json.dumps(data)
     
     dead = []
@@ -225,6 +225,11 @@ def get_dashboard_html() -> str:
         .ws-status.connected { background: #2e7d32; color: #fff; }
         .ws-status.disconnected { background: #c62828; color: #fff; }
         #console { font-family: 'JetBrains Mono', monospace; font-size: 0.45rem; background: #000; color: #0f0; padding: 6px; height: 180px; overflow-y: auto; border-radius: 6px; }
+        #loads { color: #888; font-size: 0.65rem; }
+        #loads .loads-table { display: table; width: 100%; }
+        #loads .loads-row { display: table-row; }
+        #loads .loads-name { display: table-cell; text-align: left; padding-right: 8px; }
+        #loads .loads-value { display: table-cell; text-align: right; font-family: monospace; min-width: 45px; font-weight: bold; }
         /* Light theme */
         body.light {
             --bg-dark: #f5f5f5; --bg-card: #ffffff; --border: #ddd;
@@ -361,10 +366,11 @@ def get_dashboard_html() -> str:
         <div class="col-12">
             <div class="card">
                 <div class="card-header">Loads</div>
-                <div class="card-body py-1" style="font-size:0.65rem;color:#666">
-                    <div class="d-flex flex-wrap gap-3">
-                        <div v-for="[name, val] in sortedLoads" :key="name">
-                            <span>{{ name }}:</span> <span class="fw-bold">{{ Math.floor(val) }}W</span>
+                <div class="card-body py-1" id="loads">
+                    <div class="loads-table">
+                        <div class="loads-row" v-for="[name, val] in sortedLoads" :key="name">
+                            <span class="loads-name">{{ name }}</span>
+                            <span class="loads-value">{{ Math.floor(val) }}W</span>
                         </div>
                     </div>
                 </div>
