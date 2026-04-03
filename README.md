@@ -23,7 +23,7 @@ docker run -d \
   --name inverter-dashboard \
   -p 8080:8080 \
   -e MQTT_HOST=192.168.1.100 \
-  vmedvedev/inverter-dashboard:latest
+  alvit/inverter-dashboard:latest
 ```
 
 ### Docker Compose
@@ -32,7 +32,7 @@ docker run -d \
 version: '3.8'
 services:
   dashboard:
-    image: vmedvedev/inverter-dashboard:latest
+    image: alvit/inverter-dashboard:latest
     ports:
       - "8080:8080"
     environment:
@@ -151,4 +151,4 @@ MIT License - see [LICENSE](LICENSE)
 
 ## Related Projects
 
-- [dbus-btbattery](https://github.com/vmedvedev/dbus-btbattery) - Main inverter control system for Cerbo GX
+- [dbus-btbattery](https://github.com/victron-venus/dbus-btbattery) - Main inverter control system for Cerbo GX

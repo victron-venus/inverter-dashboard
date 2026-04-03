@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   inverter-dashboard:
-    image: vmedvedev/inverter-dashboard:latest
+    image: alvit/inverter-dashboard:latest
     container_name: inverter-dashboard
     ports:
       - "8080:8080"
