@@ -1,6 +1,9 @@
 # Inverter Dashboard
 
-Real-time web dashboard for monitoring Victron inverter systems via MQTT. Designed to work with [dbus-btbattery](https://github.com/vmedvedev/dbus-btbattery) inverter control system running on Cerbo GX.
+[![Docker Hub](https://img.shields.io/docker/v/alvit/inverter-dashboard?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/alvit/inverter-dashboard)
+[![GitHub](https://img.shields.io/github/license/victron-venus/inverter-dashboard)](LICENSE)
+
+Real-time web dashboard for monitoring Victron inverter systems via MQTT. Designed to work with [dbus-btbattery](https://github.com/victron-venus/dbus-btbattery) inverter control system running on Cerbo GX.
 
 ![Dashboard Screenshot](docs/screenshot.png)
 
@@ -118,7 +121,7 @@ python server.py --ssl-cert /path/to/cert.pem --ssl-key /path/to/key.pem
 
 ```bash
 # Clone repository
-git clone https://github.com/vmedvedev/inverter-dashboard.git
+git clone https://github.com/victron-venus/inverter-dashboard.git
 cd inverter-dashboard
 
 # Create virtual environment
@@ -145,10 +148,19 @@ Docker images are built for:
 - `linux/amd64` (x86_64)
 - `linux/arm64` (Raspberry Pi 4, Apple Silicon, etc.)
 
+## Related Projects
+
+| Repository | Description |
+|------------|-------------|
+| [dbus-btbattery](https://github.com/victron-venus/dbus-btbattery) | Main inverter control system for Cerbo GX with Home Assistant integration |
+| [esphome-jbd-bms-mqtt](https://github.com/victron-venus/esphome-jbd-bms-mqtt) | ESPHome component for JBD BMS via MQTT |
+| [dbus-tasmota-pv](https://github.com/victron-venus/dbus-tasmota-pv) | Tasmota PV integration for Venus OS |
+| [dbus-mqtt-battery](https://github.com/victron-venus/dbus-mqtt-battery) | MQTT Battery integration for Venus OS |
+
+## Author
+
+Created by [@4alvit](https://github.com/4alvit)
+
 ## License
 
 MIT License - see [LICENSE](LICENSE)
-
-## Related Projects
-
-- [dbus-btbattery](https://github.com/victron-venus/dbus-btbattery) - Main inverter control system for Cerbo GX
