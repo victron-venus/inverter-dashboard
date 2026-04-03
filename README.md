@@ -3,9 +3,9 @@
 [![Docker Hub](https://img.shields.io/docker/v/alvit/inverter-dashboard?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/alvit/inverter-dashboard)
 [![GitHub](https://img.shields.io/github/license/victron-venus/inverter-dashboard)](LICENSE)
 
-Real-time web dashboard for monitoring Victron inverter systems via MQTT. Designed to work with [dbus-btbattery](https://github.com/victron-venus/dbus-btbattery) inverter control system running on Cerbo GX.
+Real-time web dashboard for monitoring Victron inverter systems via MQTT. Designed to work with [inverter-control](https://github.com/victron-venus/inverter-control) on Cerbo GX.
 
-![Dashboard Screenshot](docs/screenshot.png)
+![Inverter Dashboard](images/Screenshot.png)
 
 ## Features
 
