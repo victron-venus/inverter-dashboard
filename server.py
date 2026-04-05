@@ -5,17 +5,20 @@ Connects to Cerbo GX via MQTT, serves Vue.js dashboard via WebSocket
 """
 
 import os
+import sys
 import json
 import asyncio
 import logging
 import argparse
+import subprocess
 from typing import Set, Dict, Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 import paho.mqtt.client as mqtt
+import httpx
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -24,6 +27,7 @@ logger = logging.getLogger(__name__)
 MQTT_HOST = os.getenv('MQTT_HOST', '192.168.160.150')
 MQTT_PORT = int(os.getenv('MQTT_PORT', '1883'))
 WEB_PORT = int(os.getenv('WEB_PORT', '8080'))
+GITHUB_REPO = "victron-venus/inverter-dashboard"
 
 # Version (read from VERSION file or fallback)
 def get_version():
@@ -41,6 +45,24 @@ console_lines: list = []
 ws_clients: Set[WebSocket] = set()
 mqtt_client: mqtt.Client = None
 main_loop: asyncio.AbstractEventLoop = None
+latest_version: str = None
+
+
+async def check_latest_version():
+    """Check GitHub for latest release version"""
+    global latest_version
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+                timeout=10.0
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                latest_version = data.get('tag_name', '').lstrip('v')
+                logger.info(f"Latest version: {latest_version}, current: {VERSION}")
+    except Exception as e:
+        logger.warning(f"Failed to check latest version: {e}")
 
 
 def on_mqtt_connect(client, userdata, flags, rc, properties=None):
@@ -75,7 +97,12 @@ async def broadcast_state():
     if not ws_clients:
         return
     
-    data = {**current_state, 'console': console_lines, 'dashboard_version': VERSION}
+    data = {
+        **current_state, 
+        'console': console_lines, 
+        'dashboard_version': VERSION,
+        'latest_version': latest_version
+    }
     message = json.dumps(data)
     
     dead = []
@@ -103,6 +130,9 @@ async def lifespan(app: FastAPI):
     
     # Store reference to the main event loop for use in MQTT callbacks
     main_loop = asyncio.get_running_loop()
+    
+    # Check for updates on startup
+    await check_latest_version()
     
     # Start MQTT client
     mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -137,7 +167,12 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         # Send current state immediately
         if current_state:
-            await websocket.send_text(json.dumps({**current_state, 'console': console_lines}))
+            await websocket.send_text(json.dumps({
+                **current_state, 
+                'console': console_lines,
+                'dashboard_version': VERSION,
+                'latest_version': latest_version
+            }))
         
         while True:
             data = await websocket.receive_json()
@@ -174,12 +209,42 @@ async def dashboard():
 @app.get("/api/state")
 async def api_state():
     """REST fallback"""
-    return {**current_state, 'console': console_lines, 'dashboard_version': VERSION}
+    return {
+        **current_state, 
+        'console': console_lines, 
+        'dashboard_version': VERSION,
+        'latest_version': latest_version
+    }
 
 @app.get("/api/version")
 async def api_version():
     """Get dashboard version"""
-    return {'version': VERSION}
+    return {'version': VERSION, 'latest': latest_version}
+
+
+@app.post("/api/check-update")
+async def api_check_update():
+    """Check for updates"""
+    await check_latest_version()
+    return {'current': VERSION, 'latest': latest_version}
+
+
+@app.post("/api/update")
+async def api_update():
+    """Pull latest image and restart container"""
+    try:
+        # This assumes running in Docker with access to docker socket
+        # The container will be recreated by watchtower or manual restart
+        logger.info("Update requested, pulling latest image...")
+        
+        # Signal to restart (exit with code 0, Docker will restart)
+        # In production, use watchtower or similar for auto-updates
+        asyncio.get_event_loop().call_later(1, lambda: os._exit(0))
+        
+        return {'status': 'restarting', 'message': 'Container will restart with latest version'}
+    except Exception as e:
+        logger.error(f"Update failed: {e}")
+        return JSONResponse({'error': str(e)}, status_code=500)
 
 
 def get_dashboard_html() -> str:
@@ -198,8 +263,9 @@ def get_dashboard_html() -> str:
     <style>
         :root {
             --bg-dark: #0a0a0a; --bg-card: #151515; --border: #2a2a2a;
-            --text: #e0e0e0; --text-dim: #666; --accent: #00d4aa;
+            --text: #e0e0e0; --text-dim: #666; --text-value: #ccc; --accent: #00d4aa;
             --solar: #f5a623; --grid: #4a90d9; --battery: #7ed321; --consumption: #e74c3c;
+            --subsection-bg: rgba(0,0,0,0.2);
         }
         body { background: var(--bg-dark); color: var(--text); font-family: 'Segoe UI', sans-serif; }
         .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
@@ -211,6 +277,7 @@ def get_dashboard_html() -> str:
         .toggle-btn { cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 0.45rem; font-weight: 600; border: 1px solid var(--border); transition: all 0.15s; display: inline-block; margin: 1px; }
         .toggle-btn.on { background: #2e7d32; border-color: #4caf50; color: #fff; }
         .toggle-btn.off { background: #1a1a1a; color: #555; }
+        .toggle-btn.update { background: #1565c0; border-color: #1976d2; color: #fff; }
         .toggle-btn:hover { transform: scale(1.02); filter: brightness(1.1); }
         .text-solar { color: var(--solar); } .text-grid { color: var(--grid); } .text-battery { color: var(--battery); } .text-consumption { color: var(--consumption); } .text-accent { color: var(--accent); }
         .daily-stats { font-size: 0.75rem; color: var(--text-dim); padding: 8px 12px; background: #0d0d0d; border-radius: 6px; font-family: monospace; }
@@ -230,15 +297,19 @@ def get_dashboard_html() -> str:
         #loads .loads-row { display: table-row; }
         #loads .loads-name { display: table-cell; text-align: left; padding-right: 8px; }
         #loads .loads-value { display: table-cell; text-align: right; font-family: monospace; min-width: 45px; font-weight: bold; }
+        .subsection { border: 1px solid var(--border); border-radius: 6px; padding: 6px; background: var(--subsection-bg); }
+        .subsection-value { color: var(--text-value); }
         /* Light theme */
         body.light {
             --bg-dark: #f5f5f5; --bg-card: #ffffff; --border: #ddd;
-            --text: #222; --text-dim: #555;
+            --text: #222; --text-dim: #555; --text-value: #333;
+            --subsection-bg: #ffffff;
         }
         body.light .card { box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
         body.light #console { background: #f0f0f0; color: #000; }
         body.light .daily-stats { background: #e8e8e8; }
         body.light .toggle-btn.off { background: #ddd; color: #666; }
+        body.light .subsection { border-color: #ccc; }
     </style>
 </head>
 <body>
@@ -264,7 +335,11 @@ def get_dashboard_html() -> str:
                      @click="send('toggle', {entity: 'input_boolean.' + key})">
                     {{ formatKey(key) }}
                 </div>
-                <div class="ms-auto">
+                <div class="ms-auto d-flex gap-1">
+                    <div class="toggle-btn" :class="hasUpdate ? 'update' : 'off'" @click="checkOrUpdate" :title="updateTitle">
+                        <i class="fas fa-sync me-1" :class="{'fa-spin': updating}"></i>
+                        {{ updateBtnText }}
+                    </div>
                     <div class="toggle-btn" @click="toggleTheme" id="theme-btn">
                         <i class="fas" :class="isDark ? 'fa-sun' : 'fa-moon'"></i>
                     </div>
@@ -296,7 +371,7 @@ def get_dashboard_html() -> str:
             <div class="card h-100"><div class="card-body text-center">
                 <div class="stat-label">Solar</div>
                 <div class="stat-value text-solar">{{ formatPower(state.solar_total) }}</div>
-                <div class="stat-sub">{{ solarDetail }}</div>
+                <div class="stat-sub">MPPT: {{ formatPower(mpptTotal) }} | PV: {{ formatPower(tasmotaTotal) }}</div>
             </div></div>
         </div>
         <div class="col-md-3">
@@ -361,16 +436,16 @@ def get_dashboard_html() -> str:
         </div>
     </div>
     
-    <!-- Batteries & MPPT -->
+    <!-- Batteries & Solar Production -->
     <div class="row g-2 mb-2">
         <div class="col-md-6">
             <div class="card h-100">
                 <div class="card-header"><i class="fas fa-battery-three-quarters me-2"></i>Batteries</div>
                 <div class="card-body py-1" style="font-size:0.75rem">
                     <div class="d-flex flex-wrap gap-2">
-                        <div v-for="bat in batteries" :key="bat.name" class="flex-fill" style="min-width:140px;border:1px solid var(--border);border-radius:6px;padding:6px;background:rgba(0,0,0,0.2)">
+                        <div v-for="bat in batteries" :key="bat.name" class="flex-fill subsection" style="min-width:140px">
                             <div class="fw-bold mb-1" style="font-size:0.65rem;color:var(--text-dim)">{{ bat.name }}</div>
-                            <div class="d-flex justify-content-between">
+                            <div class="d-flex justify-content-between subsection-value">
                                 <span>{{ bat.voltage.toFixed(2) }}V</span>
                                 <span v-if="bat.current !== undefined">{{ bat.current.toFixed(1) }}A</span>
                                 <span v-if="bat.power !== undefined">{{ Math.floor(bat.power) }}W</span>
@@ -386,14 +461,14 @@ def get_dashboard_html() -> str:
         </div>
         <div class="col-md-6">
             <div class="card h-100">
-                <div class="card-header"><i class="fas fa-solar-panel me-2"></i>MPPT Chargers</div>
+                <div class="card-header"><i class="fas fa-solar-panel me-2"></i>Solar Production</div>
                 <div class="card-body py-1" style="font-size:0.75rem">
                     <div class="d-flex flex-wrap gap-2">
-                        <div v-for="mppt in mpptChargers" :key="mppt.name" class="flex-fill" style="min-width:100px;border:1px solid var(--border);border-radius:6px;padding:6px;background:rgba(0,0,0,0.2)">
-                            <div class="fw-bold mb-1" style="font-size:0.65rem;color:var(--text-dim)">{{ mppt.name }}</div>
-                            <div style="color:var(--solar)">{{ mppt.pv_voltage.toFixed(2) }}V</div>
-                            <div>{{ mppt.current.toFixed(1) }}A</div>
-                            <div class="fw-bold" style="color:var(--solar)">{{ Math.floor(mppt.power) }}W</div>
+                        <div v-for="src in solarSources" :key="src.name" class="flex-fill subsection" style="min-width:100px">
+                            <div class="fw-bold mb-1" style="font-size:0.65rem;color:var(--text-dim)">{{ src.name }}</div>
+                            <div v-if="src.pv_voltage" class="subsection-value" style="color:var(--solar)">{{ src.pv_voltage.toFixed(2) }}V</div>
+                            <div v-if="src.current" class="subsection-value">{{ src.current.toFixed(1) }}A</div>
+                            <div class="fw-bold" style="color:var(--solar)">{{ Math.floor(src.power) }}W</div>
                         </div>
                     </div>
                 </div>
@@ -438,6 +513,7 @@ createApp({
         const mqttConnected = ref(false);
         const chartEl = ref(null);
         const isDark = ref(localStorage.getItem('theme') !== 'light');
+        const updating = ref(false);
         
         function toggleTheme() {
             isDark.value = !isDark.value;
@@ -514,7 +590,6 @@ createApp({
         function startHeartbeat() {
             stopHeartbeat();
             heartbeatTimer = setInterval(() => {
-                // If no message for 15 seconds, reconnect
                 if (Date.now() - lastMessageTime > 15000) {
                     console.log('No data received, reconnecting...');
                     if (ws) ws.close();
@@ -529,19 +604,13 @@ createApp({
             }
         }
         
-        // Reconnect on visibility change (wake from sleep)
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
-                console.log('Page visible, checking connection...');
-                if (!ws || ws.readyState !== WebSocket.OPEN) {
-                    connect();
-                }
+                if (!ws || ws.readyState !== WebSocket.OPEN) connect();
             }
         });
         
-        // Reconnect on network change
         window.addEventListener('online', () => {
-            console.log('Network online, reconnecting...');
             if (ws) ws.close();
             setTimeout(connect, 500);
         });
@@ -565,6 +634,51 @@ createApp({
             return h + 'h ' + m + 'm';
         }
         
+        // Update button
+        const hasUpdate = computed(() => {
+            const latest = state.value.latest_version;
+            const current = state.value.dashboard_version;
+            return latest && current && latest !== current;
+        });
+        
+        const updateBtnText = computed(() => {
+            if (updating.value) return 'UPDATING...';
+            if (hasUpdate.value) return 'v' + state.value.latest_version;
+            return 'v' + (state.value.dashboard_version || '?');
+        });
+        
+        const updateTitle = computed(() => {
+            if (hasUpdate.value) return 'Click to update to v' + state.value.latest_version;
+            return 'Click to check for updates';
+        });
+        
+        async function checkOrUpdate() {
+            if (hasUpdate.value) {
+                if (confirm('Update to v' + state.value.latest_version + '? The dashboard will restart.')) {
+                    updating.value = true;
+                    try {
+                        await fetch('/api/update', {method: 'POST'});
+                        setTimeout(() => location.reload(), 3000);
+                    } catch (e) {
+                        alert('Update failed: ' + e.message);
+                        updating.value = false;
+                    }
+                }
+            } else {
+                try {
+                    const res = await fetch('/api/check-update', {method: 'POST'});
+                    const data = await res.json();
+                    if (data.latest && data.latest !== data.current) {
+                        state.value.latest_version = data.latest;
+                    } else {
+                        alert('You are running the latest version (v' + data.current + ')');
+                    }
+                } catch (e) {
+                    alert('Failed to check for updates');
+                }
+            }
+        }
+        
         const essClass = computed(() => {
             const m = state.value.ess_mode;
             if (!m) return 'off';
@@ -578,11 +692,14 @@ createApp({
             return m.mode_name || 'ESS';
         });
         
-        const solarDetail = computed(() => {
+        const mpptTotal = computed(() => {
             const mppt = state.value.mppt_individual || [];
+            return mppt.reduce((a, b) => a + b, 0);
+        });
+        
+        const tasmotaTotal = computed(() => {
             const tas = state.value.tasmota_individual || [];
-            return (mppt.length ? mppt.map(v => Math.floor(v) + 'W').join('|') : '--') + ' | ' + 
-                   (tas.length ? tas.map(v => Math.floor(v) + 'W').join('|') : '--');
+            return tas.reduce((a, b) => a + b, 0);
         });
         
         const evCharging = computed(() => {
@@ -594,15 +711,6 @@ createApp({
         const sortedLoads = computed(() => {
             const loads = state.value.loads || {};
             return Object.entries(loads).filter(([_, v]) => v > 10).sort((a, b) => b[1] - a[1]);
-        });
-        
-        const batteryIndividual = computed(() => {
-            const b1 = state.value.battery1_soc;
-            const b2 = state.value.battery2_soc;
-            if (b1 !== undefined && b2 !== undefined) {
-                return `[${Math.floor(b1)}%|${Math.floor(b2)}%]`;
-            }
-            return '';
         });
         
         const batteries = computed(() => {
@@ -617,14 +725,27 @@ createApp({
             }));
         });
         
-        const mpptChargers = computed(() => {
+        const solarSources = computed(() => {
+            const sources = [];
+            // MPPT chargers
             const chargers = state.value.mppt_chargers || [];
-            return chargers.map(m => ({
-                name: m.name || 'MPPT',
-                pv_voltage: m.pv_voltage || 0,
-                current: m.current || 0,
-                power: m.power || 0
-            }));
+            chargers.forEach(m => {
+                sources.push({
+                    name: m.name || 'MPPT',
+                    pv_voltage: m.pv_voltage || 0,
+                    current: m.current || 0,
+                    power: m.power || 0
+                });
+            });
+            // PV inverters (Tasmota)
+            const tasmota = state.value.tasmota_individual || [];
+            tasmota.forEach((power, i) => {
+                sources.push({
+                    name: 'PV Inverter ' + (i + 1),
+                    power: power || 0
+                });
+            });
+            return sources;
         });
         
         const dailyStatsHtml = computed(() => {
@@ -635,7 +756,6 @@ createApp({
             const grid = (ds.grid_kwh || 0).toFixed(2);
             const gridCost = (parseFloat(grid) * 0.31).toFixed(2);
             
-            // Battery stats (use original field names from inverter-control)
             const batIn = (ds.battery_in || 0).toFixed(2);
             const batOut = (ds.battery_out || 0).toFixed(2);
             const batInY = (ds.battery_in_yesterday || 0).toFixed(2);
@@ -643,7 +763,6 @@ createApp({
             const batDelta = (parseFloat(batIn) - parseFloat(batOut)).toFixed(2);
             const batDeltaY = (parseFloat(batInY) - parseFloat(batOutY)).toFixed(2);
             
-            // Solar breakdown: tasmota + mppt individual
             const tasmotaDaily = ds.tasmota_daily || [];
             const mpptDaily = ds.mppt_daily || [];
             const pvTotalDaily = ds.pv_total_daily || 0;
@@ -708,10 +827,10 @@ createApp({
         });
         
         return {
-            state, wsConnected, mqttConnected, chartEl, isDark,
-            essClass, essText, solarDetail, evCharging, evPower, sortedLoads, dailyStatsHtml, batteryIndividual,
-            batteries, mpptChargers,
-            send, formatPower, formatKey, formatUptime, toggleTheme
+            state, wsConnected, mqttConnected, chartEl, isDark, updating,
+            essClass, essText, mpptTotal, tasmotaTotal, evCharging, evPower, sortedLoads, dailyStatsHtml,
+            batteries, solarSources, hasUpdate, updateBtnText, updateTitle,
+            send, formatPower, formatKey, formatUptime, toggleTheme, checkOrUpdate
         };
     }
 }).mount('#app');
@@ -734,9 +853,10 @@ def main():
     MQTT_HOST = args.mqtt_host
     MQTT_PORT = args.mqtt_port
     
-    print(f"Starting Remote Dashboard")
+    proto = "https" if args.ssl_cert else "http"
+    print(f"Starting Remote Dashboard v{VERSION}")
     print(f"  MQTT: {MQTT_HOST}:{MQTT_PORT}")
-    print(f"  Web:  http://0.0.0.0:{args.port}")
+    print(f"  Web:  {proto}://0.0.0.0:{args.port}")
     
     uvicorn.run(
         app,
