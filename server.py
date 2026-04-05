@@ -301,9 +301,9 @@ def get_dashboard_html() -> str:
         </div>
         <div class="col-md-3">
             <div class="card h-100"><div class="card-body text-center">
-                <div class="stat-label">Battery</div>
+                <div class="stat-label">Battery (Shunt)</div>
                 <div class="stat-value text-battery">{{ Math.floor(state.battery_soc || 0) }}%</div>
-                <div class="stat-sub">{{ formatPower(state.battery_power) }} | {{ (state.battery_voltage || 0).toFixed(2) }}V {{ batteryIndividual }}</div>
+                <div class="stat-sub">{{ formatPower(state.battery_power) }} | {{ (state.battery_voltage || 0).toFixed(2) }}V | {{ (state.battery_current || 0).toFixed(1) }}A</div>
             </div></div>
         </div>
         <div class="col-md-2">
@@ -361,6 +361,46 @@ def get_dashboard_html() -> str:
         </div>
     </div>
     
+    <!-- Batteries & MPPT -->
+    <div class="row g-2 mb-2">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header"><i class="fas fa-battery-three-quarters me-2"></i>Batteries</div>
+                <div class="card-body py-1" style="font-size:0.75rem">
+                    <div class="d-flex flex-wrap gap-2">
+                        <div v-for="bat in batteries" :key="bat.name" class="flex-fill" style="min-width:140px;border:1px solid var(--border);border-radius:6px;padding:6px;background:rgba(0,0,0,0.2)">
+                            <div class="fw-bold mb-1" style="font-size:0.65rem;color:var(--text-dim)">{{ bat.name }}</div>
+                            <div class="d-flex justify-content-between">
+                                <span>{{ bat.voltage.toFixed(2) }}V</span>
+                                <span v-if="bat.current !== undefined">{{ bat.current.toFixed(1) }}A</span>
+                                <span v-if="bat.power !== undefined">{{ Math.floor(bat.power) }}W</span>
+                            </div>
+                            <div class="d-flex justify-content-between mt-1">
+                                <span class="fw-bold" :style="{color: bat.soc > 50 ? '#7ed321' : bat.soc > 20 ? '#f5a623' : '#e74c3c'}">{{ bat.soc.toFixed(1) }}%</span>
+                                <span style="color:var(--text-dim)">{{ bat.state }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header"><i class="fas fa-solar-panel me-2"></i>MPPT Chargers</div>
+                <div class="card-body py-1" style="font-size:0.75rem">
+                    <div class="d-flex flex-wrap gap-2">
+                        <div v-for="mppt in mpptChargers" :key="mppt.name" class="flex-fill" style="min-width:100px;border:1px solid var(--border);border-radius:6px;padding:6px;background:rgba(0,0,0,0.2)">
+                            <div class="fw-bold mb-1" style="font-size:0.65rem;color:var(--text-dim)">{{ mppt.name }}</div>
+                            <div style="color:var(--solar)">{{ mppt.pv_voltage.toFixed(2) }}V</div>
+                            <div>{{ mppt.current.toFixed(1) }}A</div>
+                            <div class="fw-bold" style="color:var(--solar)">{{ Math.floor(mppt.power) }}W</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <!-- Loads -->
     <div class="row g-2 mb-2" v-if="state.features?.ha_loads !== false && sortedLoads.length">
         <div class="col-12">
@@ -412,18 +452,39 @@ createApp({
         let ws = null;
         let chart = null;
         let reconnectTimer = null;
+        let lastMessageTime = Date.now();
+        let heartbeatTimer = null;
         let historyData = {timestamps: [], grid: [], solar: [], battery: [], setpoint: []};
         
         function connect() {
-            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${proto}//${location.host}/ws`);
+            if (ws && ws.readyState === WebSocket.OPEN) return;
+            if (reconnectTimer) clearTimeout(reconnectTimer);
             
-            ws.onopen = () => { wsConnected.value = true; };
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            try {
+                ws = new WebSocket(`${proto}//${location.host}/ws`);
+            } catch (e) {
+                wsConnected.value = false;
+                reconnectTimer = setTimeout(connect, 2000);
+                return;
+            }
+            
+            ws.onopen = () => { 
+                wsConnected.value = true;
+                lastMessageTime = Date.now();
+                startHeartbeat();
+            };
             ws.onclose = () => { 
-                wsConnected.value = false; 
+                wsConnected.value = false;
+                stopHeartbeat();
                 reconnectTimer = setTimeout(connect, 2000);
             };
+            ws.onerror = () => {
+                wsConnected.value = false;
+                ws.close();
+            };
             ws.onmessage = (e) => {
+                lastMessageTime = Date.now();
                 const data = JSON.parse(e.data);
                 state.value = data;
                 mqttConnected.value = true;
@@ -449,6 +510,41 @@ createApp({
                 }
             };
         }
+        
+        function startHeartbeat() {
+            stopHeartbeat();
+            heartbeatTimer = setInterval(() => {
+                // If no message for 15 seconds, reconnect
+                if (Date.now() - lastMessageTime > 15000) {
+                    console.log('No data received, reconnecting...');
+                    if (ws) ws.close();
+                }
+            }, 5000);
+        }
+        
+        function stopHeartbeat() {
+            if (heartbeatTimer) {
+                clearInterval(heartbeatTimer);
+                heartbeatTimer = null;
+            }
+        }
+        
+        // Reconnect on visibility change (wake from sleep)
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                console.log('Page visible, checking connection...');
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    connect();
+                }
+            }
+        });
+        
+        // Reconnect on network change
+        window.addEventListener('online', () => {
+            console.log('Network online, reconnecting...');
+            if (ws) ws.close();
+            setTimeout(connect, 500);
+        });
         
         function send(action, payload = {}) {
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -507,6 +603,28 @@ createApp({
                 return `[${Math.floor(b1)}%|${Math.floor(b2)}%]`;
             }
             return '';
+        });
+        
+        const batteries = computed(() => {
+            const bats = state.value.batteries || [];
+            return bats.map(b => ({
+                name: b.name || 'Battery',
+                voltage: b.voltage || 0,
+                current: b.current,
+                power: b.power,
+                soc: b.soc || 0,
+                state: b.state || 'Unknown'
+            }));
+        });
+        
+        const mpptChargers = computed(() => {
+            const chargers = state.value.mppt_chargers || [];
+            return chargers.map(m => ({
+                name: m.name || 'MPPT',
+                pv_voltage: m.pv_voltage || 0,
+                current: m.current || 0,
+                power: m.power || 0
+            }));
         });
         
         const dailyStatsHtml = computed(() => {
@@ -592,6 +710,7 @@ createApp({
         return {
             state, wsConnected, mqttConnected, chartEl, isDark,
             essClass, essText, solarDetail, evCharging, evPower, sortedLoads, dailyStatsHtml, batteryIndividual,
+            batteries, mpptChargers,
             send, formatPower, formatKey, formatUptime, toggleTheme
         };
     }
