@@ -14,8 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN git clone --depth 1 https://github.com/victron-venus/inverter-dashboard.git /app/repo && \
     mv /app/repo/* /app/ && rm -rf /app/repo
 
-# Copy local files as fallback (baked-in version)
-COPY server.py .
+# Copy all Python modules as fallback (baked-in version)
+COPY *.py ./
 COPY entrypoint.sh .
 COPY VERSION .
 
