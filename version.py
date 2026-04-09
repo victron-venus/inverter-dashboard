@@ -25,16 +25,15 @@ VERSION = get_version()
 
 
 async def check_latest_version() -> str | None:
-    """Check GitHub for latest release version"""
+    """Check GitHub for latest version from VERSION file on main branch"""
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+                f"{GITHUB_RAW_URL}/VERSION",
                 timeout=10.0
             )
             if resp.status_code == 200:
-                data = resp.json()
-                latest = data.get('tag_name', '').lstrip('v')
+                latest = resp.text.strip()
                 logger.info(f"Latest version: {latest}, current: {VERSION}")
                 return latest
     except Exception as e:
@@ -43,29 +42,38 @@ async def check_latest_version() -> str | None:
 
 
 async def download_and_update() -> tuple[bool, str]:
-    """Download latest server.py from GitHub and update local files"""
+    """Download all Python modules from GitHub and update local files"""
+    files_to_update = [
+        'server.py',
+        'config.py',
+        'version.py',
+        'mqtt_handler.py',
+        'websocket_handler.py',
+        'html_template.py',
+        'VERSION',
+    ]
+    
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            # Download new server.py
-            resp = await client.get(f"{GITHUB_RAW_URL}/server.py")
-            if resp.status_code != 200:
-                return False, f"Failed to download server.py: {resp.status_code}"
-            new_code = resp.text
-            
-            # Download new VERSION
-            ver_resp = await client.get(f"{GITHUB_RAW_URL}/VERSION")
-            new_version = ver_resp.text.strip() if ver_resp.status_code == 200 else "unknown"
-        
-        # Write new server.py
         script_dir = os.path.dirname(__file__)
-        server_path = os.path.join(script_dir, 'server.py')
-        with open(server_path, 'w') as f:
-            f.write(new_code)
+        new_version = "unknown"
         
-        # Write new VERSION
-        version_path = os.path.join(script_dir, 'VERSION')
-        with open(version_path, 'w') as f:
-            f.write(new_version + '\n')
+        async with httpx.AsyncClient(timeout=30) as client:
+            for filename in files_to_update:
+                resp = await client.get(f"{GITHUB_RAW_URL}/{filename}")
+                if resp.status_code != 200:
+                    logger.warning(f"Failed to download {filename}: {resp.status_code}")
+                    continue
+                
+                content = resp.text
+                filepath = os.path.join(script_dir, filename)
+                
+                with open(filepath, 'w') as f:
+                    f.write(content)
+                
+                if filename == 'VERSION':
+                    new_version = content.strip()
+                
+                logger.info(f"Updated {filename}")
         
         logger.info(f"Updated to v{new_version}")
         return True, new_version
