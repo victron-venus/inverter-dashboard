@@ -1,0 +1,15 @@
+services:
+  inverter-dashboard:
+    image: alvit/inverter-dashboard:latest
+    container_name: inverter-dashboard
+    restart: unless-stopped
+    pull_policy: always
+    ports:
+      - "8443:8443"
+    environment:
+      - MQTT_HOST=192.168.x.x  # Your Cerbo IP
+      - MQTT_PORT=1883
+    # Optional: for HTTPS
+    # volumes:
+    #   - ./certs:/app/certs:ro
+    # command: ["--ssl-cert", "/app/certs/cert.pem", "--ssl-key", "/app/certs/key.pem"]

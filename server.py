@@ -231,17 +231,18 @@ async def api_check_update():
 
 @app.post("/api/update")
 async def api_update():
-    """Pull latest image and restart container"""
+    """Restart container to pull latest image"""
     try:
-        # This assumes running in Docker with access to docker socket
-        # The container will be recreated by watchtower or manual restart
-        logger.info("Update requested, pulling latest image...")
+        logger.info("Update requested, restarting container...")
         
-        # Signal to restart (exit with code 0, Docker will restart)
-        # In production, use watchtower or similar for auto-updates
+        # Exit container - Docker will restart and pull if using pull_policy: always
+        # or if using Watchtower for auto-updates
         asyncio.get_event_loop().call_later(1, lambda: os._exit(0))
         
-        return {'status': 'restarting', 'message': 'Container will restart with latest version'}
+        return {
+            'status': 'restarting', 
+            'message': 'Container restarting. If version unchanged, run: docker pull alvit/inverter-dashboard:latest && docker-compose up -d'
+        }
     except Exception as e:
         logger.error(f"Update failed: {e}")
         return JSONResponse({'error': str(e)}, status_code=500)
@@ -696,11 +697,12 @@ createApp({
         
         async function checkOrUpdate() {
             if (hasUpdate.value) {
-                if (confirm('Update to v' + state.value.latest_version + '? The dashboard will restart.')) {
+                if (confirm('Update to v' + state.value.latest_version + '?\\n\\nNote: If using docker-compose without pull_policy:always,\\nrun manually: docker pull alvit/inverter-dashboard:latest && docker-compose up -d')) {
                     updating.value = true;
                     try {
                         await fetch('/api/update', {method: 'POST'});
-                        setTimeout(() => location.reload(), 3000);
+                        alert('Container restarting...\\nIf version unchanged after reload, pull manually:\\ndocker pull alvit/inverter-dashboard:latest && docker-compose up -d');
+                        setTimeout(() => location.reload(), 5000);
                     } catch (e) {
                         alert('Update failed: ' + e.message);
                         updating.value = false;
