@@ -330,10 +330,10 @@ def get_dashboard_html() -> str:
                     <i class="fas fa-bolt me-1"></i>{{ essText }}
                 </div>
                 <div class="vr mx-1" style="border-left:1px solid #ccc;height:16px;"></div>
-                <div v-for="(val, key) in state.booleans" :key="key" 
-                     class="toggle-btn" :class="val ? 'on' : 'off'"
-                     @click="send('toggle', {entity: 'input_boolean.' + key})">
-                    {{ formatKey(key) }}
+                <div v-for="toggle in headerToggles" :key="toggle.id" 
+                     class="toggle-btn" :class="state.booleans[toggle.id] ? 'on' : 'off'"
+                     @click="send('toggle', {entity: toggle.entity})">
+                    {{ toggle.label }}
                 </div>
                 <div class="ms-auto d-flex gap-1">
                     <div class="toggle-btn" :class="hasUpdate ? 'update' : 'off'" @click="checkOrUpdate" :title="updateTitle">
@@ -371,7 +371,7 @@ def get_dashboard_html() -> str:
             <div class="card h-100"><div class="card-body text-center">
                 <div class="stat-label">Solar</div>
                 <div class="stat-value text-solar">{{ formatPower(state.solar_total) }}</div>
-                <div class="stat-sub">MPPT: {{ formatPower(mpptTotal) }} | PV: {{ formatPower(tasmotaTotal) }}</div>
+                <div class="stat-sub">{{ formatPower(mpptTotal) }} | {{ formatPower(tasmotaTotal) }}</div>
             </div></div>
         </div>
         <div class="col-md-3">
@@ -422,14 +422,44 @@ def get_dashboard_html() -> str:
                     </div>
                 </div>
             </div>
+            <!-- Dishwasher - show only when running -->
+            <div class="card mb-2" v-if="state.features?.dishwasher !== false && state.dishwasher_running">
+                <div class="card-header"><i class="fas fa-utensils me-2"></i>Dishwasher</div>
+                <div class="card-body py-1">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div class="fw-bold text-success">Running</div>
+                        <div>{{ formatDuration(state.dishwasher_duration) }}</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Washer - show only when time remaining -->
+            <div class="card mb-2" v-if="state.features?.washer !== false && (state.washer_time > 0)">
+                <div class="card-header"><i class="fas fa-soap me-2"></i>Washer</div>
+                <div class="card-body py-1">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div class="fw-bold">{{ formatDuration(state.washer_time) }}</div>
+                        <div class="toggle-btn" :class="state.washer_power ? 'on' : 'off'">PWR</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Dryer - show only when time remaining -->
+            <div class="card mb-2" v-if="state.features?.dryer !== false && (state.dryer_time > 0)">
+                <div class="card-header"><i class="fas fa-wind me-2"></i>Dryer</div>
+                <div class="card-body py-1">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div class="fw-bold">{{ formatDuration(state.dryer_time) }}</div>
+                        <div class="toggle-btn" :class="state.dryer_power ? 'on' : 'off'">PWR</div>
+                    </div>
+                </div>
+            </div>
             <!-- Home -->
-            <div class="card" v-if="state.features?.ha !== false">
+            <div class="card" v-if="state.features?.ha !== false && homeButtons.length > 0">
                 <div class="card-header"><i class="fas fa-home me-2"></i>Home</div>
                 <div class="card-body py-1">
                     <div class="d-flex gap-1 flex-wrap">
-                        <div class="toggle-btn" :class="state.home_recliner ? 'on' : 'off'" @click="send('toggle', {entity:'switch.recliner_recliner'})">RECLINER</div>
-                        <div class="toggle-btn" :class="state.home_garage ? 'on' : 'off'" @click="send('toggle', {entity:'switch.garage_opener_l'})">GARAGE</div>
-                        <div class="toggle-btn" :class="state.laundry_outlet ? 'on' : 'off'" @click="send('toggle', {entity:'switch.laundry_zigbee_switch'})">LAUNDRY</div>
+                        <div v-for="btn in homeButtons" :key="btn.id" class="toggle-btn" 
+                             :class="getButtonState(btn)" 
+                             @click="send('toggle', {entity: btn.entity})">{{ btn.label }}</div>
                     </div>
                 </div>
             </div>
@@ -633,6 +663,18 @@ createApp({
             const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
             return h + 'h ' + m + 'm';
         }
+        function formatDuration(s) {
+            if (!s || s <= 0) return '0:00';
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            const sec = Math.floor(s % 60);
+            if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+            return m + ':' + String(sec).padStart(2, '0');
+        }
+        function getButtonState(btn) {
+            const stateKey = btn.state_key || 'home_' + btn.id;
+            return state.value[stateKey] ? 'on' : 'off';
+        }
         
         // Update button
         const hasUpdate = computed(() => {
@@ -710,7 +752,35 @@ createApp({
         
         const sortedLoads = computed(() => {
             const loads = state.value.loads || {};
-            return Object.entries(loads).filter(([_, v]) => v > 10).sort((a, b) => b[1] - a[1]);
+            const uiConfig = state.value.ui_config || {};
+            const loadsConfig = uiConfig.loads || {};
+            const hiddenLoads = loadsConfig.hidden || ['solar_shed'];
+            const minWatts = loadsConfig.min_watts || 10;
+            return Object.entries(loads)
+                .filter(([name, v]) => v > minWatts && !hiddenLoads.includes(name))
+                .sort((a, b) => b[1] - a[1]);
+        });
+        
+        const homeButtons = computed(() => {
+            const uiConfig = state.value.ui_config || {};
+            return uiConfig.home_buttons || [
+                {id: 'recliner', label: 'RECLINER', entity: 'switch.recliner_recliner', state_key: 'home_recliner'},
+                {id: 'garage', label: 'GARAGE', entity: 'switch.garage_opener_l', state_key: 'home_garage'},
+                {id: 'laundry', label: 'LAUNDRY', entity: 'switch.laundry_zigbee_switch', state_key: 'laundry_outlet'}
+            ];
+        });
+        
+        const headerToggles = computed(() => {
+            const uiConfig = state.value.ui_config || {};
+            return uiConfig.header_toggles || [
+                {id: 'only_charging', label: 'ONLY CHARGING', entity: 'input_boolean.only_charging'},
+                {id: 'no_feed', label: 'NO FEED', entity: 'input_boolean.no_feed'},
+                {id: 'house_support', label: 'HOUSE SUPPORT', entity: 'input_boolean.house_support'},
+                {id: 'charge_battery', label: 'CHARGE BATTERY', entity: 'input_boolean.charge_battery'},
+                {id: 'do_not_supply_charger', label: 'DO NOT SUPPLY EV', entity: 'input_boolean.do_not_supply_charger'},
+                {id: 'set_limit_to_ev_charger', label: 'LIMIT TO EV', entity: 'input_boolean.set_limit_to_ev_charger'},
+                {id: 'minimize_charging', label: 'MINIMIZE CHARGING', entity: 'input_boolean.minimize_charging'}
+            ];
         });
         
         const batteries = computed(() => {
@@ -829,8 +899,8 @@ createApp({
         return {
             state, wsConnected, mqttConnected, chartEl, isDark, updating,
             essClass, essText, mpptTotal, tasmotaTotal, evCharging, evPower, sortedLoads, dailyStatsHtml,
-            batteries, solarSources, hasUpdate, updateBtnText, updateTitle,
-            send, formatPower, formatKey, formatUptime, toggleTheme, checkOrUpdate
+            batteries, solarSources, homeButtons, headerToggles, hasUpdate, updateBtnText, updateTitle,
+            send, formatPower, formatKey, formatUptime, formatDuration, toggleTheme, checkOrUpdate, getButtonState
         };
     }
 }).mount('#app');
