@@ -84,9 +84,10 @@ def stop_client(client: mqtt.Client):
 def publish_command(client: mqtt.Client, action: str, payload: Dict[str, Any]):
     """Publish command to inverter-control"""
     if client:
+        # Topic format: inverter/cmd/{action} (e.g. inverter/cmd/toggle)
         client.publish(
-            "inverter/command",
-            json.dumps({"action": action, **payload}),
+            f"inverter/cmd/{action}",
+            json.dumps(payload) if payload else "",
             qos=0
         )
 

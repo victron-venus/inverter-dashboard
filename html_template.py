@@ -176,7 +176,7 @@ def get_dashboard_html() -> str:
                         <div class="fw-bold" :style="{{color: state.water_valve ? '#f44336' : '#4caf50'}}">{{{{ state.water_level || 0 }}}} cm</div>
                         <div class="d-flex gap-1">
                             <div class="toggle-btn" :class="state.pump_switch ? 'on' : 'off'" @click="send('toggle', {{entity:'switch.pump_switch'}})">PUMP</div>
-                            <div class="toggle-btn" :class="state.water_valve ? 'on' : 'off'" @click="send('toggle', {{entity:'switch.778_40th_ave_sf_shutoff_valve'}})">VALVE</div>
+                            <div class="toggle-btn" :class="state.water_valve ? 'on' : 'off'" @click="send('toggle', {{entity:'switch.shutoff_valve'}})">VALVE</div>
                         </div>
                     </div>
                 </div>
