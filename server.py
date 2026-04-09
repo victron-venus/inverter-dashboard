@@ -231,18 +231,41 @@ async def api_check_update():
 
 @app.post("/api/update")
 async def api_update():
-    """Restart container to pull latest image"""
+    """Self-update: download latest server.py from GitHub and restart"""
     try:
-        logger.info("Update requested, restarting container...")
+        logger.info("Update requested, downloading latest version...")
         
-        # Exit container - Docker will restart and pull if using pull_policy: always
-        # or if using Watchtower for auto-updates
+        # Download latest server.py from GitHub
+        url = "https://raw.githubusercontent.com/victron-venus/inverter-dashboard/main/server.py"
+        version_url = "https://raw.githubusercontent.com/victron-venus/inverter-dashboard/main/VERSION"
+        
+        async with httpx.AsyncClient(timeout=30) as client:
+            # Download new server.py
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return JSONResponse({'error': f'Failed to download: {resp.status_code}'}, status_code=500)
+            new_code = resp.text
+            
+            # Download new VERSION
+            ver_resp = await client.get(version_url)
+            new_version = ver_resp.text.strip() if ver_resp.status_code == 200 else "unknown"
+        
+        # Write new server.py
+        script_path = os.path.abspath(__file__)
+        with open(script_path, 'w') as f:
+            f.write(new_code)
+        
+        # Write new VERSION
+        version_path = os.path.join(os.path.dirname(script_path), 'VERSION')
+        with open(version_path, 'w') as f:
+            f.write(new_version + '\n')
+        
+        logger.info(f"Updated to v{new_version}, restarting...")
+        
+        # Restart process
         asyncio.get_event_loop().call_later(1, lambda: os._exit(0))
         
-        return {
-            'status': 'restarting', 
-            'message': 'Container restarting. If version unchanged, run: docker pull alvit/inverter-dashboard:latest && docker-compose up -d'
-        }
+        return {'status': 'updated', 'version': new_version, 'message': f'Updated to v{new_version}, restarting...'}
     except Exception as e:
         logger.error(f"Update failed: {e}")
         return JSONResponse({'error': str(e)}, status_code=500)
@@ -697,12 +720,18 @@ createApp({
         
         async function checkOrUpdate() {
             if (hasUpdate.value) {
-                if (confirm('Update to v' + state.value.latest_version + '?\\n\\nNote: If using docker-compose without pull_policy:always,\\nrun manually: docker pull alvit/inverter-dashboard:latest && docker-compose up -d')) {
+                if (confirm('Update to v' + state.value.latest_version + '?')) {
                     updating.value = true;
                     try {
-                        await fetch('/api/update', {method: 'POST'});
-                        alert('Container restarting...\\nIf version unchanged after reload, pull manually:\\ndocker pull alvit/inverter-dashboard:latest && docker-compose up -d');
-                        setTimeout(() => location.reload(), 5000);
+                        const res = await fetch('/api/update', {method: 'POST'});
+                        const data = await res.json();
+                        if (data.error) {
+                            alert('Update failed: ' + data.error);
+                            updating.value = false;
+                        } else {
+                            alert('Updated to v' + data.version + ', restarting...');
+                            setTimeout(() => location.reload(), 3000);
+                        }
                     } catch (e) {
                         alert('Update failed: ' + e.message);
                         updating.value = false;
