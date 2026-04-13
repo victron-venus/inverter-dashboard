@@ -528,7 +528,6 @@ createApp({
                 {id: 'recliner', label: 'RECLINER', entity: 'switch.recliner_recliner', state_key: 'home_recliner'},
                 {id: 'garage', label: 'GARAGE', entity: 'switch.garage_opener_l', state_key: 'home_garage'},
                 {id: 'laundry', label: 'LAUNDRY', entity: 'switch.laundry_zigbee_switch', state_key: 'laundry_outlet'}
-                {id: 'beam', label: 'BEAM', entity: 'switch.garage_beam', state_key: 'home_beam'}
             ];
         });
         
