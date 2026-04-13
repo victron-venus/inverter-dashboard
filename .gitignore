@@ -27,3 +27,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+commit.sh
+commit.txt
+release.sh
+release.txt
