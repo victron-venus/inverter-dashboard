@@ -82,6 +82,18 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket_handler.handle_websocket(websocket, mqtt_client)
 
 
+@app.get("/api/state")
+async def api_state():
+    """Minimal JSON for Docker HEALTHCHECK and monitoring (not full inverter payload)."""
+    raw = mqtt_handler.get_state()
+    return {
+        "ok": True,
+        "dashboard_version": VERSION,
+        "control_version": raw.get("version"),
+        "has_mqtt_state": bool(raw),
+    }
+
+
 @app.post("/api/check-update")
 async def api_check_update():
     """Check for updates"""
