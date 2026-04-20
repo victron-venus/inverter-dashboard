@@ -16,6 +16,7 @@ RUN git clone --depth 1 https://github.com/victron-venus/inverter-dashboard.git 
 
 # Copy all Python modules as fallback (baked-in version)
 COPY *.py ./
+COPY ha_client.py ha_secrets.example.py ./
 COPY entrypoint.sh .
 COPY VERSION .
 

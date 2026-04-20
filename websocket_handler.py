@@ -2,6 +2,13 @@
 WebSocket handler for real-time dashboard updates
 """
 
+import os
+import sys
+
+_WH_DIR = os.path.dirname(os.path.abspath(__file__))
+if _WH_DIR not in sys.path:
+    sys.path.insert(0, _WH_DIR)
+
 import json
 import logging
 from typing import Set, Dict, Any

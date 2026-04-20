@@ -6,6 +6,12 @@ Connects to Cerbo GX via MQTT, serves Vue.js dashboard via WebSocket
 
 import os
 import sys
+
+# Ensure sibling modules (e.g. ha_client) resolve when cwd or PYTHONPATH differ
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+if _APP_DIR not in sys.path:
+    sys.path.insert(0, _APP_DIR)
+
 import asyncio
 import logging
 import argparse
