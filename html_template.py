@@ -288,7 +288,7 @@ def get_dashboard_html() -> str:
         HA: {{{{ state.ha_connected ? 'Connected' : 'Disconnected' }}}}{{{{ state.ha_direct_connected ? ' · direct' : '' }}}}
         &nbsp;|&nbsp; Uptime: {{{{ formatUptime(state.uptime || 0) }}}}
         &nbsp;|&nbsp; MQTT: {{{{ mqttConnected ? 'OK' : 'Disconnected' }}}}
-        &nbsp;|&nbsp; Dashboard v{{{{ state.dashboard_version || '?' }}}} · Control v{{{{ state.version || '?' }}}}
+        &nbsp;|&nbsp; Dashboard {{{{ formatSemverLabel(state.dashboard_version) }}}} · Control {{{{ formatSemverLabel(state.version) }}}}
     </div>
 </div>
 
@@ -432,6 +432,15 @@ createApp({
             const sec = Math.floor(s % 60);
             if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
             return m + ':' + String(sec).padStart(2, '0');
+        }
+        /** Single leading v (inverter-control MQTT version is often already v1.x) */
+        function formatSemverLabel(ver) {
+            if (ver === null || ver === undefined || ver === '') return '?';
+            const s = String(ver).trim();
+            if (s === '?') return '?';
+            if (/^v[0-9]/i.test(s)) return s;
+            if (/^[0-9]/.test(s)) return 'v' + s;
+            return s;
         }
         function getButtonState(btn) {
             const stateKey = btn.state_key || 'home_' + btn.id;
@@ -629,7 +638,7 @@ createApp({
             state, wsConnected, mqttConnected, chartEl, isDark, updating,
             essClass, essText, mpptTotal, tasmotaTotal, evCharging, evPower, sortedLoads, dailyStatsHtml,
             batteries, solarSources, homeButtons, headerToggles, hasUpdate, updateBtnText, updateTitle,
-            send, formatPower, formatKey, formatUptime, formatDuration, toggleTheme, checkOrUpdate, getButtonState
+            send, formatPower, formatKey, formatUptime, formatDuration, formatSemverLabel, toggleTheme, checkOrUpdate, getButtonState
         };
     }
 }).mount('#app');

@@ -5,11 +5,9 @@ services:
     restart: unless-stopped
     pull_policy: always
     ports:
-      - "8443:8443"
+      - "8080:8080" # HTTP default; app reads WEB_PORT / --port
     environment:
-      - MQTT_HOST=192.168.x.x  # Your Cerbo IP
+      - MQTT_HOST=192.168.x.x # Cerbo / broker IP
       - MQTT_PORT=1883
-    # Optional: for HTTPS
-    # volumes:
-    #   - ./certs:/app/certs:ro
-    # command: ["--ssl-cert", "/app/certs/cert.pem", "--ssl-key", "/app/certs/key.pem"]
+    # HTTPS in-container example (see README): map 8443, set WEB_PORT=8443, mount certs,
+    # override command with --ssl-cert/--ssl-key, and adjust or disable HEALTHCHECK for TLS-only.

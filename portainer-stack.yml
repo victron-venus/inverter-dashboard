@@ -12,7 +12,7 @@ services:
       - WEB_PORT=8080
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/state')"]
+      test: ["CMD", "python", "-c", "import os,urllib.request; p=os.environ.get('WEB_PORT','8080'); urllib.request.urlopen('http://127.0.0.1:'+p+'/api/state')"]
       interval: 30s
       timeout: 10s
       retries: 3

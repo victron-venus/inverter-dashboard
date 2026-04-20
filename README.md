@@ -62,10 +62,60 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 python server.py --mqtt-host 192.168.1.100 --mqtt-port 1883 --port 8080
 ```
 
-For HTTPS:
-```bash
-python server.py --ssl-cert /path/to/cert.pem --ssl-key /path/to/key.pem
-```
+### HTTPS (why you still see `http://`)
+
+By default the app and the published Docker image listen on **plain HTTP** (port `8080`). Nothing is wrong with your deploy — TLS is not enabled unless you add it.
+
+**Choose one approach:**
+
+1. **Reverse proxy (recommended for production / LAN DNS)**  
+   Put **Caddy**, **Traefik**, or **nginx** in front of the container on port **443**, terminate Let’s Encrypt (or your certs) there, and proxy to `http://inverter-dashboard:8080`. You open `https://dashboard.example.com` in the browser; the container keeps HTTP internally.
+
+2. **TLS inside the Python app** (good for quick tests / single host)
+
+   Generate certs (repo includes a helper):
+
+   ```bash
+   ./scripts/ssl-local-deploy.sh
+   # Optional: TLS_CN=myhost.local ./scripts/ssl-local-deploy.sh
+   ```
+
+   Trust the cert on your Mac (script prints the exact `security add-trusted-cert` command).
+
+   Run locally:
+
+   ```bash
+   python server.py --mqtt-host … --port 8443 \
+     --ssl-cert .certs/dashboard.crt --ssl-key .certs/dashboard.key
+   ```
+
+   **Docker Compose:** mount the cert directory and override the command so uvicorn uses TLS (match published port to `--port`):
+
+   ```yaml
+   services:
+     inverter-dashboard:
+       image: alvit/inverter-dashboard:latest
+       ports:
+         - "8443:8443"
+       environment:
+         - MQTT_HOST=192.168.x.x
+         - WEB_PORT=8443
+       volumes:
+         - ./certs:/app/certs:ro
+       command:
+         [
+           "--mqtt-host", "192.168.x.x",
+           "--port", "8443",
+           "--ssl-cert", "/app/certs/dashboard.crt",
+           "--ssl-key", "/app/certs/dashboard.key",
+         ]
+   ```
+
+   Put `dashboard.crt` / `dashboard.key` in `./certs/` on the host (e.g. copy from `.certs/` after running the script).
+
+   **Note:** The Dockerfile `HEALTHCHECK` probes **`http://127.0.0.1:$WEB_PORT/api/state`** on plain HTTP. If you run **HTTPS only** inside the container on the same port, override or disable the healthcheck in Compose, e.g. `healthcheck: disable: true` or a `curl -fk https://localhost:8443/api/state` probe.
+
+3. **`mkcert`** — alternative to OpenSSL for local dev trust; still point the app at the generated `.pem` paths with `--ssl-cert` / `--ssl-key`.
 
 ## MQTT Topics
 

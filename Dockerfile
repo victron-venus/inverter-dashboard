@@ -22,9 +22,12 @@ COPY VERSION .
 
 RUN chmod +x entrypoint.sh
 
-# Health check
+# Default port (override in docker run / compose; healthcheck uses the same)
+ENV WEB_PORT=8080
+
+# Health check (HTTP; if you run TLS-only on the same port, override healthcheck in compose)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/state')" || exit 1
+    CMD python -c "import os,urllib.request; p=os.environ.get('WEB_PORT','8080'); urllib.request.urlopen('http://127.0.0.1:'+p+'/api/state')" || exit 1
 
 EXPOSE 8080
 
