@@ -19,6 +19,7 @@ from config import MQTT_HOST, MQTT_PORT, WEB_PORT
 from version import VERSION, check_latest_version, download_and_update
 import mqtt_handler
 import websocket_handler
+import ha_client
 from html_template import get_dashboard_html
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -34,9 +35,13 @@ async def lifespan(app: FastAPI):
     global mqtt_client
     
     # Startup
+    ha_client.load_config()
     mqtt_client = mqtt_handler.create_client()
     mqtt_handler.set_state_callback(websocket_handler.broadcast_state, asyncio.get_event_loop())
     mqtt_handler.start_client(mqtt_client)
+    ha_task = None
+    if ha_client.is_direct_mode():
+        ha_task = asyncio.create_task(ha_client.ha_poll_loop())
     
     # Check for updates on startup
     latest = await check_latest_version()
@@ -46,6 +51,12 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
+    if ha_task:
+        ha_task.cancel()
+        try:
+            await ha_task
+        except asyncio.CancelledError:
+            pass
     mqtt_handler.stop_client(mqtt_client)
 
 

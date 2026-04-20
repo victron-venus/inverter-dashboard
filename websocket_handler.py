@@ -9,6 +9,7 @@ from typing import Set, Dict, Any
 from fastapi import WebSocket, WebSocketDisconnect
 
 import mqtt_handler
+import ha_client
 from version import VERSION
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ async def broadcast_state():
     if not ws_clients:
         return
     
-    state = mqtt_handler.get_state()
+    state = ha_client.merge_overlay(mqtt_handler.get_state())
     data = {
         **state,
         'console': mqtt_handler.get_console()[-20:],
@@ -61,7 +62,7 @@ async def handle_websocket(websocket: WebSocket, mqtt_client):
     
     try:
         # Send initial state
-        state = mqtt_handler.get_state()
+        state = ha_client.merge_overlay(mqtt_handler.get_state())
         await websocket.send_json({
             **state,
             'console': mqtt_handler.get_console()[-20:],
@@ -75,7 +76,19 @@ async def handle_websocket(websocket: WebSocket, mqtt_client):
             action = data.get('action')
             
             if action == 'toggle':
-                mqtt_handler.publish_command(mqtt_client, 'toggle', {'entity': data.get('entity')})
+                entity = data.get('entity')
+                if (
+                    entity
+                    and ha_client.is_direct_mode()
+                    and ha_client.is_toggle_allowed(entity)
+                ):
+                    await ha_client.toggle_entity(entity)
+                    fresh = await ha_client.fetch_states_once()
+                    if fresh.get("ha_direct_connected"):
+                        ha_client.replace_overlay(fresh)
+                    await broadcast_state()
+                else:
+                    mqtt_handler.publish_command(mqtt_client, 'toggle', {'entity': entity})
             elif action == 'press':
                 mqtt_handler.publish_command(mqtt_client, 'press', {'entity': data.get('entity')})
             elif action == 'setpoint':

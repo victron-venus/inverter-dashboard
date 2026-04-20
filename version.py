@@ -50,6 +50,8 @@ async def download_and_update() -> tuple[bool, str]:
         'mqtt_handler.py',
         'websocket_handler.py',
         'html_template.py',
+        'ha_client.py',
+        'ha_secrets.example.py',
         'VERSION',
     ]
     

@@ -17,6 +17,8 @@ ENV/
 # Environment
 .env
 .env.local
+ha_secrets.py
+.certs/
 
 # OS
 .DS_Store

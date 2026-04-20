@@ -241,7 +241,7 @@ def get_dashboard_html() -> str:
                             </div>
                             <div class="d-flex justify-content-between mt-1">
                                 <span class="fw-bold" :style="{{color: bat.soc > 50 ? '#7ed321' : bat.soc > 20 ? '#f5a623' : '#e74c3c'}}">{{{{ bat.soc.toFixed(1) }}}}%</span>
-                                <span style="color:var(--text-dim)">{{{{ bat.state }}}}</span>
+                                <span style="color:var(--text-dim);text-align:right">{{{{ bat.state }}}}{{{{ bat.time_to_go ? ' · ' + bat.time_to_go : '' }}}}</span>
                             </div>
                         </div>
                     </div>
@@ -285,10 +285,10 @@ def get_dashboard_html() -> str:
     <!-- Status -->
     <div class="mt-2 text-center small" style="color:#666">
         <span class="status-dot" :class="state.ha_connected ? 'online' : 'offline'"></span>
-        HA: {{{{ state.ha_connected ? 'Connected' : 'Disconnected' }}}}
+        HA: {{{{ state.ha_connected ? 'Connected' : 'Disconnected' }}}}{{{{ state.ha_direct_connected ? ' · direct' : '' }}}}
         &nbsp;|&nbsp; Uptime: {{{{ formatUptime(state.uptime || 0) }}}}
         &nbsp;|&nbsp; MQTT: {{{{ mqttConnected ? 'OK' : 'Disconnected' }}}}
-        &nbsp;|&nbsp; Dashboard: v{{{{ state.dashboard_version || '?' }}}}
+        &nbsp;|&nbsp; Dashboard v{{{{ state.dashboard_version || '?' }}}} · Control v{{{{ state.version || '?' }}}}
     </div>
 </div>
 
@@ -551,7 +551,8 @@ createApp({
                 current: b.current,
                 power: b.power,
                 soc: b.soc || 0,
-                state: b.state || 'Unknown'
+                state: b.state || 'Unknown',
+                time_to_go: b.time_to_go || ''
             }));
         });
         
@@ -574,19 +575,19 @@ createApp({
             const gridCost = (parseFloat(grid) * 0.31).toFixed(2);
             const batIn = (ds.battery_in || 0).toFixed(2);
             const batOut = (ds.battery_out || 0).toFixed(2);
-            const batInY = (ds.battery_in_yesterday || 0).toFixed(2);
-            const batOutY = (ds.battery_out_yesterday || 0).toFixed(2);
+            const batInY = (ds.battery_in_yesterday || 0).toFixed(1);
+            const batOutY = (ds.battery_out_yesterday || 0).toFixed(1);
             const batDelta = (parseFloat(batIn) - parseFloat(batOut)).toFixed(2);
-            const batDeltaY = (parseFloat(batInY) - parseFloat(batOutY)).toFixed(2);
+            const batDeltaY = (parseFloat(batInY) - parseFloat(batOutY)).toFixed(1);
             const tasmotaDaily = ds.tasmota_daily || [];
             const mpptDaily = ds.mppt_daily || [];
             const pvTotalDaily = ds.pv_total_daily || 0;
             let solarParts = [];
-            tasmotaDaily.forEach(v => { if (v > 0) solarParts.push(v.toFixed(2) + 'kW'); });
-            solarParts.push(pvTotalDaily.toFixed(2) + 'kW(' + mpptDaily.map(v => v.toFixed(2)).join('+') + ')');
+            tasmotaDaily.forEach(v => { if (v > 0) solarParts.push(v.toFixed(2)); });
+            solarParts.push(pvTotalDaily.toFixed(2) + '(' + mpptDaily.map(v => v.toFixed(2)).join('+') + ')');
             let result = `<span class="highlight">☀️ ${prod}kWh</span> <span class="detail">${solarParts.join('+')}</span> `;
             result += `<span class="money">($${dollars})</span> | Grid: ${grid}kWh <span class="money">($${gridCost})</span> | `;
-            result += `🔋 In: ${batIn}kWh <span class="dim">(${batInY})</span>, Out: ${batOut}kWh <span class="dim">(${batOutY})</span>; Δ: ${batDelta}kWh <span class="dim">(${batDeltaY})</span>`;
+            result += `🔋 I: ${batIn}kWh <span class="dim">(${batInY})</span>, O: ${batOut}kWh <span class="dim">(${batOutY})</span>; Δ: ${batDelta}kWh <span class="dim">(${batDeltaY})</span>`;
             return result;
         });
         
@@ -594,12 +595,15 @@ createApp({
             if (!chartEl.value) return;
             chart = new uPlot({
                 width: chartEl.value.clientWidth, height: 200,
-                series: [{}, {stroke: '#4a90d9', fill: 'rgba(74,144,217,0.05)', label: 'Grid'},
+                series: [
+                    {label: 'Time'},
+                    {stroke: '#4a90d9', fill: 'rgba(74,144,217,0.05)', label: 'Grid'},
                     {stroke: '#f5a623', fill: 'rgba(245,166,35,0.05)', label: 'Solar'},
                     {stroke: '#7ed321', fill: 'rgba(126,211,33,0.05)', label: 'Battery'},
-                    {stroke: '#00d4aa', dash: [5,5], label: 'Setpoint'}],
+                    {stroke: '#00d4aa', dash: [5,5], label: 'Setpoint'}
+                ],
                 axes: [{show: false}, {grid: {stroke: '#e0e0e0'}, ticks: {stroke: '#ccc'}}],
-                legend: {show: true}, cursor: {show: false}
+                legend: {show: true, live: true}, cursor: {show: false}
             }, [[], [], [], [], []], chartEl.value);
         }
         
