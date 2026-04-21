@@ -100,7 +100,9 @@ By default the app and the published Docker image listen on **plain HTTP** (port
    # Optional: TLS_CN=myhost.local ./scripts/ssl-local-deploy.sh
    ```
 
-   Trust the cert on your Mac (script prints the exact `security add-trusted-cert` command).
+   The helper includes **Subject Alternative Name (SAN)** entries (`TLS_CN`, `localhost`, `127.0.0.1`). Browsers require SAN for HTTPS hostname checks; an old cert with **CN-only** can still show “not private” even after trusting — regenerate, copy the new **`dashboard.crt`** / **`dashboard.key`** to NAS **`config/`**, redeploy, then trust again (remove the previous cert from Keychain Access if needed).
+
+   Trust the cert on your Mac (`postinstall.sh` does this automatically; the helper also prints `security add-trusted-cert`).
 
    **Local run (paths arbitrary):**
 
