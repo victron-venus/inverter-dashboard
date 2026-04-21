@@ -612,7 +612,13 @@ createApp({
                     {stroke: '#00d4aa', dash: [5,5], label: 'Setpoint'}
                 ],
                 axes: [{show: false}, {grid: {stroke: '#e0e0e0'}, ticks: {stroke: '#ccc'}}],
-                legend: {show: true, live: true}, cursor: {show: false}
+                legend: {show: true, live: true},
+                /* live legend needs cursor idx; without cursor, labels show "--" */
+                cursor: {
+                    show: true,
+                    points: {show: false},
+                    drag: {setScale: false, x: false, y: false},
+                },
             }, [[], [], [], [], []], chartEl.value);
         }
         
