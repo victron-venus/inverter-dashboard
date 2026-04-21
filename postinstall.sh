@@ -33,6 +33,27 @@ DOCKER="${DOCKER:-sudo /usr/local/bin/docker}"
 
 # On macOS: trust local dashboard.crt if not already present (HTTPS in Safari/Chrome).
 # Some macOS builds lack /Library/Keychains/System.keychain-db — try System.keychain, then login.keychain-db (no sudo).
+
+# Before importing: drop prior copies (same fingerprint or same CN) to avoid duplicates / stale certs after regeneration.
+remove_dashboard_cert_from_mac_keychains() {
+  local cert="$1" hash="$2" cn="$3"
+  local k
+  for k in \
+      /Library/Keychains/System.keychain-db \
+      /Library/Keychains/System.keychain \
+      "${HOME}/Library/Keychains/login.keychain-db" \
+      "${HOME}/Library/Keychains/login.keychain"; do
+    [[ -f "$k" ]] || continue
+    if [[ "$k" == /Library/* ]]; then
+      while sudo security delete-certificate -Z "$hash" "$k" 2>/dev/null; do :; done
+      [[ -n "$cn" ]] && while sudo security delete-certificate -c "$cn" "$k" 2>/dev/null; do :; done
+    else
+      while security delete-certificate -Z "$hash" "$k" 2>/dev/null; do :; done
+      [[ -n "$cn" ]] && while security delete-certificate -c "$cn" "$k" 2>/dev/null; do :; done
+    fi
+  done
+}
+
 trust_dashboard_cert_on_mac_if_needed() {
   [[ "${SKIP_MAC_TRUST:-0}" == "1" ]] && return 0
   [[ "$(uname -s)" == "Darwin" ]] || return 0
@@ -43,9 +64,10 @@ trust_dashboard_cert_on_mac_if_needed() {
   done
   [[ -n "$cert" ]] || return 0
 
-  local hash k found
+  local hash cn k found
   hash=$(openssl x509 -in "$cert" -outform DER 2>/dev/null | shasum -a 256 | awk '{print $1}')
   [[ -n "$hash" ]] || return 0
+  cn=$(openssl x509 -in "$cert" -noout -subject 2>/dev/null | sed -n 's/.*CN=\([^,;/]*\).*/\1/p' | head -1)
 
   # Scan keychains that actually exist on this Mac
   for k in \
@@ -60,6 +82,9 @@ trust_dashboard_cert_on_mac_if_needed() {
       return 0
     fi
   done
+
+  echo ">>> macOS: removing previous dashboard.crt entries from keychains (if any)..."
+  remove_dashboard_cert_from_mac_keychains "$cert" "$hash" "$cn"
 
   local errfile
   errfile=$(mktemp)
