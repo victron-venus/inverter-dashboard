@@ -33,7 +33,11 @@ if [[ "$BRANCH" != "main" ]]; then
     [[ ${REPLY:-} =~ ^[Yy]$ ]] || exit 1
 fi
 
-LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+# Highest semver tag (git describe can miss a newer tag not on the direct ancestry path)
+LATEST_TAG=$(git tag -l 'v*' | sort -V | tail -n1)
+if [ -z "$LATEST_TAG" ]; then
+    LATEST_TAG="v0.0.0"
+fi
 echo "Latest tag (after fetch): $LATEST_TAG"
 
 if [[ $LATEST_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
