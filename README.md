@@ -68,14 +68,9 @@ Committed template only: [`ha_secrets.example.py`](ha_secrets.example.py). Real 
 | `/volume1/docker/inverter-dashboard/config` | Host folder mounted read-only into the container as **`/app/config`**. Put **`ha_secrets.py`**, optional **`dashboard.crt`** / **`dashboard.key`** here. Same path in [`docker-compose.yml`](docker-compose.yml) and [`portainer-stack.yml`](portainer-stack.yml). |
 
 - **After clone (any machine):** `./scripts/init-config.sh` creates **`config/ha_secrets.py`** from the example; fill in **`HA_TOKEN`** / **`HA_URL`** (typically the same long-lived token as inverter-control **`secrets.py`**).
-- **`postinstall.sh`** (in repo root): run **on your Mac/PC** (not on the NAS). Set SSH to the Synology, then:
+- **`postinstall.sh`** (in repo root): run **on your Mac/PC** (not on the NAS). Put **`Host synology`** (user, hostname, keys) in **`~/.ssh/config`**, then simply **`./postinstall.sh`** — it runs **`ssh synology`** by default (override with **`SYNOLOGY_SSH`** only if you use another alias).
 
-  ```bash
-  export SYNOLOGY_SSH='alvit@192.168.x.x'   # or Host from ~/.ssh/config; key-based SSH, no password
-  ./postinstall.sh
-  ```
-
-  Expects **passwordless `sudo`** on the NAS for **`docker` / `docker compose`** and for writing under **`/volume1/docker/...`** (user `alvit` is usually not in the `docker` group). Files are uploaded to a temp dir, then **`sudo install`** into config. Env: **`REMOTE_BASE`**, **`SOURCE_CONFIG`**, **`STACK_FILE`**, **`DOCKER`** (default `sudo docker`).
+  Expects **passwordless `sudo`** on the NAS for **`docker` / `docker compose`** and for writing under **`/volume1/docker/...`**. Files go to a temp dir on the NAS, then **`sudo install`** into config. Env: **`SYNOLOGY_SSH`**, **`REMOTE_BASE`**, **`SOURCE_CONFIG`**, **`STACK_FILE`**, **`DOCKER`** (default `sudo docker`).
 
 If **both** cert files exist in that folder, the **entrypoint enables HTTPS on the same port** as HTTP would use; otherwise HTTP only.
 

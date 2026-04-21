@@ -2,27 +2,24 @@
 # Run from your Mac / PC: copy config + stack to Synology over SSH, then recreate the container there.
 #
 # Assumes:
-#   - SSH key login as user **alvit** (or set SYNOLOGY_SSH), no password prompt for SSH.
-#   - **sudo** works without password for mkdir/cp/chmod and **docker** / **docker compose**
-#     (configure in DSM or sudoers — alvit is not in the docker group by default on Synology).
+#   - **~/.ssh/config** defines **`Host synology`** (user, hostname, IdentityFile — nothing hardcoded here).
+#   - SSH uses that host alias: **`ssh synology`** (override with **SYNOLOGY_SSH** if needed).
+#   - **sudo** works without password for mkdir/cp/chmod and **docker** / **docker compose** on the NAS.
 #
-#   export SYNOLOGY_SSH='alvit@192.168.x.x'   # or a Host from ~/.ssh/config
 #   ./postinstall.sh
 #
 # Optional env:
-#   SOURCE_CONFIG   — local dir with ha_secrets.py & optional certs (default: ./config)
-#   REMOTE_BASE     — on NAS (default: /volume1/docker/inverter-dashboard)
-#   STACK_FILE      — local compose file to upload (default: ./portainer-stack.yml)
-#   DOCKER          — prefix for docker CLI (default: sudo docker)
+#   SYNOLOGY_SSH   — SSH destination (default: synology)
+#   SOURCE_CONFIG  — local dir with ha_secrets.py & optional certs (default: ./config)
+#   REMOTE_BASE    — on NAS (default: /volume1/docker/inverter-dashboard)
+#   STACK_FILE     — local compose file to upload (default: ./portainer-stack.yml)
+#   DOCKER         — prefix for docker CLI (default: sudo docker)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-if [[ -z "${SYNOLOGY_SSH:-}" ]]; then
-  echo "Set SYNOLOGY_SSH, e.g. export SYNOLOGY_SSH='alvit@192.168.1.20'" >&2
-  exit 1
-fi
+SYNOLOGY_SSH="${SYNOLOGY_SSH:-synology}"
 
 SOURCE_CONFIG="${SOURCE_CONFIG:-$SCRIPT_DIR/config}"
 REMOTE_BASE="${REMOTE_BASE:-/volume1/docker/inverter-dashboard}"
