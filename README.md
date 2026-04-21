@@ -68,7 +68,14 @@ Committed template only: [`ha_secrets.example.py`](ha_secrets.example.py). Real 
 | `/volume1/docker/inverter-dashboard/config` | Host folder mounted read-only into the container as **`/app/config`**. Put **`ha_secrets.py`**, optional **`dashboard.crt`** / **`dashboard.key`** here. Same path in [`docker-compose.yml`](docker-compose.yml) and [`portainer-stack.yml`](portainer-stack.yml). |
 
 - **After clone (any machine):** `./scripts/init-config.sh` creates **`config/ha_secrets.py`** from the example; fill in **`HA_TOKEN`** / **`HA_URL`** (typically the same long-lived token as inverter-control **`secrets.py`**).
-- **`postinstall.sh`** (in repo root): run **on the NAS** after editing secrets/certs locally — copies `config/ha_secrets.py` (+ optional certs) into **`HOST_CONFIG`**, **`docker pull`**, then **`docker compose … up --force-recreate inverter-dashboard`** using **`portainer-stack.yml`** next to the script so Watchtower/stack stay consistent. Override **`STACK_FILE`** / **`SOURCE_CONFIG`** / **`MQTT_HOST`** via env if needed.
+- **`postinstall.sh`** (in repo root): run **on your Mac/PC** (not on the NAS). Set SSH to the Synology, then:
+
+  ```bash
+  export SYNOLOGY_SSH='admin@192.168.x.x'   # or: export SYNOLOGY_SSH='my-nas'  if in ~/.ssh/config
+  ./postinstall.sh
+  ```
+
+  Creates **`/volume1/docker/inverter-dashboard/config`** on the NAS if needed, **copies** `config/ha_secrets.py` (or `ha_secrets.py` in the repo root) and optional **`dashboard.crt` / `dashboard.key`**, uploads **`portainer-stack.yml`** to **`/volume1/docker/inverter-dashboard/`**, then over **SSH** runs **`docker pull`** and **`docker compose … up --force-recreate inverter-dashboard`**. Env: **`REMOTE_BASE`**, **`SOURCE_CONFIG`**, **`STACK_FILE`**.
 
 If **both** cert files exist in that folder, the **entrypoint enables HTTPS on the same port** as HTTP would use; otherwise HTTP only.
 
