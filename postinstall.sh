@@ -17,6 +17,9 @@
 #   STACK_FILE     — local compose file to upload (default: ./portainer-stack.yml)
 #   DOCKER         — prefix for docker CLI (default: sudo /usr/local/bin/docker — Synology PATH under sudo often lacks docker)
 #   SKIP_MAC_TRUST — set to 1 to skip importing dashboard.crt into macOS Keychain
+#   AUTO_GENERATE_DASHBOARD_TLS — if 1 (default), run scripts/ssl-local-deploy.sh when no full
+#       dashboard.crt + dashboard.key pair exists under SOURCE_CONFIG or .certs/ (skipped if either folder already has both files).
+#   TLS_CN — CN/SAN hostname for generated cert (default inverter-dashboard.local).
 
 set -euo pipefail
 
@@ -30,6 +33,24 @@ REMOTE_CONFIG="${REMOTE_BASE}/config"
 STACK_FILE="${STACK_FILE:-$SCRIPT_DIR/portainer-stack.yml}"
 IMAGE="${IMAGE:-alvit/inverter-dashboard:latest}"
 DOCKER="${DOCKER:-sudo /usr/local/bin/docker}"
+AUTO_GENERATE_DASHBOARD_TLS="${AUTO_GENERATE_DASHBOARD_TLS:-1}"
+
+dashboard_tls_pair_present() {
+  [[ -f "$SOURCE_CONFIG/dashboard.crt" && -f "$SOURCE_CONFIG/dashboard.key" ]] && return 0
+  [[ -f "$SCRIPT_DIR/.certs/dashboard.crt" && -f "$SCRIPT_DIR/.certs/dashboard.key" ]] && return 0
+  return 1
+}
+
+maybe_generate_dashboard_tls() {
+  [[ "${AUTO_GENERATE_DASHBOARD_TLS}" == "1" ]] || return 0
+  if dashboard_tls_pair_present; then
+    echo ">>> TLS: dashboard.crt + dashboard.key already present — skip generation."
+    return 0
+  fi
+  echo ">>> TLS: generating dashboard.crt + dashboard.key into .certs/ ..."
+  CERT_DIR="$SCRIPT_DIR/.certs" TLS_CN="${TLS_CN:-inverter-dashboard.local}" \
+    "$SCRIPT_DIR/scripts/ssl-local-deploy.sh"
+}
 
 # On macOS: trust local dashboard.crt if not already present (HTTPS in Safari/Chrome).
 # Some macOS builds lack /Library/Keychains/System.keychain-db — try System.keychain, then login.keychain-db (no sudo).
@@ -128,6 +149,8 @@ trust_dashboard_cert_on_mac_if_needed() {
   rm -f "$errfile"
   echo ">>> macOS: could not import cert — trust manually (Keychain Access)." >&2
 }
+
+maybe_generate_dashboard_tls
 
 echo ">>> NAS: $SYNOLOGY_SSH"
 echo ">>> Remote: $REMOTE_CONFIG , $REMOTE_BASE/portainer-stack.yml"
