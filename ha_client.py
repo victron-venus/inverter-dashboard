@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -28,6 +28,7 @@ _boolean_entities: Dict[str, str] = {}
 _switch_entities: Dict[str, str] = {}
 _water_valve = ""
 _water_pump = ""
+_switch_labels: Dict[str, str] = {}
 
 # Latest overlay merged into WebSocket payloads (replaced wholesale on each HA poll)
 _overlay: Dict[str, Any] = {
@@ -59,7 +60,7 @@ def _prepend_ha_secrets_import_path() -> None:
 def load_config():
     """Import ha_secrets if present (see ha_secrets.example.py, config/ on host)."""
     global _configured, _url, _token, _direct, _poll_interval
-    global _boolean_entities, _switch_entities, _water_valve, _water_pump
+    global _boolean_entities, _switch_entities, _water_valve, _water_pump, _switch_labels
 
     _prepend_ha_secrets_import_path()
 
@@ -67,6 +68,9 @@ def load_config():
         import ha_secrets as hs  # type: ignore
     except ImportError:
         _configured = False
+        _boolean_entities = {}
+        _switch_entities = {}
+        _switch_labels = {}
         logger.info("ha_secrets.py not found — switch state from MQTT only")
         return
 
@@ -77,6 +81,7 @@ def load_config():
 
     _boolean_entities = dict(getattr(hs, "HA_BOOLEAN_ENTITIES", {}) or {})
     _switch_entities = dict(getattr(hs, "HA_SWITCH_ENTITIES", {}) or {})
+    _switch_labels = dict(getattr(hs, "HA_SWITCH_LABELS", {}) or {})
     _water_valve = getattr(hs, "HA_WATER_VALVE_ENTITY", "") or ""
     _water_pump = getattr(hs, "HA_PUMP_SWITCH_ENTITY", "") or ""
 
@@ -87,6 +92,38 @@ def load_config():
 
 def is_direct_mode() -> bool:
     return _configured and _direct
+
+
+def _default_switch_label(state_key: str) -> str:
+    """Human-readable label from state_key when HA_SWITCH_LABELS has no override."""
+    s = state_key
+    if s.startswith("home_"):
+        s = s[5:]
+    return s.replace("_", " ").upper()
+
+
+def home_buttons_ui() -> List[Dict[str, Any]]:
+    """Home card buttons: one row per HA_SWITCH_ENTITIES entry (order preserved)."""
+    rows = []
+    for state_key, entity_id in _switch_entities.items():
+        label = _switch_labels.get(state_key) or _default_switch_label(state_key)
+        btn_id = state_key.replace("_", "-")
+        rows.append(
+            {
+                "id": btn_id,
+                "label": label,
+                "entity": entity_id,
+                "state_key": state_key,
+            }
+        )
+    return rows
+
+
+def ui_config_patch() -> Dict[str, Any]:
+    """Partial ui_config from ha_secrets (merged into WebSocket payloads)."""
+    if not _switch_entities:
+        return {}
+    return {"home_buttons": home_buttons_ui()}
 
 
 def is_toggle_allowed(entity_id: str) -> bool:
@@ -202,7 +239,7 @@ async def call_turn(entity_id: str, turn_on: bool) -> bool:
 
     domain = entity_id.split(".")[0]
     service = "turn_on" if turn_on else "turn_off"
-    if domain not in ("input_boolean", "switch"):
+    if domain not in ("input_boolean", "switch", "light"):
         return False
 
     headers = {
@@ -234,6 +271,8 @@ async def toggle_entity(entity_id: str) -> bool:
         svc = "input_boolean/toggle"
     elif domain == "switch":
         svc = "switch/toggle"
+    elif domain == "light":
+        svc = "light/toggle"
     else:
         return False
 

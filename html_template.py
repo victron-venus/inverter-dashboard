@@ -533,11 +533,7 @@ createApp({
         
         const homeButtons = computed(() => {
             const uiConfig = state.value.ui_config || {};
-            return uiConfig.home_buttons || [
-                {id: 'recliner', label: 'RECLINER', entity: 'switch.recliner_recliner', state_key: 'home_recliner'},
-                {id: 'garage', label: 'GARAGE', entity: 'switch.garage_opener_l', state_key: 'home_garage'},
-                {id: 'laundry', label: 'LAUNDRY', entity: 'switch.laundry_zigbee_switch', state_key: 'laundry_outlet'}
-            ];
+            return uiConfig.home_buttons || [];
         });
         
         const headerToggles = computed(() => {

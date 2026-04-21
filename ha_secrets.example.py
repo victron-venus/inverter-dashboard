@@ -25,7 +25,8 @@ HA_DIRECT_CONTROLS = True
 HA_POLL_INTERVAL_SEC = 12
 
 # ---------------------------------------------------------------------------
-# Entities — keys must match ui_config ids / state_keys used by the Vue app
+# Entities — keys are WebSocket/MQTT state field names (booleans for switches/lights).
+# Home card buttons are built automatically from HA_SWITCH_ENTITIES (+ optional HA_SWITCH_LABELS).
 # ---------------------------------------------------------------------------
 # Header mode toggles (input_boolean.*)
 HA_BOOLEAN_ENTITIES = {
@@ -38,11 +39,18 @@ HA_BOOLEAN_ENTITIES = {
     "minimize_charging": "input_boolean.minimize_charging",
 }
 
-# Home section buttons (switch.*)
+# Home section buttons — keys are WebSocket state keys (bool); values are HA entity IDs.
+# Supported domains include switch.* and light.* (toggle via HA REST when HA_DIRECT_CONTROLS).
 HA_SWITCH_ENTITIES = {
     "home_recliner": "switch.recliner_recliner",
     "home_garage": "switch.garage_opener_l",
     "laundry_outlet": "switch.laundry_zigbee_switch",
+    "garage_light": "light.garage",
+}
+
+# Optional labels for the Home card (otherwise derived from keys, e.g. laundry_outlet → LAUNDRY OUTLET).
+HA_SWITCH_LABELS = {
+    # "laundry_outlet": "LAUNDRY",
 }
 
 # Water card (optional — leave empty strings to skip)

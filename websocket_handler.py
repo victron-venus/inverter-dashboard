@@ -34,18 +34,30 @@ def set_latest_version(version: str | None):
     latest_version = version
 
 
+def _with_ui_config(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge ha_secrets-derived ui_config (e.g. home_buttons) into payload."""
+    patch = ha_client.ui_config_patch()
+    if not patch:
+        return payload
+    out = dict(payload)
+    uc = dict(out.get("ui_config") or {})
+    uc.update(patch)
+    out["ui_config"] = uc
+    return out
+
+
 async def broadcast_state():
     """Send state to all WebSocket clients"""
     if not ws_clients:
         return
     
     state = ha_client.merge_overlay(mqtt_handler.get_state())
-    data = {
+    data = _with_ui_config({
         **state,
         'console': mqtt_handler.get_console()[-20:],
         'dashboard_version': VERSION,
         'latest_version': latest_version,
-    }
+    })
     
     message = json.dumps(data)
     disconnected = set()
@@ -70,12 +82,12 @@ async def handle_websocket(websocket: WebSocket, mqtt_client):
     try:
         # Send initial state
         state = ha_client.merge_overlay(mqtt_handler.get_state())
-        await websocket.send_json({
+        await websocket.send_json(_with_ui_config({
             **state,
             'console': mqtt_handler.get_console()[-20:],
             'dashboard_version': VERSION,
             'latest_version': latest_version,
-        })
+        }))
         
         # Handle incoming messages
         while True:
