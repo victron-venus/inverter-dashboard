@@ -37,13 +37,14 @@ _overlay: Dict[str, Any] = {
 
 
 def _prepend_ha_secrets_import_path() -> None:
-    """Load ha_secrets from INVERTER_DASHBOARD_CONFIG or ./config (Docker bind-mount)."""
+    """Load ha_secrets from INVERTER_DASHBOARD_CONFIG, ./config/, or repo root."""
     here = os.path.dirname(os.path.abspath(__file__))
     candidates = []
     env_dir = os.environ.get("INVERTER_DASHBOARD_CONFIG", "").strip()
     if env_dir:
         candidates.append(env_dir)
     candidates.append(os.path.join(here, "config"))
+    candidates.append(here)
     for d in candidates:
         if not d:
             continue

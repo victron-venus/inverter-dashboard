@@ -11,8 +11,8 @@ services:
       - MQTT_PORT=${MQTT_PORT:-1883}
       - WEB_PORT=8080
       - INVERTER_DASHBOARD_CONFIG=/app/config
-    # volumes:
-    #   - /volume1/docker/inverter-dashboard/config:/app/config:ro
+    volumes:
+      - /volume1/docker/inverter-dashboard/config:/app/config:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "/app/scripts/docker_healthcheck.py"]

@@ -11,5 +11,5 @@ services:
       - MQTT_PORT=1883
       - INVERTER_DASHBOARD_CONFIG=/app/config
     volumes:
-      # Host folder: ha_secrets.py (required for HA direct mode), optional dashboard.crt + dashboard.key → HTTPS
-      - ./config:/app/config:ro
+      # Synology NAS (primary deployment path). On dev machines without this path, comment out or override.
+      - /volume1/docker/inverter-dashboard/config:/app/config:ro

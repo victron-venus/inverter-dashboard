@@ -59,11 +59,18 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 
 ### Config directory (`ha_secrets.py` + optional HTTPS)
 
-There is **no** committed `ha_secrets.py` (only [`ha_secrets.example.py`](ha_secrets.example.py)) — credentials must **not** be pushed to GitHub.
+Committed template only: [`ha_secrets.example.py`](ha_secrets.example.py). Real secrets live in **`config/ha_secrets.py`** and/or **`ha_secrets.py`** next to `server.py` — both filenames are **gitignored** (never push).
 
-- **After clone:** run `./scripts/init-config.sh` — creates **`config/ha_secrets.py`** from the example (path is gitignored). Edit tokens and entity IDs there.
-- **Docker / Synology:** put `ha_secrets.py` on the host under a folder you mount at **`/app/config`**. Optionally add **`dashboard.crt`** and **`dashboard.key`** (same names as [`scripts/ssl-local-deploy.sh`](scripts/ssl-local-deploy.sh)). If **both** cert files exist, the **entrypoint starts HTTPS on the same port** as usual (`WEB_PORT` / `--port`, default 8080); otherwise HTTP.
-- See [`postinstall.example.sh`](postinstall.example.sh): copy to `postinstall.sh` on the host (that filename is gitignored), set paths, use it to `docker pull`, remove the old container, and recreate with the config volume.
+**Synology NAS (deploy path used in this repo):**
+
+| Location | Purpose |
+|---------|---------|
+| `/volume1/docker/inverter-dashboard/config` | Host folder mounted read-only into the container as **`/app/config`**. Put **`ha_secrets.py`**, optional **`dashboard.crt`** / **`dashboard.key`** here. Same path in [`docker-compose.yml`](docker-compose.yml) and [`portainer-stack.yml`](portainer-stack.yml). |
+
+- **After clone (any machine):** `./scripts/init-config.sh` creates **`config/ha_secrets.py`** from the example; fill in **`HA_TOKEN`** / **`HA_URL`** (typically the same long-lived token as inverter-control **`secrets.py`**).
+- **`postinstall.sh`** (in repo root): run **on the NAS** after editing secrets/certs locally — copies `config/ha_secrets.py` (+ optional certs) into **`HOST_CONFIG`**, **`docker pull`**, then **`docker compose … up --force-recreate inverter-dashboard`** using **`portainer-stack.yml`** next to the script so Watchtower/stack stay consistent. Override **`STACK_FILE`** / **`SOURCE_CONFIG`** / **`MQTT_HOST`** via env if needed.
+
+If **both** cert files exist in that folder, the **entrypoint enables HTTPS on the same port** as HTTP would use; otherwise HTTP only.
 
 ### Command Line Arguments
 
@@ -100,22 +107,16 @@ By default the app and the published Docker image listen on **plain HTTP** (port
      --ssl-cert .certs/dashboard.crt --ssl-key .certs/dashboard.key
    ```
 
-   **Docker Compose** example with mounted secrets + optional TLS files:
+   **Docker Compose / Portainer:** host config path (Synology):
 
    ```yaml
-   services:
-     inverter-dashboard:
-       image: alvit/inverter-dashboard:latest
-       ports:
-         - "8080:8080"
-       environment:
-         - MQTT_HOST=192.168.x.x
-         - INVERTER_DASHBOARD_CONFIG=/app/config
-       volumes:
-         - ./config:/app/config:ro
+   volumes:
+     - /volume1/docker/inverter-dashboard/config:/app/config:ro
    ```
 
-   If you omit the cert/key pair in `./config/`, the app stays on HTTP. You can still override TLS paths manually via `command:` if needed.
+   On a dev PC without `/volume1`, comment out this volume or bind a local `./config` instead.
+
+   If you omit **`dashboard.crt`** / **`dashboard.key`** on the host, the app stays on HTTP.
 
    The image **`HEALTHCHECK`** uses **`scripts/docker_healthcheck.py`**, which calls **`/api/state`** over HTTP or HTTPS depending on whether `dashboard.crt` + `dashboard.key` exist in the config directory.
 
