@@ -70,7 +70,7 @@ Committed template only: [`ha_secrets.example.py`](ha_secrets.example.py). Real 
 - **After clone (any machine):** `./scripts/init-config.sh` creates **`config/ha_secrets.py`** from the example; fill in **`HA_TOKEN`** / **`HA_URL`** (typically the same long-lived token as inverter-control **`secrets.py`**).
 - **`postinstall.sh`** (in repo root): run **on your Mac/PC** (not on the NAS). Put **`Host synology`** (user, hostname, keys) in **`~/.ssh/config`**, then simply **`./postinstall.sh`** — it runs **`ssh synology`** by default (override with **`SYNOLOGY_SSH`** only if you use another alias).
 
-  Expects **passwordless `sudo`** on the NAS for **`docker` / `docker compose`** and for writing under **`/volume1/docker/...`**. Files are pushed with **`ssh` + stdin** (not `scp`), so it still works if Synology has disabled the SFTP/SCP subsystem. Then **`sudo install`** from a temp dir. Env: **`SYNOLOGY_SSH`**, **`REMOTE_BASE`**, **`SOURCE_CONFIG`**, **`STACK_FILE`**, **`DOCKER`**.
+  Expects **passwordless `sudo`** on the NAS for **`docker` / `docker compose`** and for writing under **`/volume1/docker/...`**. Files are pushed with **`ssh` + stdin** (not `scp`), so it still works if Synology has disabled the SFTP/SCP subsystem. Then **`sudo install`** from a temp dir. Env: **`SYNOLOGY_SSH`**, **`REMOTE_BASE`**, **`SOURCE_CONFIG`**, **`STACK_FILE`**, **`DOCKER`** (default **`sudo /usr/local/bin/docker`** — under **`sudo`** DSM often has no **`docker`** in **`PATH`**).
 
 If **both** cert files exist in that folder, the **entrypoint enables HTTPS on the same port** as HTTP would use; otherwise HTTP only.
 

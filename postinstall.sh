@@ -15,7 +15,7 @@
 #   SOURCE_CONFIG  — local dir with ha_secrets.py & optional certs (default: ./config)
 #   REMOTE_BASE    — on NAS (default: /volume1/docker/inverter-dashboard)
 #   STACK_FILE     — local compose file to upload (default: ./portainer-stack.yml)
-#   DOCKER         — prefix for docker CLI (default: sudo docker)
+#   DOCKER         — prefix for docker CLI (default: sudo /usr/local/bin/docker — Synology PATH under sudo often lacks docker)
 
 set -euo pipefail
 
@@ -28,7 +28,7 @@ REMOTE_BASE="${REMOTE_BASE:-/volume1/docker/inverter-dashboard}"
 REMOTE_CONFIG="${REMOTE_BASE}/config"
 STACK_FILE="${STACK_FILE:-$SCRIPT_DIR/portainer-stack.yml}"
 IMAGE="${IMAGE:-alvit/inverter-dashboard:latest}"
-DOCKER="${DOCKER:-sudo docker}"
+DOCKER="${DOCKER:-sudo /usr/local/bin/docker}"
 
 echo ">>> NAS: $SYNOLOGY_SSH"
 echo ">>> Remote: $REMOTE_CONFIG , $REMOTE_BASE/portainer-stack.yml"
@@ -75,7 +75,7 @@ ssh "$SYNOLOGY_SSH" "cat > \"${STAGING}/portainer-stack.yml\"" < "$STACK_FILE"
 ssh "$SYNOLOGY_SSH" "sudo install -m 644 \"${STAGING}/portainer-stack.yml\" \"${REMOTE_BASE}/portainer-stack.yml\""
 echo ">>> Uploaded portainer-stack.yml"
 
-echo ">>> Remote: sudo docker pull + compose recreate"
+echo ">>> Remote: docker pull + compose recreate ($DOCKER)"
 # shellcheck disable=SC2086
 ssh "$SYNOLOGY_SSH" "${DOCKER} pull \"${IMAGE}\" && ${DOCKER} compose -f \"${REMOTE_BASE}/portainer-stack.yml\" pull inverter-dashboard && ${DOCKER} compose -f \"${REMOTE_BASE}/portainer-stack.yml\" up -d --force-recreate inverter-dashboard"
 
