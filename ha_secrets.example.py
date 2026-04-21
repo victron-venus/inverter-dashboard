@@ -40,19 +40,21 @@ HA_BOOLEAN_ENTITIES = {
     "minimize_charging": "input_boolean.minimize_charging",
 }
 
-# Home section buttons — keys are WebSocket state keys (bool); values are HA entity IDs.
+# Home section buttons — keys are WebSocket state keys (bool).
+# Each value may be:
+#   - entity id string: "switch.foo"
+#   - (entity_id, "Short label") tuple
+#   - dict: {"entity": "switch.foo", "label": "Short"}  (keys "short" / "name" also work for label)
 # Supported domains include switch.* and light.* (toggle via HA REST when HA_DIRECT_CONTROLS).
 HA_SWITCH_ENTITIES = {
-    "home_recliner": "switch.recliner_recliner",
-    "home_garage": "switch.garage_opener_l",
-    "laundry_outlet": "switch.laundry_zigbee_switch",
-    "garage_light": "light.garage",
+    "home_recliner": ("switch.recliner_recliner", "Recliner"),
+    "home_garage": ("switch.garage_opener_l", "Garage"),
+    "laundry_outlet": ("switch.laundry_zigbee_switch", "Laundry"),
+    "garage_light": {"entity": "light.garage", "label": "Garage light"},
 }
 
-# Optional labels for the Home card (otherwise derived from keys, e.g. laundry_outlet → LAUNDRY OUTLET).
-HA_SWITCH_LABELS = {
-    # "laundry_outlet": "LAUNDRY",
-}
+# Optional extra overrides if you still use plain string values above (HA_SWITCH_LABELS wins over embedded labels).
+HA_SWITCH_LABELS = {}
 
 # Water card (optional — leave empty strings to skip)
 HA_WATER_VALVE_ENTITY = "switch.shutoff_valve"

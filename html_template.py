@@ -181,8 +181,13 @@ def get_dashboard_html() -> str:
                     </div>
                 </div>
             </div>
-            <!-- Dishwasher -->
-            <div class="card mb-2" v-if="state.features?.dishwasher !== false && state.dishwasher_running">
+            <!-- Dishwasher — show while running signal, elapsed time, or inverter-control alternate keys -->
+            <div class="card mb-2" v-if="state.features?.dishwasher !== false && (
+                state.dishwasher_running ||
+                ((state.dishwasher_duration || 0) > 0) ||
+                ((state.dishwasher_time || 0) > 0) ||
+                state.dishwasher_active
+              )">
                 <div class="card-header"><i class="fas fa-utensils me-2"></i>Dishwasher</div>
                 <div class="card-body py-1">
                     <div class="d-flex justify-content-between align-items-center">
@@ -191,8 +196,8 @@ def get_dashboard_html() -> str:
                     </div>
                 </div>
             </div>
-            <!-- Washer -->
-            <div class="card mb-2" v-if="state.features?.washer !== false && (state.washer_time > 0)">
+            <!-- Washer — time remaining may be 0 while cycle runs; use power draw too -->
+            <div class="card mb-2" v-if="state.features?.washer !== false && (((state.washer_time || 0) > 0) || state.washer_power)">
                 <div class="card-header"><i class="fas fa-soap me-2"></i>Washer</div>
                 <div class="card-body py-1">
                     <div class="d-flex justify-content-between align-items-center">
@@ -202,7 +207,7 @@ def get_dashboard_html() -> str:
                 </div>
             </div>
             <!-- Dryer -->
-            <div class="card mb-2" v-if="state.features?.dryer !== false && (state.dryer_time > 0)">
+            <div class="card mb-2" v-if="state.features?.dryer !== false && (((state.dryer_time || 0) > 0) || state.dryer_power)">
                 <div class="card-header"><i class="fas fa-wind me-2"></i>Dryer</div>
                 <div class="card-body py-1">
                     <div class="d-flex justify-content-between align-items-center">

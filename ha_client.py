@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -61,6 +61,32 @@ def _prepend_ha_secrets_import_path() -> None:
             return
 
 
+def _parse_switch_entities(raw: Any) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Normalize HA_SWITCH_ENTITIES: value may be entity_id str, (entity, label), or dict with entity/label."""
+    entities: Dict[str, str] = {}
+    embedded_labels: Dict[str, str] = {}
+    if not raw or not isinstance(raw, dict):
+        return entities, embedded_labels
+    for state_key, val in raw.items():
+        if not state_key:
+            continue
+        if isinstance(val, str):
+            entities[state_key] = val.strip()
+        elif isinstance(val, (tuple, list)):
+            if len(val) >= 1 and val[0]:
+                entities[state_key] = str(val[0]).strip()
+            if len(val) >= 2 and val[1]:
+                embedded_labels[state_key] = str(val[1]).strip()
+        elif isinstance(val, dict):
+            eid = val.get("entity") or val.get("id") or val.get("entity_id")
+            if eid:
+                entities[state_key] = str(eid).strip()
+            lab = val.get("label") or val.get("short") or val.get("name")
+            if lab:
+                embedded_labels[state_key] = str(lab).strip()
+    return entities, embedded_labels
+
+
 def load_config():
     """Import ha_secrets if present (see ha_secrets.example.py, config/ on host)."""
     global _configured, _url, _token, _direct, _poll_interval
@@ -84,8 +110,11 @@ def load_config():
     _poll_interval = float(getattr(hs, "HA_POLL_INTERVAL_SEC", 12))
 
     _boolean_entities = dict(getattr(hs, "HA_BOOLEAN_ENTITIES", {}) or {})
-    _switch_entities = dict(getattr(hs, "HA_SWITCH_ENTITIES", {}) or {})
-    _switch_labels = dict(getattr(hs, "HA_SWITCH_LABELS", {}) or {})
+    _sw_raw = getattr(hs, "HA_SWITCH_ENTITIES", {}) or {}
+    _parsed_ent, _embedded_lab = _parse_switch_entities(_sw_raw)
+    _switch_entities = _parsed_ent
+    _manual_lab = dict(getattr(hs, "HA_SWITCH_LABELS", {}) or {})
+    _switch_labels = {**_embedded_lab, **_manual_lab}
     _water_valve = getattr(hs, "HA_WATER_VALVE_ENTITY", "") or ""
     _water_pump = getattr(hs, "HA_PUMP_SWITCH_ENTITY", "") or ""
 
