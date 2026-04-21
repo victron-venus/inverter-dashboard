@@ -16,7 +16,7 @@
 #   REMOTE_BASE    — on NAS (default: /volume1/docker/inverter-dashboard)
 #   STACK_FILE     — local compose file to upload (default: ./portainer-stack.yml)
 #   DOCKER         — prefix for docker CLI (default: sudo /usr/local/bin/docker — Synology PATH under sudo often lacks docker)
-#   SKIP_MAC_TRUST — set to 1 to skip adding dashboard.crt to macOS System keychain
+#   SKIP_MAC_TRUST — set to 1 to skip importing dashboard.crt into macOS Keychain
 
 set -euo pipefail
 
@@ -31,7 +31,8 @@ STACK_FILE="${STACK_FILE:-$SCRIPT_DIR/portainer-stack.yml}"
 IMAGE="${IMAGE:-alvit/inverter-dashboard:latest}"
 DOCKER="${DOCKER:-sudo /usr/local/bin/docker}"
 
-# On macOS: trust local dashboard.crt in System keychain if present and not already there (HTTPS in browser).
+# On macOS: trust local dashboard.crt if not already present (HTTPS in Safari/Chrome).
+# Some macOS builds lack /Library/Keychains/System.keychain-db — try System.keychain, then login.keychain-db (no sudo).
 trust_dashboard_cert_on_mac_if_needed() {
   [[ "${SKIP_MAC_TRUST:-0}" == "1" ]] && return 0
   [[ "$(uname -s)" == "Darwin" ]] || return 0
@@ -42,30 +43,65 @@ trust_dashboard_cert_on_mac_if_needed() {
   done
   [[ -n "$cert" ]] || return 0
 
-  local hash
+  local hash k found
   hash=$(openssl x509 -in "$cert" -outform DER 2>/dev/null | shasum -a 256 | awk '{print $1}')
   [[ -n "$hash" ]] || return 0
 
-  local found
-  found=$(security find-certificate -a -Z "$hash" /Library/Keychains/System.keychain-db 2>/dev/null || true)
-  if [[ -n "$found" ]]; then
-    echo ">>> macOS: dashboard.crt already in System keychain — trust unchanged."
-    return 0
-  fi
+  # Scan keychains that actually exist on this Mac
+  for k in \
+      /Library/Keychains/System.keychain-db \
+      /Library/Keychains/System.keychain \
+      "${HOME}/Library/Keychains/login.keychain-db" \
+      "${HOME}/Library/Keychains/login.keychain"; do
+    [[ -f "$k" ]] || continue
+    found=$(security find-certificate -a -Z "$hash" "$k" 2>/dev/null || true)
+    if [[ -n "$found" ]]; then
+      echo ">>> macOS: dashboard.crt already trusted (seen in $(basename "$k"))."
+      return 0
+    fi
+  done
 
-  echo ">>> macOS: adding dashboard.crt to System keychain as trusted root (sudo)..."
   local errfile
   errfile=$(mktemp)
-  if sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain-db "$cert" 2>"$errfile"; then
-    echo ">>> macOS: certificate trusted for HTTPS in browsers."
-  else
-    if grep -qiE 'already exists|duplicate|SecDuplicateItem|The specified item already' "$errfile" 2>/dev/null; then
-      echo ">>> macOS: certificate already present — skip."
-    else
+  echo ">>> macOS: importing dashboard.crt as trusted root..."
+  for k in /Library/Keychains/System.keychain-db /Library/Keychains/System.keychain; do
+    [[ -f "$k" ]] || continue
+    : >"$errfile"
+    if sudo security add-trusted-cert -d -r trustRoot -k "$k" "$cert" 2>"$errfile"; then
+      echo ">>> macOS: trusted in System keychain ($(basename "$k"))."
+      rm -f "$errfile"
+      return 0
+    fi
+    if grep -qiE 'already exists|duplicate|SecDuplicateItem|The specified item already|SecDuplicateItemErr' "$errfile" 2>/dev/null; then
+      echo ">>> macOS: certificate already in keychain."
+      rm -f "$errfile"
+      return 0
+    fi
+    # Keychain missing or other error — try next System path
+    if ! grep -qi 'could not be found' "$errfile" 2>/dev/null; then
       cat "$errfile" >&2
     fi
-  fi
+  done
+
+  # Fallback: user login keychain (no sudo; Safari/Chrome use it)
+  for k in "${HOME}/Library/Keychains/login.keychain-db" "${HOME}/Library/Keychains/login.keychain"; do
+    [[ -f "$k" ]] || continue
+    : >"$errfile"
+    if security add-trusted-cert -d -r trustRoot -k "$k" "$cert" 2>"$errfile"; then
+      echo ">>> macOS: trusted in login keychain ($(basename "$k"))."
+      rm -f "$errfile"
+      return 0
+    fi
+    if grep -qiE 'already exists|duplicate|SecDuplicateItem|The specified item already' "$errfile" 2>/dev/null; then
+      echo ">>> macOS: certificate already present."
+      rm -f "$errfile"
+      return 0
+    fi
+    cat "$errfile" >&2
+    break
+  done
   rm -f "$errfile"
+  echo ">>> macOS: could not import cert — trust manually (Keychain Access)." >&2
 }
 
 echo ">>> NAS: $SYNOLOGY_SSH"
