@@ -15,6 +15,7 @@
 #   SOURCE_CONFIG  — local dir with ha_secrets.py & optional certs (default: ./config)
 #   REMOTE_BASE    — on NAS (default: /volume1/docker/inverter-dashboard)
 #   STACK_FILE     — local compose file to upload (default: ./portainer-stack.yml)
+#   IMAGE          — Docker image (default: alvit/inverter-dashboard:<VERSION> read from ./VERSION next to this script; override e.g. ...:latest)
 #   DOCKER         — prefix for docker CLI (default: sudo /usr/local/bin/docker — Synology PATH under sudo often lacks docker)
 #   SKIP_MAC_TRUST — set to 1 to skip importing dashboard.crt into macOS Keychain
 #   AUTO_GENERATE_DASHBOARD_TLS — if 1 (default), run scripts/ssl-local-deploy.sh when no full
@@ -25,13 +26,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Pin image tag to repo VERSION for reproducible deploys (same as GitHub/Docker semver tag).
+_dashboard_ver=$(tr -d '\r\n' <"$SCRIPT_DIR/VERSION" 2>/dev/null || true)
+[[ -n "$_dashboard_ver" ]] || _dashboard_ver="latest"
+
 SYNOLOGY_SSH="${SYNOLOGY_SSH:-synology}"
 
 SOURCE_CONFIG="${SOURCE_CONFIG:-$SCRIPT_DIR/config}"
 REMOTE_BASE="${REMOTE_BASE:-/volume1/docker/inverter-dashboard}"
 REMOTE_CONFIG="${REMOTE_BASE}/config"
 STACK_FILE="${STACK_FILE:-$SCRIPT_DIR/portainer-stack.yml}"
-IMAGE="${IMAGE:-alvit/inverter-dashboard:latest}"
+IMAGE="${IMAGE:-alvit/inverter-dashboard:${_dashboard_ver}}"
+unset _dashboard_ver
 DOCKER="${DOCKER:-sudo /usr/local/bin/docker}"
 AUTO_GENERATE_DASHBOARD_TLS="${AUTO_GENERATE_DASHBOARD_TLS:-1}"
 
@@ -154,6 +160,7 @@ trust_dashboard_cert_on_mac_if_needed() {
 maybe_generate_dashboard_tls
 
 echo ">>> NAS: $SYNOLOGY_SSH"
+echo ">>> Image: $IMAGE"
 echo ">>> Remote: $REMOTE_CONFIG , $REMOTE_BASE/portainer-stack.yml"
 echo ">>> Docker: $DOCKER ..."
 
