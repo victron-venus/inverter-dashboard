@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # Run from your Mac / PC: copy config + stack to Synology over SSH, then recreate the container there.
 #
-# Prerequisites: SSH key login to Synology (DSM user with docker rights), Docker/Compose on NAS.
+# Assumes:
+#   - SSH key login as user **alvit** (or set SYNOLOGY_SSH), no password prompt for SSH.
+#   - **sudo** works without password for mkdir/cp/chmod and **docker** / **docker compose**
+#     (configure in DSM or sudoers — alvit is not in the docker group by default on Synology).
 #
-#   export SYNOLOGY_SSH='admin@192.168.x.x'   # or Host from ~/.ssh/config
+#   export SYNOLOGY_SSH='alvit@192.168.x.x'   # or a Host from ~/.ssh/config
 #   ./postinstall.sh
 #
 # Optional env:
-#   SOURCE_CONFIG   — local dir with ha_secrets.py & optional certs (default: ./config next to this script)
+#   SOURCE_CONFIG   — local dir with ha_secrets.py & optional certs (default: ./config)
 #   REMOTE_BASE     — on NAS (default: /volume1/docker/inverter-dashboard)
 #   STACK_FILE      — local compose file to upload (default: ./portainer-stack.yml)
+#   DOCKER          — prefix for docker CLI (default: sudo docker)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [[ -z "${SYNOLOGY_SSH:-}" ]]; then
-  echo "Set SYNOLOGY_SSH to your NAS, e.g. export SYNOLOGY_SSH='admin@192.168.1.20'" >&2
+  echo "Set SYNOLOGY_SSH, e.g. export SYNOLOGY_SSH='alvit@192.168.1.20'" >&2
   exit 1
 fi
 
@@ -25,50 +29,55 @@ REMOTE_BASE="${REMOTE_BASE:-/volume1/docker/inverter-dashboard}"
 REMOTE_CONFIG="${REMOTE_BASE}/config"
 STACK_FILE="${STACK_FILE:-$SCRIPT_DIR/portainer-stack.yml}"
 IMAGE="${IMAGE:-alvit/inverter-dashboard:latest}"
+DOCKER="${DOCKER:-sudo docker}"
 
 echo ">>> NAS: $SYNOLOGY_SSH"
-echo ">>> Remote paths: $REMOTE_CONFIG, stack $REMOTE_BASE/portainer-stack.yml"
+echo ">>> Remote: $REMOTE_CONFIG , $REMOTE_BASE/portainer-stack.yml"
+echo ">>> Docker: $DOCKER ..."
 
-ssh "$SYNOLOGY_SSH" "mkdir -p \"$REMOTE_CONFIG\" \"$REMOTE_BASE\""
+STAGING=$(ssh "$SYNOLOGY_SSH" 'mktemp -d /tmp/inverter-dash.XXXXXX')
+cleanup() { ssh "$SYNOLOGY_SSH" "rm -rf \"$STAGING\"" 2>/dev/null || true; }
+trap cleanup EXIT
 
-install_one() {
-  local src="$1" name="$2"
+ssh "$SYNOLOGY_SSH" "sudo mkdir -p \"$REMOTE_CONFIG\" \"$REMOTE_BASE\""
+
+install_file() {
+  local src="$1" name="$2" mode="$3"
   if [[ ! -f "$src" ]]; then
     echo "SKIP (missing): $src" >&2
     return 0
   fi
-  scp -p "$src" "${SYNOLOGY_SSH}:${REMOTE_CONFIG}/${name}"
-  echo ">>> Copied -> ${REMOTE_CONFIG}/${name}"
+  scp -p "$src" "${SYNOLOGY_SSH}:${STAGING}/${name}"
+  ssh "$SYNOLOGY_SSH" "sudo install -m \"${mode}\" \"${STAGING}/${name}\" \"${REMOTE_CONFIG}/${name}\""
+  echo ">>> Installed -> ${REMOTE_CONFIG}/${name} (${mode})"
 }
 
-# Prefer config/ha_secrets.py; else repo root ha_secrets.py
 if [[ -f "$SOURCE_CONFIG/ha_secrets.py" ]]; then
-  install_one "$SOURCE_CONFIG/ha_secrets.py" "ha_secrets.py"
+  install_file "$SOURCE_CONFIG/ha_secrets.py" "ha_secrets.py" "600"
 elif [[ -f "$SCRIPT_DIR/ha_secrets.py" ]]; then
-  install_one "$SCRIPT_DIR/ha_secrets.py" "ha_secrets.py"
+  install_file "$SCRIPT_DIR/ha_secrets.py" "ha_secrets.py" "600"
 else
-  echo "WARNING: no ha_secrets.py in $SOURCE_CONFIG or $SCRIPT_DIR — add before deploy." >&2
+  echo "WARNING: no ha_secrets.py — add under $SOURCE_CONFIG or repo root." >&2
 fi
 
 for f in dashboard.crt dashboard.key; do
   if [[ -f "$SOURCE_CONFIG/$f" ]]; then
-    install_one "$SOURCE_CONFIG/$f" "$f"
+    install_file "$SOURCE_CONFIG/$f" "$f" "644"
   elif [[ -f "$SCRIPT_DIR/.certs/$f" ]]; then
-    install_one "$SCRIPT_DIR/.certs/$f" "$f"
+    install_file "$SCRIPT_DIR/.certs/$f" "$f" "644"
   fi
 done
 
 if [[ ! -f "$STACK_FILE" ]]; then
-  echo "ERROR: $STACK_FILE not found — cannot upload stack / run compose." >&2
+  echo "ERROR: $STACK_FILE not found." >&2
   exit 1
 fi
-scp -p "$STACK_FILE" "${SYNOLOGY_SSH}:${REMOTE_BASE}/portainer-stack.yml"
+scp -p "$STACK_FILE" "${SYNOLOGY_SSH}:${STAGING}/portainer-stack.yml"
+ssh "$SYNOLOGY_SSH" "sudo install -m 644 \"${STAGING}/portainer-stack.yml\" \"${REMOTE_BASE}/portainer-stack.yml\""
 echo ">>> Uploaded portainer-stack.yml"
 
-# Tight permissions for secrets on NAS
-ssh "$SYNOLOGY_SSH" "chmod 600 \"${REMOTE_CONFIG}/ha_secrets.py\" 2>/dev/null || true; chmod 644 \"${REMOTE_CONFIG}/dashboard.crt\" \"${REMOTE_CONFIG}/dashboard.key\" 2>/dev/null || true"
+echo ">>> Remote: sudo docker pull + compose recreate"
+# shellcheck disable=SC2086
+ssh "$SYNOLOGY_SSH" "${DOCKER} pull \"${IMAGE}\" && ${DOCKER} compose -f \"${REMOTE_BASE}/portainer-stack.yml\" pull inverter-dashboard && ${DOCKER} compose -f \"${REMOTE_BASE}/portainer-stack.yml\" up -d --force-recreate inverter-dashboard"
 
-echo ">>> Remote: docker pull + recreate inverter-dashboard"
-ssh "$SYNOLOGY_SSH" "docker pull \"$IMAGE\" && docker compose -f \"${REMOTE_BASE}/portainer-stack.yml\" pull inverter-dashboard && docker compose -f \"${REMOTE_BASE}/portainer-stack.yml\" up -d --force-recreate inverter-dashboard"
-
-echo ">>> Done. Open NAS:8080 (or your published port). HTTPS if dashboard.crt+key were copied."
+echo ">>> Done. HTTPS if dashboard.crt + dashboard.key were deployed."

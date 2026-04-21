@@ -71,11 +71,11 @@ Committed template only: [`ha_secrets.example.py`](ha_secrets.example.py). Real 
 - **`postinstall.sh`** (in repo root): run **on your Mac/PC** (not on the NAS). Set SSH to the Synology, then:
 
   ```bash
-  export SYNOLOGY_SSH='admin@192.168.x.x'   # or: export SYNOLOGY_SSH='my-nas'  if in ~/.ssh/config
+  export SYNOLOGY_SSH='alvit@192.168.x.x'   # or Host from ~/.ssh/config; key-based SSH, no password
   ./postinstall.sh
   ```
 
-  Creates **`/volume1/docker/inverter-dashboard/config`** on the NAS if needed, **copies** `config/ha_secrets.py` (or `ha_secrets.py` in the repo root) and optional **`dashboard.crt` / `dashboard.key`**, uploads **`portainer-stack.yml`** to **`/volume1/docker/inverter-dashboard/`**, then over **SSH** runs **`docker pull`** and **`docker compose … up --force-recreate inverter-dashboard`**. Env: **`REMOTE_BASE`**, **`SOURCE_CONFIG`**, **`STACK_FILE`**.
+  Expects **passwordless `sudo`** on the NAS for **`docker` / `docker compose`** and for writing under **`/volume1/docker/...`** (user `alvit` is usually not in the `docker` group). Files are uploaded to a temp dir, then **`sudo install`** into config. Env: **`REMOTE_BASE`**, **`SOURCE_CONFIG`**, **`STACK_FILE`**, **`DOCKER`** (default `sudo docker`).
 
 If **both** cert files exist in that folder, the **entrypoint enables HTTPS on the same port** as HTTP would use; otherwise HTTP only.
 
