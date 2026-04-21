@@ -16,6 +16,7 @@
 #   REMOTE_BASE    — on NAS (default: /volume1/docker/inverter-dashboard)
 #   STACK_FILE     — local compose file to upload (default: ./portainer-stack.yml)
 #   DOCKER         — prefix for docker CLI (default: sudo /usr/local/bin/docker — Synology PATH under sudo often lacks docker)
+#   SKIP_MAC_TRUST — set to 1 to skip adding dashboard.crt to macOS System keychain
 
 set -euo pipefail
 
@@ -29,6 +30,43 @@ REMOTE_CONFIG="${REMOTE_BASE}/config"
 STACK_FILE="${STACK_FILE:-$SCRIPT_DIR/portainer-stack.yml}"
 IMAGE="${IMAGE:-alvit/inverter-dashboard:latest}"
 DOCKER="${DOCKER:-sudo /usr/local/bin/docker}"
+
+# On macOS: trust local dashboard.crt in System keychain if present and not already there (HTTPS in browser).
+trust_dashboard_cert_on_mac_if_needed() {
+  [[ "${SKIP_MAC_TRUST:-0}" == "1" ]] && return 0
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+
+  local cert=""
+  for p in "$SOURCE_CONFIG/dashboard.crt" "$SCRIPT_DIR/.certs/dashboard.crt"; do
+    if [[ -f "$p" ]]; then cert="$p"; break; fi
+  done
+  [[ -n "$cert" ]] || return 0
+
+  local hash
+  hash=$(openssl x509 -in "$cert" -outform DER 2>/dev/null | shasum -a 256 | awk '{print $1}')
+  [[ -n "$hash" ]] || return 0
+
+  local found
+  found=$(security find-certificate -a -Z "$hash" /Library/Keychains/System.keychain-db 2>/dev/null || true)
+  if [[ -n "$found" ]]; then
+    echo ">>> macOS: dashboard.crt already in System keychain — trust unchanged."
+    return 0
+  fi
+
+  echo ">>> macOS: adding dashboard.crt to System keychain as trusted root (sudo)..."
+  local errfile
+  errfile=$(mktemp)
+  if sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain-db "$cert" 2>"$errfile"; then
+    echo ">>> macOS: certificate trusted for HTTPS in browsers."
+  else
+    if grep -qiE 'already exists|duplicate|SecDuplicateItem|The specified item already' "$errfile" 2>/dev/null; then
+      echo ">>> macOS: certificate already present — skip."
+    else
+      cat "$errfile" >&2
+    fi
+  fi
+  rm -f "$errfile"
+}
 
 echo ">>> NAS: $SYNOLOGY_SSH"
 echo ">>> Remote: $REMOTE_CONFIG , $REMOTE_BASE/portainer-stack.yml"
@@ -78,5 +116,7 @@ echo ">>> Uploaded portainer-stack.yml"
 echo ">>> Remote: docker pull + compose recreate ($DOCKER)"
 # shellcheck disable=SC2086
 ssh "$SYNOLOGY_SSH" "${DOCKER} pull \"${IMAGE}\" && ${DOCKER} compose -f \"${REMOTE_BASE}/portainer-stack.yml\" pull inverter-dashboard && ${DOCKER} compose -f \"${REMOTE_BASE}/portainer-stack.yml\" up -d --force-recreate inverter-dashboard"
+
+trust_dashboard_cert_on_mac_if_needed
 
 echo ">>> Done. HTTPS if dashboard.crt + dashboard.key were deployed."
