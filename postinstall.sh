@@ -113,7 +113,8 @@ trust_dashboard_cert_on_mac_if_needed() {
   for k in /Library/Keychains/System.keychain-db /Library/Keychains/System.keychain; do
     [[ -f "$k" ]] || continue
     : >"$errfile"
-    if sudo security add-trusted-cert -d -r trustRoot -k "$k" "$cert" 2>"$errfile"; then
+    # trustAsRoot → Keychain Access shows "Always Trust"; trustRoot leaves "Use System Defaults".
+    if sudo security add-trusted-cert -d -r trustAsRoot -k "$k" "$cert" 2>"$errfile"; then
       echo ">>> macOS: trusted in System keychain ($(basename "$k"))."
       rm -f "$errfile"
       return 0
@@ -133,7 +134,7 @@ trust_dashboard_cert_on_mac_if_needed() {
   for k in "${HOME}/Library/Keychains/login.keychain-db" "${HOME}/Library/Keychains/login.keychain"; do
     [[ -f "$k" ]] || continue
     : >"$errfile"
-    if security add-trusted-cert -d -r trustRoot -k "$k" "$cert" 2>"$errfile"; then
+    if security add-trusted-cert -r trustAsRoot -k "$k" "$cert" 2>"$errfile"; then
       echo ">>> macOS: trusted in login keychain ($(basename "$k"))."
       rm -f "$errfile"
       return 0
