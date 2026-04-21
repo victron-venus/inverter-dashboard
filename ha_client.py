@@ -33,6 +33,8 @@ _switch_entities: Dict[str, str] = {}
 _water_valve = ""
 _water_pump = ""
 _switch_labels: Dict[str, str] = {}
+# Dashboard keys -> HA entity IDs (washer/dishwasher telemetry omitted from MQTT when inverter-control uses MQTT_SLIM_STATE)
+_appliance_entities: Dict[str, str] = {}
 
 # Latest overlay merged into WebSocket payloads (replaced wholesale on each HA poll)
 _overlay: Dict[str, Any] = {
@@ -86,10 +88,59 @@ def _parse_switch_entities(raw: Any) -> Tuple[Dict[str, str], Dict[str, str]]:
     return entities, embedded_labels
 
 
+def _sensor_state_to_seconds(raw: Optional[str]) -> int:
+    """Parse HA sensor state to seconds for dashboard timers (matches inverter-control numeric / HH:MM:SS)."""
+    if raw in (None, "unavailable", "unknown", "None", ""):
+        return 0
+    try:
+        return int(float(raw))
+    except (ValueError, TypeError):
+        pass
+    parts = str(raw).split(":")
+    try:
+        if len(parts) == 3:
+            h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
+            return h * 3600 + m * 60 + s
+        if len(parts) == 2:
+            m, s = int(parts[0]), int(parts[1])
+            return m * 60 + s
+    except (ValueError, TypeError):
+        pass
+    return 0
+
+
+def _boolish(raw: Optional[str]) -> bool:
+    if raw is None:
+        return False
+    return str(raw).lower() in ("on", "true", "yes", "1")
+
+
+def _appliance_field_value(state_key: str, entity_id: str, raw: Optional[str]) -> Any:
+    """Map HA state string to dashboard type (bool vs seconds)."""
+    domain = entity_id.split(".")[0]
+    if domain in ("binary_sensor", "switch", "light", "input_boolean"):
+        return _boolish(raw)
+    if domain == "sensor":
+        if state_key.endswith("_power"):
+            try:
+                return float(raw or 0) > 1.0
+            except (ValueError, TypeError):
+                return _boolish(raw)
+        return _sensor_state_to_seconds(raw)
+    return False
+
+
+def _appliance_fallback(state_key: str) -> Any:
+    if state_key.endswith("_time") or state_key.endswith("_duration"):
+        return 0
+    return False
+
+
 def load_config():
     """Import ha_secrets if present (see ha_secrets.example.py)."""
     global _configured, _url, _token, _direct, _poll_interval
     global _boolean_entities, _switch_entities, _water_valve, _water_pump, _switch_labels
+    global _appliance_entities
 
     _prepend_ha_secrets_import_path()
 
@@ -100,6 +151,7 @@ def load_config():
         _boolean_entities = {}
         _switch_entities = {}
         _switch_labels = {}
+        _appliance_entities = {}
         logger.info("ha_secrets.py not found — switch state from MQTT only")
         return
 
@@ -116,6 +168,7 @@ def load_config():
     _switch_labels = {**_embedded_lab, **_manual_lab}
     _water_valve = getattr(hs, "HA_WATER_VALVE_ENTITY", "") or ""
     _water_pump = getattr(hs, "HA_PUMP_SWITCH_ENTITY", "") or ""
+    _appliance_entities = dict(getattr(hs, "HA_APPLIANCE_ENTITIES", {}) or {})
 
     _configured = bool(_url and _token and _token != "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN")
     if _direct and not _configured:
@@ -221,6 +274,10 @@ async def fetch_states_once() -> Dict[str, Any]:
                 st = await _get_state(client, headers, _water_pump)
                 out["pump_switch"] = st == "on"
 
+            for key, eid in _appliance_entities.items():
+                st = await _get_state(client, headers, eid)
+                out[key] = _appliance_field_value(key, eid, st)
+
             out["ha_direct_connected"] = True
             return out
 
@@ -248,6 +305,9 @@ def merge_overlay(base: Dict[str, Any]) -> Dict[str, Any]:
             merged["water_valve"] = bool(o.get("water_valve"))
         if _water_pump:
             merged["pump_switch"] = bool(o.get("pump_switch"))
+        for k in _appliance_entities:
+            if k in o:
+                merged[k] = o[k]
     else:
         merged["booleans"] = {k: False for k in _boolean_entities}
         for k in _switch_entities:
@@ -256,6 +316,8 @@ def merge_overlay(base: Dict[str, Any]) -> Dict[str, Any]:
             merged["water_valve"] = False
         if _water_pump:
             merged["pump_switch"] = False
+        for k in _appliance_entities:
+            merged[k] = _appliance_fallback(k)
 
     return merged
 

@@ -9,6 +9,10 @@ When HA_DIRECT_CONTROLS is True, the dashboard reads toggle/switch states and
 sends toggle commands directly to Home Assistant instead of relying on Cerbo MQTT
 state from inverter-control. That keeps MQTT traffic smaller and lets you change
 entities here without touching inverter-control.
+
+When inverter-control uses MQTT_SLIM_STATE=True, dishwasher/washer/dryer fields are
+not published on inverter/state — set HA_APPLIANCE_ENTITIES (below) so the dashboard
+polls those sensors from HA REST (same entity IDs as in inverter-control secrets).
 """
 
 # ---------------------------------------------------------------------------
@@ -54,6 +58,17 @@ HA_SWITCH_ENTITIES = {
 
 # Optional extra overrides if you still use plain string values above (HA_SWITCH_LABELS wins over embedded labels).
 HA_SWITCH_LABELS = {}
+
+# Dishwasher/washer/dryer telemetry — same dashboard keys as inverter/state would carry without MQTT_SLIM.
+# Optional washer_power/dryer_power entries: use switch.* or sensor.* (>1 W counts as running).
+HA_APPLIANCE_ENTITIES = {
+    "dishwasher_running": "binary_sensor.dishwasher_running",
+    "dishwasher_duration": "sensor.dishwasher_duration",
+    "washer_time": "sensor.washer_remaining_time",
+    "dryer_time": "sensor.dryer_remaining_time",
+    # "washer_power": "sensor.washer_power_estimate",
+    # "dryer_power": "sensor.dryer_power_estimate",
+}
 
 # Water card (optional — leave empty strings to skip)
 HA_WATER_VALVE_ENTITY = "switch.shutoff_valve"

@@ -61,6 +61,8 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 
 Committed template only: [`ha_secrets.example.py`](ha_secrets.example.py). Your real file is **`ha_secrets.py`** in the **repository root** (next to `server.py`) — **gitignored** (never push). There is no separate `config/` folder in the repo.
 
+If Cerbo **inverter-control** uses **`MQTT_SLIM_STATE`** (slim `inverter/state`), dishwasher/washer/dryer fields are omitted from MQTT — add **`HA_APPLIANCE_ENTITIES`** in **`ha_secrets.py`** so the dashboard polls those sensors from Home Assistant (same keys as full MQTT state).
+
 **Synology NAS (deploy path used in this repo):**
 
 | Location | Purpose |
