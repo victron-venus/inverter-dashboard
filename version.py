@@ -6,6 +6,7 @@ import os
 import logging
 import httpx
 
+
 from config import GITHUB_REPO, GITHUB_RAW_URL
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,8 @@ async def download_and_update() -> tuple[bool, str]:
         'html_template.py',
         'ha_client.py',
         'ha_secrets.example.py',
+        'scripts/docker_healthcheck.py',
+        'entrypoint.sh',
         'VERSION',
     ]
     
@@ -68,7 +71,10 @@ async def download_and_update() -> tuple[bool, str]:
                 
                 content = resp.text
                 filepath = os.path.join(script_dir, filename)
-                
+                parent = os.path.dirname(filepath)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+
                 with open(filepath, 'w') as f:
                     f.write(content)
                 

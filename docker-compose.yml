@@ -5,9 +5,11 @@ services:
     restart: unless-stopped
     pull_policy: always
     ports:
-      - "8080:8080" # HTTP default; app reads WEB_PORT / --port
+      - "8080:8080" # container listens on WEB_PORT (8080); use e.g. "8443:8080" if you prefer
     environment:
       - MQTT_HOST=192.168.x.x # Cerbo / broker IP
       - MQTT_PORT=1883
-    # HTTPS in-container example (see README): map 8443, set WEB_PORT=8443, mount certs,
-    # override command with --ssl-cert/--ssl-key, and adjust or disable HEALTHCHECK for TLS-only.
+      - INVERTER_DASHBOARD_CONFIG=/app/config
+    volumes:
+      # Host folder: ha_secrets.py (required for HA direct mode), optional dashboard.crt + dashboard.key → HTTPS
+      - ./config:/app/config:ro

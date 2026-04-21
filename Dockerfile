@@ -17,17 +17,20 @@ RUN git clone --depth 1 https://github.com/victron-venus/inverter-dashboard.git 
 # Copy all Python modules as fallback (baked-in version)
 COPY *.py ./
 COPY ha_client.py ha_secrets.example.py ./
+COPY scripts/docker_healthcheck.py scripts/
 COPY entrypoint.sh .
 COPY VERSION .
 
-RUN chmod +x entrypoint.sh
+RUN chmod +x entrypoint.sh && mkdir -p /app/config
 
+# Bind-mount host secrets here: ha_secrets.py, optional dashboard.crt + dashboard.key for HTTPS
+ENV INVERTER_DASHBOARD_CONFIG=/app/config
 # Default port (override in docker run / compose; healthcheck uses the same)
 ENV WEB_PORT=8080
 
-# Health check (HTTP; if you run TLS-only on the same port, override healthcheck in compose)
+# HTTP or HTTPS depending on mounted certs (see entrypoint.sh)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import os,urllib.request; p=os.environ.get('WEB_PORT','8080'); urllib.request.urlopen('http://127.0.0.1:'+p+'/api/state')" || exit 1
+    CMD python /app/scripts/docker_healthcheck.py || exit 1
 
 EXPOSE 8080
 

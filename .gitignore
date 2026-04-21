@@ -18,7 +18,11 @@ ENV/
 .env
 .env.local
 ha_secrets.py
+config/ha_secrets.py
 .certs/
+
+# Host-specific Synology / deploy script (use postinstall.example.sh)
+postinstall.sh
 
 # OS
 .DS_Store
@@ -32,5 +36,4 @@ Thumbs.db
 
 commit.sh
 commit.txt
-release.sh
 release.txt

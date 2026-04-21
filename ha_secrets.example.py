@@ -1,7 +1,10 @@
 """
-Home Assistant credentials for inverter-dashboard (local copy).
+Home Assistant credentials for inverter-dashboard (local copy — never commit).
 
-Copy to ha_secrets.py and fill in — ha_secrets.py is gitignored.
+Docker: copy this file to your host as config/ha_secrets.py and bind-mount that
+folder to /app/config (env INVERTER_DASHBOARD_CONFIG=/app/config).
+Local dev: run scripts/init-config.sh to create config/ha_secrets.py from this file,
+or copy to ha_secrets.py next to server.py (legacy).
 
 When HA_DIRECT_CONTROLS is True, the dashboard reads toggle/switch states and
 sends toggle commands directly to Home Assistant instead of relying on Cerbo MQTT

@@ -54,7 +54,16 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 |---------------------|---------|-------------|
 | `MQTT_HOST` | `192.168.160.150` | MQTT broker hostname |
 | `MQTT_PORT` | `1883` | MQTT broker port |
-| `WEB_PORT` | `8080` | Web server port |
+| `WEB_PORT` | `8080` | Web server port (inside the container) |
+| `INVERTER_DASHBOARD_CONFIG` | `/app/config` | Host folder mounted read-only: `ha_secrets.py` and optional TLS files |
+
+### Config directory (`ha_secrets.py` + optional HTTPS)
+
+There is **no** committed `ha_secrets.py` (only [`ha_secrets.example.py`](ha_secrets.example.py)) — credentials must **not** be pushed to GitHub.
+
+- **After clone:** run `./scripts/init-config.sh` — creates **`config/ha_secrets.py`** from the example (path is gitignored). Edit tokens and entity IDs there.
+- **Docker / Synology:** put `ha_secrets.py` on the host under a folder you mount at **`/app/config`**. Optionally add **`dashboard.crt`** and **`dashboard.key`** (same names as [`scripts/ssl-local-deploy.sh`](scripts/ssl-local-deploy.sh)). If **both** cert files exist, the **entrypoint starts HTTPS on the same port** as usual (`WEB_PORT` / `--port`, default 8080); otherwise HTTP.
+- See [`postinstall.example.sh`](postinstall.example.sh): copy to `postinstall.sh` on the host (that filename is gitignored), set paths, use it to `docker pull`, remove the old container, and recreate with the config volume.
 
 ### Command Line Arguments
 
@@ -73,6 +82,8 @@ By default the app and the published Docker image listen on **plain HTTP** (port
 
 2. **TLS inside the Python app** (good for quick tests / single host)
 
+   **Docker (recommended layout):** mount your host config folder to **`/app/config`**, put **`dashboard.crt`** and **`dashboard.key`** next to **`ha_secrets.py`**. The entrypoint detects both files and passes **`--ssl-cert`** / **`--ssl-key`** automatically on the **same** port as without TLS (default 8080). Map ports e.g. `"8443:8080"` if you want HTTPS on 8443 externally.
+
    Generate certs (repo includes a helper):
 
    ```bash
@@ -82,38 +93,31 @@ By default the app and the published Docker image listen on **plain HTTP** (port
 
    Trust the cert on your Mac (script prints the exact `security add-trusted-cert` command).
 
-   Run locally:
+   **Local run (paths arbitrary):**
 
    ```bash
    python server.py --mqtt-host … --port 8443 \
      --ssl-cert .certs/dashboard.crt --ssl-key .certs/dashboard.key
    ```
 
-   **Docker Compose:** mount the cert directory and override the command so uvicorn uses TLS (match published port to `--port`):
+   **Docker Compose** example with mounted secrets + optional TLS files:
 
    ```yaml
    services:
      inverter-dashboard:
        image: alvit/inverter-dashboard:latest
        ports:
-         - "8443:8443"
+         - "8080:8080"
        environment:
          - MQTT_HOST=192.168.x.x
-         - WEB_PORT=8443
+         - INVERTER_DASHBOARD_CONFIG=/app/config
        volumes:
-         - ./certs:/app/certs:ro
-       command:
-         [
-           "--mqtt-host", "192.168.x.x",
-           "--port", "8443",
-           "--ssl-cert", "/app/certs/dashboard.crt",
-           "--ssl-key", "/app/certs/dashboard.key",
-         ]
+         - ./config:/app/config:ro
    ```
 
-   Put `dashboard.crt` / `dashboard.key` in `./certs/` on the host (e.g. copy from `.certs/` after running the script).
+   If you omit the cert/key pair in `./config/`, the app stays on HTTP. You can still override TLS paths manually via `command:` if needed.
 
-   **Note:** The Dockerfile `HEALTHCHECK` probes **`http://127.0.0.1:$WEB_PORT/api/state`** on plain HTTP. If you run **HTTPS only** inside the container on the same port, override or disable the healthcheck in Compose, e.g. `healthcheck: disable: true` or a `curl -fk https://localhost:8443/api/state` probe.
+   The image **`HEALTHCHECK`** uses **`scripts/docker_healthcheck.py`**, which calls **`/api/state`** over HTTP or HTTPS depending on whether `dashboard.crt` + `dashboard.key` exist in the config directory.
 
 3. **`mkcert`** — alternative to OpenSSL for local dev trust; still point the app at the generated `.pem` paths with `--ssl-cert` / `--ssl-key`.
 
@@ -165,6 +169,17 @@ By default the app and the published Docker image listen on **plain HTTP** (port
 }
 ```
 
+## GitHub release
+
+Keep **`release.txt`** filled with notes for the next version (create the file locally if your `.gitignore` excludes it). Then:
+
+```bash
+chmod +x release.sh
+./release.sh
+```
+
+The script **`git fetch origin --tags`** first, bumps **`VERSION`**, commits if the file changed, creates the new **annotated tag**, **`git push`** branch + tag, runs **`gh release create`**, then **`git fetch --tags`** and **`git pull --ff-only`** so the next run sees the latest tag and does not propose the same version again.
+
 ## Development
 
 ### Local Setup
@@ -180,6 +195,9 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Optional: config/ha_secrets.py for Home Assistant direct mode (gitignored)
+./scripts/init-config.sh
 
 # Run
 python server.py --mqtt-host your-mqtt-broker

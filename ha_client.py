@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import sys
 from typing import Any, Dict, Optional
 
 import httpx
@@ -34,10 +36,31 @@ _overlay: Dict[str, Any] = {
 }
 
 
+def _prepend_ha_secrets_import_path() -> None:
+    """Load ha_secrets from INVERTER_DASHBOARD_CONFIG or ./config (Docker bind-mount)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = []
+    env_dir = os.environ.get("INVERTER_DASHBOARD_CONFIG", "").strip()
+    if env_dir:
+        candidates.append(env_dir)
+    candidates.append(os.path.join(here, "config"))
+    for d in candidates:
+        if not d:
+            continue
+        path_py = os.path.join(d, "ha_secrets.py")
+        if os.path.isfile(path_py):
+            if d not in sys.path:
+                sys.path.insert(0, d)
+            logger.info("Using ha_secrets.py from %s", d)
+            return
+
+
 def load_config():
-    """Import ha_secrets if present."""
+    """Import ha_secrets if present (see ha_secrets.example.py, config/ on host)."""
     global _configured, _url, _token, _direct, _poll_interval
     global _boolean_entities, _switch_entities, _water_valve, _water_pump
+
+    _prepend_ha_secrets_import_path()
 
     try:
         import ha_secrets as hs  # type: ignore

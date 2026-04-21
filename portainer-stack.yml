@@ -10,9 +10,12 @@ services:
       - MQTT_HOST=${MQTT_HOST:-192.168.160.150}
       - MQTT_PORT=${MQTT_PORT:-1883}
       - WEB_PORT=8080
+      - INVERTER_DASHBOARD_CONFIG=/app/config
+    # volumes:
+    #   - /volume1/docker/inverter-dashboard/config:/app/config:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import os,urllib.request; p=os.environ.get('WEB_PORT','8080'); urllib.request.urlopen('http://127.0.0.1:'+p+'/api/state')"]
+      test: ["CMD", "python", "/app/scripts/docker_healthcheck.py"]
       interval: 30s
       timeout: 10s
       retries: 3
