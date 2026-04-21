@@ -5,6 +5,8 @@
 #   - **~/.ssh/config** defines **`Host synology`** (user, hostname, IdentityFile — nothing hardcoded here).
 #   - SSH uses that host alias: **`ssh synology`** (override with **SYNOLOGY_SSH** if needed).
 #   - **sudo** works without password for mkdir/cp/chmod and **docker** / **docker compose** on the NAS.
+#   - Files are sent with **ssh + stdin** (not scp): Synology often returns
+#     "subsystem request failed on channel 0" for scp/sftp when the SFTP subsystem is off or misconfigured.
 #
 #   ./postinstall.sh
 #
@@ -44,7 +46,7 @@ install_file() {
     echo "SKIP (missing): $src" >&2
     return 0
   fi
-  scp -p "$src" "${SYNOLOGY_SSH}:${STAGING}/${name}"
+  ssh "$SYNOLOGY_SSH" "cat > \"${STAGING}/${name}\"" < "$src"
   ssh "$SYNOLOGY_SSH" "sudo install -m \"${mode}\" \"${STAGING}/${name}\" \"${REMOTE_CONFIG}/${name}\""
   echo ">>> Installed -> ${REMOTE_CONFIG}/${name} (${mode})"
 }
@@ -69,7 +71,7 @@ if [[ ! -f "$STACK_FILE" ]]; then
   echo "ERROR: $STACK_FILE not found." >&2
   exit 1
 fi
-scp -p "$STACK_FILE" "${SYNOLOGY_SSH}:${STAGING}/portainer-stack.yml"
+ssh "$SYNOLOGY_SSH" "cat > \"${STAGING}/portainer-stack.yml\"" < "$STACK_FILE"
 ssh "$SYNOLOGY_SSH" "sudo install -m 644 \"${STAGING}/portainer-stack.yml\" \"${REMOTE_BASE}/portainer-stack.yml\""
 echo ">>> Uploaded portainer-stack.yml"
 
