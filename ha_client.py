@@ -3,6 +3,10 @@ Optional Home Assistant REST client for inverter-dashboard.
 
 Reads ha_secrets.py when present; if HA_DIRECT_CONTROLS is False or file missing,
 all UI state for switches comes from MQTT (inverter-control) only.
+
+When HA_DIRECT_CONTROLS is True and HA is configured, boolean/switch/water state for
+entities listed in ha_secrets comes only from HA REST polling — MQTT is not used as
+fallback when HA is unreachable (values show off until HA responds again).
 """
 
 from __future__ import annotations
@@ -198,26 +202,33 @@ async def fetch_states_once() -> Dict[str, Any]:
 
 
 def merge_overlay(base: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge MQTT state with last HA overlay when in direct mode."""
+    """Merge MQTT state with HA overlay; in direct mode HA-owned keys never fall back to MQTT."""
     merged = dict(base)
     merged.setdefault("booleans", {})
     if not is_direct_mode():
         return merged
 
     o = _overlay
-    merged["ha_direct_connected"] = o.get("ha_direct_connected", False)
-    if not o.get("ha_direct_connected"):
-        return merged
+    connected = bool(o.get("ha_direct_connected"))
+    merged["ha_direct_connected"] = connected
 
-    if o.get("booleans"):
-        merged["booleans"] = dict(o["booleans"])
-    for k in _switch_entities:
-        if k in o:
-            merged[k] = o[k]
-    if _water_valve and "water_valve" in o:
-        merged["water_valve"] = o["water_valve"]
-    if _water_pump and "pump_switch" in o:
-        merged["pump_switch"] = o["pump_switch"]
+    if connected:
+        merged["booleans"] = dict(o.get("booleans") or {})
+        for k in _switch_entities:
+            merged[k] = bool(o.get(k))
+        if _water_valve:
+            merged["water_valve"] = bool(o.get("water_valve"))
+        if _water_pump:
+            merged["pump_switch"] = bool(o.get("pump_switch"))
+    else:
+        merged["booleans"] = {k: False for k in _boolean_entities}
+        for k in _switch_entities:
+            merged[k] = False
+        if _water_valve:
+            merged["water_valve"] = False
+        if _water_pump:
+            merged["pump_switch"] = False
+
     return merged
 
 

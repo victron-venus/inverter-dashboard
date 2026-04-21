@@ -18,7 +18,8 @@ entities here without touching inverter-control.
 HA_URL = "http://homeassistant.local:8123"
 HA_TOKEN = "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN"
 
-# Master switch: use HA REST for switches/booleans below (recommended with MQTT_SLIM on Cerbo)
+# Master switch: use HA REST for switches/booleans below (recommended with MQTT_SLIM on Cerbo).
+# When True, dashboard does not fall back to MQTT/Cerbo for those entity states if HA REST is down.
 HA_DIRECT_CONTROLS = True
 
 # Poll interval for HA states (seconds). Increase on slow hosts.
