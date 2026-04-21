@@ -57,20 +57,20 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 | `WEB_PORT` | `8080` | Web server port (inside the container) |
 | `INVERTER_DASHBOARD_CONFIG` | `/app/config` | Host folder mounted read-only: `ha_secrets.py` and optional TLS files |
 
-### Config directory (`ha_secrets.py` + optional HTTPS)
+### Secrets (`ha_secrets.py`) + optional HTTPS
 
-Committed template only: [`ha_secrets.example.py`](ha_secrets.example.py). Real secrets live in **`config/ha_secrets.py`** and/or **`ha_secrets.py`** next to `server.py` — both filenames are **gitignored** (never push).
+Committed template only: [`ha_secrets.example.py`](ha_secrets.example.py). Your real file is **`ha_secrets.py`** in the **repository root** (next to `server.py`) — **gitignored** (never push). There is no separate `config/` folder in the repo.
 
 **Synology NAS (deploy path used in this repo):**
 
 | Location | Purpose |
 |---------|---------|
-| `/volume1/docker/inverter-dashboard/config` | Host folder mounted read-only into the container as **`/app/config`**. Put **`ha_secrets.py`**, optional **`dashboard.crt`** / **`dashboard.key`** here. Same path in [`docker-compose.yml`](docker-compose.yml) and [`portainer-stack.yml`](portainer-stack.yml). |
+| `/volume1/docker/inverter-dashboard/config` | **On the NAS host only:** a folder that is **bind-mounted** read-only into the container as **`/app/config`**. Put **`ha_secrets.py`** here together with optional **`dashboard.crt`** / **`dashboard.key`**. The folder name on disk is convention (matches [`docker-compose.yml`](docker-compose.yml) / [`portainer-stack.yml`](portainer-stack.yml)); it is **not** a `config/` directory inside the Git clone. |
 
-- **After clone (any machine):** `./scripts/init-config.sh` creates **`config/ha_secrets.py`** from the example; fill in **`HA_TOKEN`** / **`HA_URL`** (typically the same long-lived token as inverter-control **`secrets.py`**).
+- **After clone (any machine):** `./scripts/init-config.sh` creates **`./ha_secrets.py`** from the example; fill in **`HA_TOKEN`** / **`HA_URL`** (typically the same long-lived token as inverter-control **`secrets.py`**).
 - **`postinstall.sh`** (in repo root): run **on your Mac/PC** (not on the NAS). Put **`Host synology`** (user, hostname, keys) in **`~/.ssh/config`**, then simply **`./postinstall.sh`** — it runs **`ssh synology`** by default (override with **`SYNOLOGY_SSH`** only if you use another alias).
 
-  Expects **passwordless `sudo`** on the NAS for **`docker` / `docker compose`** and for writing under **`/volume1/docker/...`**. Files are pushed with **`ssh` + stdin** (not `scp`), so it still works if Synology has disabled the SFTP/SCP subsystem. Then **`sudo install`** from a temp dir. Env: **`SYNOLOGY_SSH`**, **`REMOTE_BASE`**, **`SOURCE_CONFIG`**, **`STACK_FILE`**, **`DOCKER`** (default **`sudo /usr/local/bin/docker`** — under **`sudo`** DSM often has no **`docker`** in **`PATH`**). On **macOS**, if **`dashboard.crt`** exists under **`config/`** or **`.certs/`**, the script imports it as trusted when missing: tries **System** keychain (`System.keychain-db` / `System.keychain`), then **login** keychain if needed (**`SKIP_MAC_TRUST=1`** to skip).
+  Expects **passwordless `sudo`** on the NAS for **`docker` / `docker compose`** and for writing under **`/volume1/docker/...`**. Files are pushed with **`ssh` + stdin** (not `scp`), so it still works if Synology has disabled the SFTP/SCP subsystem. Then **`sudo install`** from a temp dir. Env: **`SYNOLOGY_SSH`**, **`REMOTE_BASE`**, **`SOURCE_CONFIG`** (defaults to **repo root** next to **`postinstall.sh`**), **`STACK_FILE`**, **`DOCKER`** (default **`sudo /usr/local/bin/docker`** — under **`sudo`** DSM often has no **`docker`** in **`PATH`**). On **macOS**, if **`dashboard.crt`** exists next to **`postinstall.sh`** or under **`.certs/`**, the script imports it as trusted when missing: tries **System** keychain (`System.keychain-db` / `System.keychain`), then **login** keychain if needed (**`SKIP_MAC_TRUST=1`** to skip).
 
 If **both** cert files exist in that folder, the **entrypoint enables HTTPS on the same port** as HTTP would use; otherwise HTTP only.
 
@@ -100,7 +100,7 @@ By default the app and the published Docker image listen on **plain HTTP** (port
    # Optional: TLS_CN=myhost.local ./scripts/ssl-local-deploy.sh
    ```
 
-   The helper includes **Subject Alternative Name (SAN)** entries (`TLS_CN`, `localhost`, `127.0.0.1`). Browsers require SAN for HTTPS hostname checks; an old cert with **CN-only** can still show “not private” even after trusting — regenerate, copy the new **`dashboard.crt`** / **`dashboard.key`** to NAS **`config/`**, redeploy, then trust again (remove the previous cert from Keychain Access if needed).
+   The helper includes **Subject Alternative Name (SAN)** entries (`TLS_CN`, `localhost`, `127.0.0.1`). Browsers require SAN for HTTPS hostname checks; an old cert with **CN-only** can still show “not private” even after trusting — regenerate, copy the new **`dashboard.crt`** / **`dashboard.key`** to the NAS folder that is mounted at **`/app/config`**, redeploy, then trust again (remove the previous cert from Keychain Access if needed).
 
    Trust the cert on your Mac (`postinstall.sh` does this automatically; the helper also prints `security add-trusted-cert`).
 
@@ -118,7 +118,7 @@ By default the app and the published Docker image listen on **plain HTTP** (port
      - /volume1/docker/inverter-dashboard/config:/app/config:ro
    ```
 
-   On a dev PC without `/volume1`, comment out this volume or bind a local `./config` instead.
+   On a dev PC without `/volume1`, comment out this volume or bind a local folder (e.g. repo root or any directory that contains **`ha_secrets.py`** and optional TLS files) to **`/app/config`** instead.
 
    If you omit **`dashboard.crt`** / **`dashboard.key`** on the host, the app stays on HTTP.
 
@@ -201,7 +201,7 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Optional: config/ha_secrets.py for Home Assistant direct mode (gitignored)
+# Optional: ./ha_secrets.py for Home Assistant direct mode (gitignored)
 ./scripts/init-config.sh
 
 # Run

@@ -12,7 +12,7 @@
 #
 # Optional env:
 #   SYNOLOGY_SSH   — SSH destination (default: synology)
-#   SOURCE_CONFIG  — local dir with ha_secrets.py & optional certs (default: ./config)
+#   SOURCE_CONFIG  — local dir with ha_secrets.py & optional certs (default: repo root next to this script)
 #   REMOTE_BASE    — on NAS (default: /volume1/docker/inverter-dashboard)
 #   STACK_FILE     — local compose file to upload (default: ./portainer-stack.yml)
 #   IMAGE          — Docker image (default: alvit/inverter-dashboard:<VERSION> read from ./VERSION next to this script; override e.g. ...:latest)
@@ -32,7 +32,7 @@ _dashboard_ver=$(tr -d '\r\n' <"$SCRIPT_DIR/VERSION" 2>/dev/null || true)
 
 SYNOLOGY_SSH="${SYNOLOGY_SSH:-synology}"
 
-SOURCE_CONFIG="${SOURCE_CONFIG:-$SCRIPT_DIR/config}"
+SOURCE_CONFIG="${SOURCE_CONFIG:-$SCRIPT_DIR}"
 REMOTE_BASE="${REMOTE_BASE:-/volume1/docker/inverter-dashboard}"
 REMOTE_CONFIG="${REMOTE_BASE}/config"
 STACK_FILE="${STACK_FILE:-$SCRIPT_DIR/portainer-stack.yml}"

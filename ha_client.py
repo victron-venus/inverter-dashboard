@@ -42,13 +42,12 @@ _overlay: Dict[str, Any] = {
 
 
 def _prepend_ha_secrets_import_path() -> None:
-    """Load ha_secrets from INVERTER_DASHBOARD_CONFIG, ./config/, or repo root."""
+    """Load ha_secrets from INVERTER_DASHBOARD_CONFIG (Docker mount) or app directory."""
     here = os.path.dirname(os.path.abspath(__file__))
     candidates = []
     env_dir = os.environ.get("INVERTER_DASHBOARD_CONFIG", "").strip()
     if env_dir:
         candidates.append(env_dir)
-    candidates.append(os.path.join(here, "config"))
     candidates.append(here)
     for d in candidates:
         if not d:
@@ -88,7 +87,7 @@ def _parse_switch_entities(raw: Any) -> Tuple[Dict[str, str], Dict[str, str]]:
 
 
 def load_config():
-    """Import ha_secrets if present (see ha_secrets.example.py, config/ on host)."""
+    """Import ha_secrets if present (see ha_secrets.example.py)."""
     global _configured, _url, _token, _direct, _poll_interval
     global _boolean_entities, _switch_entities, _water_valve, _water_pump, _switch_labels
 

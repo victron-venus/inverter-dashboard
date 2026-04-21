@@ -18,7 +18,6 @@ ENV/
 .env
 .env.local
 ha_secrets.py
-config/ha_secrets.py
 .certs/
 
 # OS

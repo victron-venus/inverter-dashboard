@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Create config/ha_secrets.py from example (not tracked — gitignored). Run once after clone.
+# Create ./ha_secrets.py from example (gitignored). Run once after clone.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-mkdir -p "$ROOT/config"
 EX_SRC="$ROOT/ha_secrets.example.py"
-DST="$ROOT/config/ha_secrets.py"
+DST="$ROOT/ha_secrets.py"
 if [[ ! -f "$EX_SRC" ]]; then
   echo "Missing $EX_SRC" >&2
   exit 1
