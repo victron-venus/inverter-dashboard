@@ -1,5 +1,5 @@
 # Remote Web Server Dependencies
-fastapi>=0.109.0
+fastapi>=0.136.1
 uvicorn>=0.27.0
 websockets>=12.0
 paho-mqtt>=2.0.0
