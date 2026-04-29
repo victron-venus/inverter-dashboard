@@ -1,20 +1,18 @@
-FROM python:3.14-slim
+FROM python:3.14-alpine
 
 WORKDIR /app
 
-# Install git for auto-updates
-RUN apt-get update && apt-get install -y --no-install-recommends git && \
-    rm -rf /var/lib/apt/lists/*
+# bash: entrypoint uses bash ([[ ]], arrays). git: clone at build time and git fetch in entrypoint.
+RUN apk add --no-cache bash git
 
-# Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Clone repo (for auto-update capability)
+# Same layout as before: tree from GitHub, then overlay files from the build context.
 RUN git clone --depth 1 https://github.com/victron-venus/inverter-dashboard.git /app/repo && \
-    mv /app/repo/* /app/ && rm -rf /app/repo
+    cp -a /app/repo/. /app/ && \
+    rm -rf /app/repo
 
-# Copy all Python modules as fallback (baked-in version)
 COPY *.py ./
 COPY ha_client.py ha_secrets.example.py ./
 COPY scripts/docker_healthcheck.py scripts/
@@ -23,14 +21,18 @@ COPY VERSION .
 
 RUN chmod +x entrypoint.sh && mkdir -p /app/config
 
-# Bind-mount host secrets here: ha_secrets.py, optional dashboard.crt + dashboard.key for HTTPS
+# Non-root user (Docker Scout / smaller attack surface).
+# UID/GID 1000 is a common default Linux user; override in compose if needed.
+RUN addgroup -g 1000 app && adduser -D -u 1000 -G app app && \
+    chown -R app:app /app
+
+USER app
+
 ENV INVERTER_DASHBOARD_CONFIG=/app/config
-# Default port (override in docker run / compose; healthcheck uses the same)
 ENV WEB_PORT=8080
 
-# HTTP or HTTPS depending on mounted certs (see entrypoint.sh)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python /app/scripts/docker_healthcheck.py || exit 1
+  CMD python /app/scripts/docker_healthcheck.py || exit 1
 
 EXPOSE 8080
 

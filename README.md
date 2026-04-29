@@ -5,6 +5,8 @@
 
 Real-time web dashboard for monitoring Victron inverter systems via MQTT. Designed to work with [inverter-control](https://github.com/victron-venus/inverter-control) on Cerbo GX.
 
+For a **Go** implementation (single static binary, same web UI), see **[inverter-dashboard-go](https://github.com/victron-venus/inverter-dashboard-go)** — Docker image **`alvit/inverter-dashboard-go`**.
+
 ![Inverter Dashboard](images/Screenshot.png)
 
 ## Features
@@ -230,7 +232,8 @@ This project is part of a Victron Venus OS integration suite:
 | Project | Description |
 |---------|-------------|
 | [inverter-control](https://github.com/victron-venus/inverter-control) | ESS external control with web dashboard |
-| **inverter-dashboard** (this) | Remote web dashboard via MQTT (Docker) |
+| **inverter-dashboard** (this) | Python/FastAPI dashboard via MQTT (`alvit/inverter-dashboard` on Docker Hub) |
+| [inverter-dashboard-go](https://github.com/victron-venus/inverter-dashboard-go) | Go rewrite: same UI and MQTT workflow; binaries + Docker image `alvit/inverter-dashboard-go` |
 | [dbus-mqtt-battery](https://github.com/victron-venus/dbus-mqtt-battery) | MQTT to D-Bus bridge for BMS integration |
 | [dbus-tasmota-pv](https://github.com/victron-venus/dbus-tasmota-pv) | Tasmota smart plug as PV inverter on D-Bus |
 | [esphome-jbd-bms-mqtt](https://github.com/victron-venus/esphome-jbd-bms-mqtt) | ESP32 Bluetooth monitor for JBD BMS |
@@ -242,4 +245,8 @@ Created by [@4alvit](https://github.com/4alvit)
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+MIT License - see [LICENSE](LICENSE).
+
+---
+
+**Note:** This is a community project and is not affiliated with Victron Energy.

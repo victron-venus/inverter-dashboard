@@ -1,6 +1,9 @@
 services:
   inverter-dashboard:
     image: alvit/inverter-dashboard:latest
+    # Image defaults to UID/GID 1000 (see Dockerfile).
+    # If mounted config files are not readable, set user to match the file owner on the host.
+    user: "1000:1000"
     container_name: inverter-dashboard
     restart: unless-stopped
     pull_policy: always
