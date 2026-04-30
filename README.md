@@ -1,7 +1,14 @@
 # Inverter Dashboard
 
 [![Docker Hub](https://img.shields.io/docker/v/alvit/inverter-dashboard?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/alvit/inverter-dashboard)
-[![GitHub](https://img.shields.io/github/license/victron-venus/inverter-dashboard)](LICENSE)
+[![Docker Pulls](https://img.shields.io/docker/pulls/alvit/inverter-dashboard?label=Docker%20Pulls&logo=docker)](https://hub.docker.com/r/alvit/inverter-dashboard)
+[![CI](https://github.com/victron-venus/inverter-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/victron-venus/inverter-dashboard/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub stars](https://img.shields.io/github/stars/victron-venus/inverter-dashboard)](https://github.com/victron-venus/inverter-dashboard/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/victron-venus/inverter-dashboard)](https://github.com/victron-venus/inverter-dashboard/network/members)
+[![GitHub last commit](https://img.shields.io/github/last-commit/victron-venus/inverter-dashboard)](https://github.com/victron-venus/inverter-dashboard/commits/main)
+[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/victron-venus/inverter-dashboard/graphs/commit-activity)
+[![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 
 Real-time web dashboard for monitoring Victron inverter systems via MQTT. Designed to work with [inverter-control](https://github.com/victron-venus/inverter-control) on Cerbo GX.
 
@@ -250,3 +257,20 @@ MIT License - see [LICENSE](LICENSE).
 ---
 
 **Note:** This is a community project and is not affiliated with Victron Energy.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature-name`)
+3. Commit your changes
+4. Push to the branch (`git push origin feature-name`)
+5. Create a Pull Request
+
+## Support
+
+For issues specific to:
+- **MQTT connectivity**: Check broker reachability and topic subscriptions
+- **WebSocket errors**: Verify port accessibility and firewall settings
+- **Home Assistant integration**: Validate token and entity availability
+- **Docker deployment**: Review container logs and volume mounts
+- **This project**: Open an issue in this repository
