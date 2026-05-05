@@ -181,13 +181,8 @@ def get_dashboard_html() -> str:
                     </div>
                 </div>
             </div>
-            <!-- Dishwasher — show while running signal, elapsed time, or inverter-control alternate keys -->
-            <div class="card mb-2" v-if="state.features?.dishwasher !== false && (
-                state.dishwasher_running ||
-                ((state.dishwasher_duration || 0) > 0) ||
-                ((state.dishwasher_time || 0) > 0) ||
-                state.dishwasher_active
-              )">
+            <!-- Dishwasher — show only when binary_sensor.dishwasher_running is on -->
+            <div class="card mb-2" v-if="state.features?.dishwasher !== false && state.dishwasher_running">
                 <div class="card-header"><i class="fas fa-utensils me-2"></i>Dishwasher</div>
                 <div class="card-body py-1">
                     <div class="d-flex justify-content-between align-items-center">
