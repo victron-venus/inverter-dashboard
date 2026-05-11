@@ -185,16 +185,6 @@ By default the app and the published Docker image listen on **plain HTTP** (port
 }
 ```
 
-## GitHub release
-
-Keep **`release.txt`** filled with notes for the next version (create the file locally if your `.gitignore` excludes it). Then:
-
-```bash
-chmod +x release.sh
-./release.sh
-```
-
-The script **`git fetch origin --tags`** first, bumps **`VERSION`**, commits if the file changed, creates the new **annotated tag**, **`git push`** branch + tag, runs **`gh release create`**, then **`git fetch --tags`** and **`git pull --ff-only`** so the next run sees the latest tag and does not propose the same version again.
 
 ## Development
 
