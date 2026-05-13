@@ -3,6 +3,8 @@
 [![Docker Hub](https://img.shields.io/docker/v/alvit/inverter-dashboard?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/alvit/inverter-dashboard)
 [![Docker Pulls](https://img.shields.io/docker/pulls/alvit/inverter-dashboard?label=Docker%20Pulls&logo=docker)](https://hub.docker.com/r/alvit/inverter-dashboard)
 [![CI](https://github.com/victron-venus/inverter-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/victron-venus/inverter-dashboard/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/victron-venus/inverter-dashboard/actions/workflows/codeql.yml/badge.svg)](https://github.com/victron-venus/inverter-dashboard/actions/workflows/codeql.yml)
+[![Trivy](https://github.com/victron-venus/inverter-dashboard/actions/workflows/trivy-fs.yml/badge.svg)](https://github.com/victron-venus/inverter-dashboard/actions/workflows/trivy-fs.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub stars](https://img.shields.io/github/stars/victron-venus/inverter-dashboard)](https://github.com/victron-venus/inverter-dashboard/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/victron-venus/inverter-dashboard)](https://github.com/victron-venus/inverter-dashboard/network/members)
@@ -11,8 +13,6 @@
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 
 Real-time web dashboard for monitoring Victron inverter systems via MQTT. Designed to work with [inverter-control](https://github.com/victron-venus/inverter-control) on Cerbo GX.
-
-For a **Go** implementation (single static binary, same web UI), see **[inverter-dashboard-go](https://github.com/victron-venus/inverter-dashboard-go)** — Docker image **`alvit/inverter-dashboard-go`**.
 
 ![Inverter Dashboard](images/Screenshot.png)
 
@@ -230,7 +230,6 @@ This project is part of a Victron Venus OS integration suite:
 |---------|-------------|
 | [inverter-control](https://github.com/victron-venus/inverter-control) | ESS external control with web dashboard |
 | **inverter-dashboard** (this) | Python/FastAPI dashboard via MQTT (`alvit/inverter-dashboard` on Docker Hub) |
-| [inverter-dashboard-go](https://github.com/victron-venus/inverter-dashboard-go) | Go rewrite: same UI and MQTT workflow; binaries + Docker image `alvit/inverter-dashboard-go` |
 | [dbus-mqtt-battery](https://github.com/victron-venus/dbus-mqtt-battery) | MQTT to D-Bus bridge for BMS integration |
 | [dbus-tasmota-pv](https://github.com/victron-venus/dbus-tasmota-pv) | Tasmota smart plug as PV inverter on D-Bus |
 | [esphome-jbd-bms-mqtt](https://github.com/victron-venus/esphome-jbd-bms-mqtt) | ESP32 Bluetooth monitor for JBD BMS |
