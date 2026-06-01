@@ -82,7 +82,7 @@ def get_dashboard_html() -> str:
     <div class="card mb-2">
         <div class="card-body py-1 px-2">
             <div class="d-flex flex-wrap gap-1 align-items-center">
-                <div class="toggle-btn" :class="state.dry_run ? 'on' : 'off'" @click="send('dry_run')">
+                <div class="toggle-btn" :class="state.dry_run === true || state.dry_run === 'on' ? 'on' : 'off'" @click="send('dry_run')">
                     <i class="fas fa-flask me-1"></i>DRY
                 </div>
                 <div class="toggle-btn" :class="essClass" @click="send('ess_mode')">
@@ -90,7 +90,7 @@ def get_dashboard_html() -> str:
                 </div>
                 <div class="vr mx-1" style="border-left:1px solid #ccc;height:16px;"></div>
                 <div v-for="toggle in headerToggles" :key="toggle.id" 
-                     class="toggle-btn" :class="state.booleans[toggle.id] ? 'on' : 'off'"
+                     class="toggle-btn" :class="state.booleans[toggle.id] === true || state.booleans[toggle.id] === 'on' ? 'on' : 'off'"
                      @click="send('toggle', {{entity: toggle.entity}})">
                     {{{{ toggle.label }}}}
                 </div>
@@ -173,10 +173,10 @@ def get_dashboard_html() -> str:
                 <div class="card-header"><i class="fas fa-faucet me-2"></i>Water</div>
                 <div class="card-body py-1">
                     <div class="d-flex justify-content-between align-items-center">
-                        <div class="fw-bold" :style="{{color: state.water_valve ? '#f44336' : '#4caf50'}}">{{{{ state.water_level || 0 }}}} cm</div>
+                        <div class="fw-bold" :style="{{color: (state.water_valve === true || state.water_valve === 'on') ? '#f44336' : '#4caf50'}}">{{{{ state.water_level || 0 }}}} cm</div>
                         <div class="d-flex gap-1">
-                            <div class="toggle-btn" :class="state.pump_switch ? 'on' : 'off'" @click="send('toggle', {{entity:'switch.pump_switch'}})">PUMP</div>
-                            <div class="toggle-btn" :class="state.water_valve ? 'on' : 'off'" @click="send('toggle', {{entity:'switch.shutoff_valve'}})">VALVE</div>
+                            <div class="toggle-btn" :class="state.pump_switch === true || state.pump_switch === 'on' ? 'on' : 'off'" @click="send('toggle', {{entity:'switch.pump_switch'}})">PUMP</div>
+                            <div class="toggle-btn" :class="state.water_valve === true || state.water_valve === 'on' ? 'on' : 'off'" @click="send('toggle', {{entity:'switch.shutoff_valve'}})">VALVE</div>
                         </div>
                     </div>
                 </div>
@@ -444,7 +444,8 @@ createApp({
         }
         function getButtonState(btn) {
             const stateKey = btn.state_key || 'home_' + btn.id;
-            return state.value[stateKey] ? 'on' : 'off';
+            const val = state.value[stateKey];
+            return val === true || val === 'on' ? 'on' : 'off';
         }
         
         const hasUpdate = computed(() => {
@@ -602,10 +603,10 @@ createApp({
                 width: chartEl.value.clientWidth, height: 200,
                 series: [
                     {label: 'Time'},
-                    {stroke: '#4a90d9', fill: 'rgba(74,144,217,0.05)', label: 'Grid'},
-                    {stroke: '#f5a623', fill: 'rgba(245,166,35,0.05)', label: 'Solar'},
-                    {stroke: '#7ed321', fill: 'rgba(126,211,33,0.05)', label: 'Battery'},
-                    {stroke: '#00d4aa', dash: [5,5], label: 'Setpoint'}
+                    {stroke: '#4a90d9', fill: 'rgba(74,144,217,0.05)', label: 'Grid', width: 1},
+                    {stroke: '#f5a623', fill: 'rgba(245,166,35,0.05)', label: 'Solar', width: 1},
+                    {stroke: '#7ed321', fill: 'rgba(126,211,33,0.05)', label: 'Battery', width: 1},
+                    {stroke: '#00d4aa', dash: [5,5], label: 'Setpoint', width: 1}
                 ],
                 axes: [{show: false}, {grid: {stroke: '#e0e0e0'}, ticks: {stroke: '#ccc'}}],
                 legend: {show: true, live: true},
