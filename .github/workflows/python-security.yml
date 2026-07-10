@@ -30,7 +30,6 @@ jobs:
         pip install bandit safety
 
     - name: Run Bandit security linter
-      working-directory: inverter-dashboard
       run: |
         bandit -r . -f sarif -o bandit-results.sarif || true
         # Always create SARIF file even if bandit finds no issues
