@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
         latest = await check_latest_version()
         if latest:
             websocket_handler.set_latest_version(latest)
-    asyncio.create_task(_bg_version_check())
+    _bg_task = asyncio.create_task(_bg_version_check())
     
     yield
     
