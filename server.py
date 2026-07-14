@@ -49,10 +49,12 @@ async def lifespan(app: FastAPI):
     if ha_client.is_direct_mode():
         ha_task = asyncio.create_task(ha_client.ha_poll_loop())
     
-    # Check for updates on startup
-    latest = await check_latest_version()
-    if latest:
-        websocket_handler.set_latest_version(latest)
+    # Check for updates in background (non-blocking)
+    async def _bg_version_check():
+        latest = await check_latest_version()
+        if latest:
+            websocket_handler.set_latest_version(latest)
+    asyncio.create_task(_bg_version_check())
     
     yield
     

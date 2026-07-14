@@ -31,7 +31,7 @@ async def check_latest_version() -> str | None:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 f"{GITHUB_RAW_URL}/VERSION",
-                timeout=10.0
+                timeout=3.0
             )
             if resp.status_code == 200:
                 latest = resp.text.strip()

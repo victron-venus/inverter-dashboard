@@ -18,6 +18,7 @@ if timeout 10 git fetch origin main 2>/dev/null; then
     else
         echo "Updating to latest version..."
         git reset --hard origin/main 2>/dev/null
+        chmod +x /app/entrypoint.sh
         echo "Updated to: $(cat VERSION 2>/dev/null || git rev-parse --short HEAD)"
     fi
 else
@@ -37,6 +38,9 @@ done
 if ! $has_manual_ssl && [[ -f "$SSL_CERT" && -f "$SSL_KEY" ]]; then
     EXTRA+=(--ssl-cert "$SSL_CERT" --ssl-key "$SSL_KEY")
     echo "TLS: enabled using $SSL_CERT (same port as --port / WEB_PORT)"
+    echo "NOTE: use 'wget --no-check-certificate https://127.0.0.1:$WEB_PORT/api/state' or 'curl -k https://127.0.0.1:$WEB_PORT/api/state' to test"
+else
+    echo "TLS: disabled (no cert+key in $CONFIG_DIR)"
 fi
 
 echo "Starting server..."
