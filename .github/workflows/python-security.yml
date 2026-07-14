@@ -31,37 +31,26 @@ jobs:
 
     - name: Run Bandit security linter
       run: |
-        # Run bandit, store exit code
         set +e
-        bandit -r . -f sarif -o bandit-results.sarif
-        EXIT_CODE=$?
+        bandit -r . -f json -o bandit-results.json 2>/dev/null
+        BANDIT_EXIT=$?
         set -e
 
-        # Ensure SARIF file exists with valid structure
-        if [ ! -f bandit-results.sarif ] || ! grep -q '"runs"' bandit-results.sarif 2>/dev/null; then
-          cat > bandit-results.sarif << 'SARIF'
-            {
-              "version": "2.1.0",
-              "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/sarif-2.1.0-obj.json",
-              "runs": [
-                {
-                  "tool": {
-                    "driver": {
-                      "name": "Bandit",
-                      "version": "1.0.0",
-                      "informationUri": "https://bandit.readthedocs.io/",
-                      "rules": []
-                    }
-                  },
-                  "results": []
-                }
-              ]
-            }
-            SARIF
-        fi
+        python3 -c "
+        import json
+        sarif = {'version': '2.1.0', '\$schema': 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/sarif-2.1.0-obj.json', 'runs': [{'tool': {'driver': {'name': 'Bandit', 'version': '1.0.0', 'informationUri': 'https://bandit.readthedocs.io/', 'rules': []}}, 'results': []}]}
+        try:
+            with open('bandit-results.json') as f:
+                data = json.load(f)
+            for r in data.get('results', []):
+                sarif['runs'][0]['results'].append({'ruleId': r.get('test_id', ''), 'message': {'text': r.get('issue_text', '')}, 'locations': [{'physicalLocation': {'artifactLocation': {'uri': r.get('filename', '')}, 'region': {'startLine': r.get('line_number', 0)}}}], 'level': 'warning'})
+        except Exception:
+            pass
+        with open('bandit-results.sarif', 'w') as f:
+            json.dump(sarif, f)
+        "
 
-        # Exit with bandit status if it found issues
-        exit $EXIT_CODE
+        exit $BANDIT_EXIT
 
     - name: Upload Bandit results
       if: always() && hashFiles('bandit-results.sarif') != ''
