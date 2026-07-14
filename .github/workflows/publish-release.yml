@@ -18,19 +18,11 @@ jobs:
         egress-policy: audit
 
     - name: Checkout
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Report release
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       with:
         script: |
           const tag = context.ref.replace('refs/tags/', '');
           console.log('Release published: ' + tag);
-
-          github.rest.repos.createOrUpdateFileContents({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            path: `.releases/${tag}.md`,
-            message: `chore: release ${tag}`,
-            content: Buffer.from(`Release ${tag} published at ${new Date().toISOString()}`).toString('base64')
-          });
