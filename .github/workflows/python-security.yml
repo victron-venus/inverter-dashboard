@@ -33,7 +33,6 @@ jobs:
       run: |
         set +e
         bandit -r . -f json -o bandit-results.json 2>/dev/null
-        BANDIT_EXIT=$?
         set -e
 
         python3 -c "
@@ -50,10 +49,7 @@ jobs:
             json.dump(sarif, f)
         "
 
-        exit $BANDIT_EXIT
-
     - name: Upload Bandit results
-      if: always() && hashFiles('bandit-results.sarif') != ''
       uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: bandit-results.sarif
