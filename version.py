@@ -3,22 +3,27 @@ Version management and self-update functionality
 """
 
 import os
+import sys
 import logging
 import httpx
 
 
-from config import GITHUB_REPO, GITHUB_RAW_URL
+from config import GITHUB_RAW_URL
 
 logger = logging.getLogger(__name__)
 
 
 def get_version() -> str:
-    """Read version from VERSION file"""
+    """Read version from VERSION file — works whether run as script or frozen binary."""
     try:
-        version_path = os.path.join(os.path.dirname(__file__), 'VERSION')
+        if getattr(sys, 'frozen', False):
+            # PyInstaller onefile: VERSION is extracted by bootloader to sys._MEIPASS
+            version_path = os.path.join(sys._MEIPASS, 'VERSION')
+        else:
+            version_path = os.path.join(os.path.dirname(__file__), 'VERSION')
         with open(version_path, 'r') as f:
             return f.read().strip()
-    except:
+    except Exception:
         return 'dev'
 
 
@@ -59,8 +64,15 @@ async def download_and_update() -> tuple[bool, str]:
     ]
     
     try:
-        script_dir = os.path.dirname(__file__)
         new_version = "unknown"
+
+        # PyInstaller onefile: use executable's directory for file writes,
+        # not __file__ (points to transient _MEIPASS temp extraction).
+        if getattr(sys, 'frozen', False):
+            import pathlib
+            script_dir = pathlib.Path(sys.executable).parent.resolve()
+        else:
+            script_dir = os.path.dirname(__file__)
         
         async with httpx.AsyncClient(timeout=30) as client:
             for filename in files_to_update:
