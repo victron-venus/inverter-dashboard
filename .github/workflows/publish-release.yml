@@ -34,9 +34,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller==${{ env.PYINSTALLER_VERSION }} -r requirements.txt
 
+      - name: Generate spec file for Linux x86_64
+        run: |
+          pyinstaller --target-arch x86_64 --name inverter-dashboard server.py
+
       - name: Build Linux x86_64
         run: |
-          pyinstaller --target-arch x86_64 inverter-dashboard.spec \
+          pyinstaller inverter-dashboard.spec \
             --distpath dist/linux-x86_64 \
             --workpath build/linux-x86_64
 
@@ -67,12 +71,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller==${{ env.PYINSTALLER_VERSION }} -r requirements.txt
 
-      - name: Build macOS x86_64
+      - name: Generate spec file for macOS x86_64
         run: |
           MACOSX_DEPLOYMENT_TARGET=11.0 \
           CFLAGS="-arch x86_64" \
           LDFLAGS="-arch x86_64" \
-          pyinstaller --target-arch x86_64 inverter-dashboard.spec \
+          pyinstaller --target-arch x86_64 --name inverter-dashboard server.py
+
+      - name: Build macOS x86_64
+        run: |
+          pyinstaller inverter-dashboard.spec \
             --distpath dist/macos-x86_64 \
             --workpath build/macos-x86_64
 
@@ -106,12 +114,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller==${{ env.PYINSTALLER_VERSION }} -r requirements.txt
 
-      - name: Build macOS arm64
+      - name: Generate spec file for macOS arm64
         run: |
           MACOSX_DEPLOYMENT_TARGET=11.0 \
           CFLAGS="-arch arm64" \
           LDFLAGS="-arch arm64" \
-          pyinstaller --target-arch arm64 inverter-dashboard.spec \
+          pyinstaller --target-arch arm64 --name inverter-dashboard server.py
+
+      - name: Build macOS arm64
+        run: |
+          pyinstaller inverter-dashboard.spec \
             --distpath dist/macos-arm64 \
             --workpath build/macos-arm64
 
@@ -145,9 +157,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller==${{ env.PYINSTALLER_VERSION }} -r requirements.txt
 
+      - name: Generate spec file for Windows x86_64
+        run: |
+          pyinstaller --target-arch x86_64 --name inverter-dashboard server.py
+
       - name: Build Windows x86_64
         run: |
-          pyinstaller --target-arch x86_64 inverter-dashboard.spec `
+          pyinstaller inverter-dashboard.spec `
             --distpath dist/windows-x86_64 `
             --workpath build/windows-x86_64
 
