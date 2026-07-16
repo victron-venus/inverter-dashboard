@@ -59,8 +59,8 @@ jobs:
           path: dist/linux-x86_64/inverter-dashboard
 
   build-macos-x64:
-    runs-on: macos-13  # Intel Mac
-    steps:
+    if: false  # disabled: macos-13 runner shortage
+    runs-on: macos-13
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
@@ -206,7 +206,7 @@ jobs:
           path: dist/windows-x86_64/inverter-dashboard.exe
 
   release:
-    needs: [build-linux, build-macos-x64, build-macos-arm64, build-windows]
+    needs: [build-linux, build-macos-arm64, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
