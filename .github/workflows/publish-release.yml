@@ -34,15 +34,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller==${{ env.PYINSTALLER_VERSION }} -r requirements.txt
 
-      - name: Generate spec file for Linux x86_64
-        run: |
-          pyinstaller --target-arch x86_64 --name inverter-dashboard server.py
-
       - name: Build Linux x86_64
         run: |
-          pyinstaller inverter-dashboard.spec \
+          pyinstaller --onefile --noconfirm \
+            --target-arch x86_64 \
+            --name inverter-dashboard \
             --distpath dist/linux-x86_64 \
-            --workpath build/linux-x86_64
+            --workpath build/linux-x86_64 \
+            --hidden-import=server \
+            --hidden-import=config \
+            --hidden-import=version \
+            --hidden-import=mqtt_handler \
+            --hidden-import=websocket_handler \
+            --hidden-import=html_template \
+            --hidden-import=ha_client \
+            --hidden-import=scripts.docker_healthcheck \
+            --add-data 'VERSION:.' \
+            server.py
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -71,18 +79,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller==${{ env.PYINSTALLER_VERSION }} -r requirements.txt
 
-      - name: Generate spec file for macOS x86_64
+      - name: Build macOS x86_64
         run: |
           MACOSX_DEPLOYMENT_TARGET=11.0 \
           CFLAGS="-arch x86_64" \
           LDFLAGS="-arch x86_64" \
-          pyinstaller --target-arch x86_64 --name inverter-dashboard server.py
-
-      - name: Build macOS x86_64
-        run: |
-          pyinstaller inverter-dashboard.spec \
+          pyinstaller --onefile --noconfirm \
+            --target-arch x86_64 \
+            --name inverter-dashboard \
             --distpath dist/macos-x86_64 \
-            --workpath build/macos-x86_64
+            --workpath build/macos-x86_64 \
+            --hidden-import=server \
+            --hidden-import=config \
+            --hidden-import=version \
+            --hidden-import=mqtt_handler \
+            --hidden-import=websocket_handler \
+            --hidden-import=html_template \
+            --hidden-import=ha_client \
+            --hidden-import=scripts.docker_healthcheck \
+            --add-data 'VERSION:.' \
+            server.py
 
       - name: Make executable
         run: chmod +x dist/macos-x86_64/inverter-dashboard
@@ -114,18 +130,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller==${{ env.PYINSTALLER_VERSION }} -r requirements.txt
 
-      - name: Generate spec file for macOS arm64
+      - name: Build macOS arm64
         run: |
           MACOSX_DEPLOYMENT_TARGET=11.0 \
           CFLAGS="-arch arm64" \
           LDFLAGS="-arch arm64" \
-          pyinstaller --target-arch arm64 --name inverter-dashboard server.py
-
-      - name: Build macOS arm64
-        run: |
-          pyinstaller inverter-dashboard.spec \
+          pyinstaller --onefile --noconfirm \
+            --target-arch arm64 \
+            --name inverter-dashboard \
             --distpath dist/macos-arm64 \
-            --workpath build/macos-arm64
+            --workpath build/macos-arm64 \
+            --hidden-import=server \
+            --hidden-import=config \
+            --hidden-import=version \
+            --hidden-import=mqtt_handler \
+            --hidden-import=websocket_handler \
+            --hidden-import=html_template \
+            --hidden-import=ha_client \
+            --hidden-import=scripts.docker_healthcheck \
+            --add-data 'VERSION:.' \
+            server.py
 
       - name: Make executable
         run: chmod +x dist/macos-arm64/inverter-dashboard
@@ -157,15 +181,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller==${{ env.PYINSTALLER_VERSION }} -r requirements.txt
 
-      - name: Generate spec file for Windows x86_64
-        run: |
-          pyinstaller --target-arch x86_64 --name inverter-dashboard server.py
-
       - name: Build Windows x86_64
         run: |
-          pyinstaller inverter-dashboard.spec `
+          pyinstaller --onefile --noconfirm `
+            --target-arch x86_64 `
+            --name inverter-dashboard `
             --distpath dist/windows-x86_64 `
-            --workpath build/windows-x86_64
+            --workpath build/windows-x86_64 `
+            --hidden-import=server `
+            --hidden-import=config `
+            --hidden-import=version `
+            --hidden-import=mqtt_handler `
+            --hidden-import=websocket_handler `
+            --hidden-import=html_template `
+            --hidden-import=ha_client `
+            --hidden-import=scripts.docker_healthcheck `
+            --add-data 'VERSION;.' `
+            server.py
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
