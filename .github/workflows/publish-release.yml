@@ -247,7 +247,6 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --notes-file release.txt \
-            --clobber \
             release/*.zip release/*.sha256
 
       - name: Report
