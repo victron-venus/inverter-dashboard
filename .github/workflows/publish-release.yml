@@ -58,56 +58,33 @@ jobs:
           name: inverter-dashboard-linux-x86_64
           path: dist/linux-x86_64/inverter-dashboard
 
-  build-macos-x64:
-    if: false  # disabled: macos-13 runner shortage
-    runs-on: macos-13
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller==${{ env.PYINSTALLER_VERSION }} -r requirements.txt
-
-      - name: Build macOS x86_64
-        run: |
-          MACOSX_DEPLOYMENT_TARGET=11.0 \
-          CFLAGS="-arch x86_64" \
-          LDFLAGS="-arch x86_64" \
-          pyinstaller --onefile --noconfirm \
-            --target-arch x86_64 \
-            --name inverter-dashboard \
-            --distpath dist/macos-x86_64 \
-            --workpath build/macos-x86_64 \
-            --hidden-import=server \
-            --hidden-import=config \
-            --hidden-import=version \
-            --hidden-import=mqtt_handler \
-            --hidden-import=websocket_handler \
-            --hidden-import=html_template \
-            --hidden-import=ha_client \
-            --hidden-import=scripts.docker_healthcheck \
-            --add-data 'VERSION:.' \
-            server.py
-
-      - name: Make executable
-        run: chmod +x dist/macos-x86_64/inverter-dashboard
-
-      - name: Upload macOS x86_64 artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: inverter-dashboard-macos-x86_64
-          path: dist/macos-x86_64/inverter-dashboard
+  # build-macos-x64: disabled (macos-13 runner shortage)
+  #   runs-on: macos-13
+  #   steps:
+  #     - name: Harden the runner (Audit all outbound calls)
+  #       uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+  #       with:
+  #         egress-policy: audit
+  #     - name: Checkout
+  #       uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+  #     - name: Set up Python
+  #       uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+  #       with:
+  #         python-version: ${{ env.PYTHON_VERSION }}
+  #     - name: Install dependencies
+  #       run: |
+  #         python -m pip install --upgrade pip
+  #         pip install pyinstaller==${{ env.PYINSTALLER_VERSION }} -r requirements.txt
+  #     - name: Build macOS x86_64
+  #       run: |
+  #         MACOSX_DEPLOYMENT_TARGET=11.0 CFLAGS="-arch x86_64" LDFLAGS="-arch x86_64" pyinstaller --onefile --noconfirm --target-arch x86_64 --name inverter-dashboard --distpath dist/macos-x86_64 --workpath build/macos-x86_64 --hidden-import=server --hidden-import=config --hidden-import=version --hidden-import=mqtt_handler --hidden-import=websocket_handler --hidden-import=html_template --hidden-import=ha_client --hidden-import=scripts.docker_healthcheck --add-data 'VERSION:.' server.py
+  #     - name: Make executable
+  #       run: chmod +x dist/macos-x86_64/inverter-dashboard
+  #     - name: Upload macOS x86_64 artifact
+  #       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+  #       with:
+  #         name: inverter-dashboard-macos-x86_64
+  #         path: dist/macos-x86_64/inverter-dashboard
 
   build-macos-arm64:
     runs-on: macos-14  # Apple Silicon
