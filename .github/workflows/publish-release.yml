@@ -207,6 +207,8 @@ jobs:
           mkdir -p ../release
           for dir in */; do
             platform=$(basename "$dir")
+            # Remove 'inverter-dashboard-' prefix if present to avoid double naming
+            platform=${platform#inverter-dashboard-}
             cd "$dir"
             # Handle both executables and .app bundles
             if [ -d "inverter-dashboard.app" ]; then
@@ -245,6 +247,7 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --notes-file release.txt \
+            --clobber \
             release/*.zip release/*.sha256
 
       - name: Report
