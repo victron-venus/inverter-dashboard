@@ -56,11 +56,16 @@ body.light .subsection { border-color: #ccc; }
 '''
 
 
-def get_dashboard_html() -> str:
-    """Generate Vue.js + uPlot dashboard HTML"""
+def get_dashboard_html(secret: str = "") -> str:
+    """Generate Vue.js + uPlot dashboard HTML.
+
+    Args:
+        secret: Dashboard auth token injected into the page for WS auth.
+    """
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
+    <meta name="dashboard-secret" content="{secret}">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Inverter Control (Remote)</title>
@@ -331,8 +336,10 @@ createApp({
             if (reconnectTimer) clearTimeout(reconnectTimer);
             
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const secret = document.querySelector('meta[name="dashboard-secret"]')?.content || '';
+            const tokenParam = secret ? `?token=${encodeURIComponent(secret)}` : '';
             try {
-                ws = new WebSocket(`${proto}//${location.host}/ws`);
+                ws = new WebSocket(`${proto}//${location.host}/ws${tokenParam}`);
             } catch (e) {
                 wsConnected.value = false;
                 reconnectTimer = setTimeout(connect, 2000);
@@ -470,7 +477,8 @@ createApp({
                 if (confirm('Update to v' + state.value.latest_version + '?')) {
                     updating.value = true;
                     try {
-                        const res = await fetch('/api/update', {method: 'POST'});
+                        const secret = document.querySelector('meta[name="dashboard-secret"]')?.content || '';
+                        const res = await fetch('/api/update', {method: 'POST', headers: secret ? {'Authorization': `Bearer ${secret}`} : {}});
                         const data = await res.json();
                         if (data.error) {
                             alert('Update failed: ' + data.error);
@@ -486,7 +494,8 @@ createApp({
                 }
             } else {
                 try {
-                    const res = await fetch('/api/check-update', {method: 'POST'});
+                    const secret = document.querySelector('meta[name="dashboard-secret"]')?.content || '';
+                    const res = await fetch('/api/check-update', {method: 'POST', headers: secret ? {'Authorization': `Bearer ${secret}`} : {}});
                     const data = await res.json();
                     if (data.latest && data.latest !== data.current) {
                         state.value.latest_version = data.latest;

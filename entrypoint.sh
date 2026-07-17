@@ -1,5 +1,5 @@
 #!/bin/bash
-# Auto-update on startup: fetch latest code from GitHub, fallback to built-in
+# Startup script — auto-update is disabled by default (set SELF_UPDATE_ENABLED=true to opt in)
 
 cd /app
 
@@ -10,19 +10,23 @@ echo "=== Inverter Dashboard starting ==="
 echo "Built-in version: $(cat VERSION 2>/dev/null || echo 'unknown')"
 echo "Config dir (HA secrets + TLS): $CONFIG_DIR"
 
-# Try to update from GitHub (timeout 10s)
-if timeout 10 git fetch origin main 2>/dev/null; then
-    echo "Fetched latest from GitHub"
-    if git diff --quiet HEAD origin/main 2>/dev/null; then
-        echo "Already up to date"
+# Auto-update on startup (opt-in only)
+if [[ "${SELF_UPDATE_ENABLED,,}" == "true" || "${SELF_UPDATE_ENABLED}" == "1" ]]; then
+    if timeout 10 git fetch origin main 2>/dev/null; then
+        echo "Fetched latest from GitHub"
+        if git diff --quiet HEAD origin/main 2>/dev/null; then
+            echo "Already up to date"
+        else
+            echo "Updating to latest version..."
+            git reset --hard origin/main 2>/dev/null
+            chmod +x /app/entrypoint.sh
+            echo "Updated to: $(cat VERSION 2>/dev/null || git rev-parse --short HEAD)"
+        fi
     else
-        echo "Updating to latest version..."
-        git reset --hard origin/main 2>/dev/null
-        chmod +x /app/entrypoint.sh
-        echo "Updated to: $(cat VERSION 2>/dev/null || git rev-parse --short HEAD)"
+        echo "GitHub unavailable, using built-in version"
     fi
 else
-    echo "GitHub unavailable, using built-in version"
+    echo "Self-update disabled (set SELF_UPDATE_ENABLED=true to enable)"
 fi
 
 SSL_CERT="${CONFIG_DIR}/dashboard.crt"
@@ -43,5 +47,9 @@ else
     echo "TLS: disabled (no cert+key in $CONFIG_DIR)"
 fi
 
+if [[ -z "$DASHBOARD_SECRET" ]]; then
+    echo "WARNING: DASHBOARD_SECRET is not set — API endpoints are unprotected"
+fi
+
 echo "Starting server..."
-exec python server.py "${EXTRA[@]}" "$@"
+exec python -m inverter_dashboard "${EXTRA[@]}" "$@"

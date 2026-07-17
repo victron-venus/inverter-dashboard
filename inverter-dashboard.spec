@@ -4,19 +4,19 @@
 block_cipher = None
 
 local_modules = [
-    'server',
-    'config',
-    'version',
-    'mqtt_handler',
-    'websocket_handler',
-    'html_template',
-    'ha_client',
-    'scripts.docker_healthcheck',
+    'inverter_dashboard',
+    'inverter_dashboard.config',
+    'inverter_dashboard.version',
+    'inverter_dashboard.mqtt_handler',
+    'inverter_dashboard.websocket_handler',
+    'inverter_dashboard.html_template',
+    'inverter_dashboard.ha_client',
+    'inverter_dashboard.scripts.docker_healthcheck',
 ]
 
 a = Analysis(  # noqa: F821
-    ['server.py'],
-    pathex=[],
+    ['src/inverter_dashboard/__main__.py'],
+    pathex=['src'],
     binaries=[],
     datas=[
         ('VERSION', '.', 'DATA'),

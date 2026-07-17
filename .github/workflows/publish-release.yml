@@ -41,16 +41,17 @@ jobs:
             --name inverter-dashboard \
             --distpath dist/linux-x86_64 \
             --workpath build/linux-x86_64 \
-            --hidden-import=server \
-            --hidden-import=config \
-            --hidden-import=version \
-            --hidden-import=mqtt_handler \
-            --hidden-import=websocket_handler \
-            --hidden-import=html_template \
-            --hidden-import=ha_client \
-            --hidden-import=scripts.docker_healthcheck \
+            --paths src \
+            --hidden-import=inverter_dashboard \
+            --hidden-import=inverter_dashboard.config \
+            --hidden-import=inverter_dashboard.version \
+            --hidden-import=inverter_dashboard.mqtt_handler \
+            --hidden-import=inverter_dashboard.websocket_handler \
+            --hidden-import=inverter_dashboard.html_template \
+            --hidden-import=inverter_dashboard.ha_client \
+            --hidden-import=inverter_dashboard.scripts.docker_healthcheck \
             --add-data 'VERSION:.' \
-            server.py
+            src/inverter_dashboard/__main__.py
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -117,16 +118,17 @@ jobs:
             --name inverter-dashboard \
             --distpath dist/macos-arm64 \
             --workpath build/macos-arm64 \
-            --hidden-import=server \
-            --hidden-import=config \
-            --hidden-import=version \
-            --hidden-import=mqtt_handler \
-            --hidden-import=websocket_handler \
-            --hidden-import=html_template \
-            --hidden-import=ha_client \
-            --hidden-import=scripts.docker_healthcheck \
+            --paths src \
+            --hidden-import=inverter_dashboard \
+            --hidden-import=inverter_dashboard.config \
+            --hidden-import=inverter_dashboard.version \
+            --hidden-import=inverter_dashboard.mqtt_handler \
+            --hidden-import=inverter_dashboard.websocket_handler \
+            --hidden-import=inverter_dashboard.html_template \
+            --hidden-import=inverter_dashboard.ha_client \
+            --hidden-import=inverter_dashboard.scripts.docker_healthcheck \
             --add-data 'VERSION:.' \
-            server.py
+            src/inverter_dashboard/__main__.py
 
       - name: Make executable
         run: chmod +x dist/macos-arm64/inverter-dashboard
@@ -165,16 +167,17 @@ jobs:
             --name inverter-dashboard `
             --distpath dist/windows-x86_64 `
             --workpath build/windows-x86_64 `
-            --hidden-import=server `
-            --hidden-import=config `
-            --hidden-import=version `
-            --hidden-import=mqtt_handler `
-            --hidden-import=websocket_handler `
-            --hidden-import=html_template `
-            --hidden-import=ha_client `
-            --hidden-import=scripts.docker_healthcheck `
+            --paths src `
+            --hidden-import=inverter_dashboard `
+            --hidden-import=inverter_dashboard.config `
+            --hidden-import=inverter_dashboard.version `
+            --hidden-import=inverter_dashboard.mqtt_handler `
+            --hidden-import=inverter_dashboard.websocket_handler `
+            --hidden-import=inverter_dashboard.html_template `
+            --hidden-import=inverter_dashboard.ha_client `
+            --hidden-import=inverter_dashboard.scripts.docker_healthcheck `
             --add-data 'VERSION;.' `
-            server.py
+            src\inverter_dashboard\__main__.py
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

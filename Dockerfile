@@ -8,18 +8,16 @@ RUN apk add --no-cache bash git
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Same layout as before: tree from GitHub, then overlay files from the build context.
-RUN git clone --depth 1 https://github.com/victron-venus/inverter-dashboard.git /app/repo && \
-    cp -a /app/repo/. /app/ && \
-    rm -rf /app/repo
+# Install as editable package so `python -m inverter_dashboard` works
+COPY pyproject.toml ./
+COPY src/ ./src/
+COPY VERSION ./
+RUN pip install --no-cache-dir -e .
 
-COPY *.py ./
-COPY ha_client.py ha_secrets.example.py ./
-COPY scripts/docker_healthcheck.py scripts/
-COPY entrypoint.sh .
-COPY VERSION .
+# Overlay ha_secrets.example.py at repo root (used by entrypoint / Docker config mount)
+COPY ha_secrets.example.py ./
 
-RUN chmod +x entrypoint.sh && mkdir -p /app/config
+RUN chmod +x entrypoint.sh 2>/dev/null; mkdir -p /app/config
 
 # Non-root user (Docker Scout / smaller attack surface).
 # UID/GID 1000 is a common default Linux user; override in compose if needed.
@@ -32,7 +30,7 @@ ENV INVERTER_DASHBOARD_CONFIG=/app/config
 ENV WEB_PORT=8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD python /app/scripts/docker_healthcheck.py || exit 1
+  CMD python -m inverter_dashboard.scripts.docker_healthcheck || exit 1
 
 EXPOSE 8080
 

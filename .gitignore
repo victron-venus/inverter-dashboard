@@ -34,3 +34,8 @@ commit.sh
 commit.txt
 release.txt
 logs
+
+# Package build
+*.egg-info/
+dist/
+build/

@@ -8,3 +8,7 @@ docker-compose.yml
 portainer-stack.yml
 .env
 *.log
+tests/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/

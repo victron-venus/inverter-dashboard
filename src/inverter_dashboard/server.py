@@ -1,32 +1,26 @@
 #!/usr/bin/env python3
 """
 Remote Web Dashboard for Inverter Control
-Connects to Cerbo GX via MQTT, serves Vue.js dashboard via WebSocket
+Connects to Cerbo GX via MQTT, serves dashboard via WebSocket
 """
 
 import os
 import sys
-
-# Ensure sibling modules (e.g. ha_client) resolve when cwd or PYTHONPATH differ
-_APP_DIR = os.path.dirname(os.path.abspath(__file__))
-if _APP_DIR not in sys.path:
-    sys.path.insert(0, _APP_DIR)
-
 import asyncio
 import logging
 import argparse
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, Query, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
-from config import MQTT_HOST, MQTT_PORT, WEB_PORT
-from version import VERSION, check_latest_version, download_and_update
-import mqtt_handler
-import websocket_handler
-import ha_client
-from html_template import get_dashboard_html
+from .config import MQTT_HOST, MQTT_PORT, WEB_PORT, DASHBOARD_SECRET
+from .version import VERSION, check_latest_version, download_and_update, SelfUpdateDisabled
+from . import mqtt_handler
+from . import websocket_handler
+from . import ha_client
+from .html_template import get_dashboard_html
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -35,29 +29,50 @@ logger = logging.getLogger(__name__)
 mqtt_client = None
 
 
+def _verify_secret(request: Request, token: str | None = None) -> None:
+    """Verify DASHBOARD_SECRET against Authorization header or query param.
+
+    Raises HTTPException(401/403) on failure.
+    """
+    if not DASHBOARD_SECRET:
+        return
+
+    if token and token == DASHBOARD_SECRET:
+        return
+
+    auth = request.headers.get("authorization", "")
+    if auth.startswith("Bearer ") and auth[7:] == DASHBOARD_SECRET:
+        return
+
+    if not token and not auth:
+        raise HTTPException(status_code=401, detail="missing secret")
+
+    raise HTTPException(status_code=403, detail="invalid secret")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler"""
     global mqtt_client
-    
+
     # Startup
     ha_client.load_config()
     mqtt_client = mqtt_handler.create_client()
-    mqtt_handler.set_state_callback(websocket_handler.broadcast_state, asyncio.get_event_loop())
+    mqtt_handler.set_state_callback(websocket_handler.broadcast_state, asyncio.get_running_loop())
     mqtt_handler.start_client(mqtt_client)
     ha_task = None
     if ha_client.is_direct_mode():
         ha_task = asyncio.create_task(ha_client.ha_poll_loop())
-    
+
     # Check for updates in background (non-blocking)
     async def _bg_version_check():
         latest = await check_latest_version()
         if latest:
             websocket_handler.set_latest_version(latest)
     _bg_task = asyncio.create_task(_bg_version_check())
-    
+
     yield
-    
+
     # Shutdown
     if ha_task:
         ha_task.cancel()
@@ -75,12 +90,16 @@ app = FastAPI(title="Inverter Dashboard", lifespan=lifespan)
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Serve dashboard page"""
-    return get_dashboard_html()
+    return get_dashboard_html(secret=DASHBOARD_SECRET)
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time updates"""
+    token = websocket.query_params.get("token")
+    if DASHBOARD_SECRET and token != DASHBOARD_SECRET:
+        await websocket.close(code=4401, reason="unauthorized")
+        return
     await websocket_handler.handle_websocket(websocket, mqtt_client)
 
 
@@ -97,8 +116,9 @@ async def api_state():
 
 
 @app.post("/api/check-update")
-async def api_check_update():
+async def api_check_update(request: Request):
     """Check for updates"""
+    _verify_secret(request)
     latest = await check_latest_version()
     if latest:
         websocket_handler.set_latest_version(latest)
@@ -106,15 +126,19 @@ async def api_check_update():
 
 
 @app.post("/api/update")
-async def api_update():
+async def api_update(request: Request):
     """Self-update: download latest from GitHub and restart"""
+    _verify_secret(request)
     logger.info("Update requested...")
-    
-    success, result = await download_and_update()
-    
+
+    try:
+        success, result = await download_and_update()
+    except SelfUpdateDisabled:
+        return JSONResponse({'error': 'self-update is disabled (set SELF_UPDATE_ENABLED=true)'}, status_code=403)
+
     if success:
-        # Schedule restart
-        asyncio.get_event_loop().call_later(1, lambda: os._exit(0))
+        # Schedule restart via container supervisor (PID 1 reaps this process)
+        asyncio.get_running_loop().call_later(1, lambda: os._exit(0))
         return {'status': 'updated', 'version': result, 'message': f'Updated to v{result}, restarting...'}
     else:
         return JSONResponse({'error': result}, status_code=500)
@@ -129,17 +153,20 @@ def main():
     parser.add_argument('--ssl-cert', help='SSL certificate file')
     parser.add_argument('--ssl-key', help='SSL key file')
     args = parser.parse_args()
-    
+
     # Update config
-    import config
+    from . import config
     config.MQTT_HOST = args.mqtt_host
     config.MQTT_PORT = args.mqtt_port
-    
+
     proto = "https" if args.ssl_cert else "http"
-    print(f"Starting Remote Dashboard v{VERSION}")
-    print(f"  MQTT: {args.mqtt_host}:{args.mqtt_port}")
-    print(f"  Web:  {proto}://0.0.0.0:{args.port}")
-    
+    if not DASHBOARD_SECRET:
+        logger.warning("DASHBOARD_SECRET is not set — API endpoints are unprotected. "
+                        "Set DASHBOARD_SECRET env var for production use.")
+    logger.info("Starting Remote Dashboard v%s", VERSION)
+    logger.info("  MQTT: %s:%s", args.mqtt_host, args.mqtt_port)
+    logger.info("  Web:  %s://0.0.0.0:%s", proto, args.port)
+
     uvicorn.run(
         app,
         host="0.0.0.0",

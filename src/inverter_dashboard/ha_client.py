@@ -17,8 +17,11 @@ import logging
 import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import httpx
+
+from .config import HA_POLL_TIMEOUT, HA_REQUEST_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -42,15 +45,22 @@ _overlay: Dict[str, Any] = {
     "ha_direct_connected": False,
 }
 
+# Reusable async HTTP client for HA requests
+_http_client: httpx.AsyncClient | None = None
+
 
 def _prepend_ha_secrets_import_path() -> None:
     """Load ha_secrets from INVERTER_DASHBOARD_CONFIG (Docker mount) or app directory."""
-    here = os.path.dirname(os.path.abspath(__file__))
+    # Walk up from package dir to repo root (where ha_secrets.py lives in dev/Docker)
+    pkg_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.normpath(os.path.join(pkg_dir, '..', '..'))
+
     candidates = []
     env_dir = os.environ.get("INVERTER_DASHBOARD_CONFIG", "").strip()
     if env_dir:
         candidates.append(env_dir)
-    candidates.append(here)
+    candidates.append(repo_root)
+    candidates.append(pkg_dir)
     for d in candidates:
         if not d:
             continue
@@ -229,10 +239,49 @@ def replace_overlay(data: Dict[str, Any]) -> None:
     _overlay = data
 
 
+def _ha_headers() -> dict:
+    """Common headers for HA REST API calls."""
+    return {
+        "Authorization": f"Bearer {_token}",
+        "Content-Type": "application/json",
+    }
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Get or create a shared async HTTP client."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=HA_REQUEST_TIMEOUT)
+    return _http_client
+
+
+async def _ha_request(
+    method: str,
+    path: str,
+    *,
+    json_body: dict | None = None,
+    timeout: float | None = None,
+) -> httpx.Response | None:
+    """Single helper for all HA REST calls. Returns response or None on error."""
+    if not _configured:
+        return None
+    client = _get_http_client()
+    try:
+        resp = await client.request(
+            method,
+            f"{_url}{path}",
+            headers=_ha_headers(),
+            json=json_body,
+            timeout=timeout or HA_REQUEST_TIMEOUT,
+        )
+        return resp
+    except httpx.HTTPError as e:
+        logger.error("HA request %s %s failed: %s", method, path, e)
+        return None
+
+
 async def _get_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -> Optional[str]:
     """GET /api/states/{entity_id} → state string."""
-    from urllib.parse import quote
-
     safe = quote(entity_id, safe="")
     try:
         r = await client.get(f"{_url}/api/states/{safe}", headers=headers)
@@ -240,7 +289,7 @@ async def _get_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -
             return None
         data = r.json()
         return data.get("state")
-    except Exception:
+    except (httpx.HTTPError, json.JSONDecodeError):
         return None
 
 
@@ -249,14 +298,11 @@ async def fetch_states_once() -> Dict[str, Any]:
     if not is_direct_mode():
         return {}
 
-    headers = {
-        "Authorization": f"Bearer {_token}",
-        "Content-Type": "application/json",
-    }
+    headers = _ha_headers()
     out: Dict[str, Any] = {"booleans": {}}
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=HA_POLL_TIMEOUT) as client:
             booleans = {}
             for key, eid in _boolean_entities.items():
                 st = await _get_state(client, headers, eid)
@@ -281,8 +327,8 @@ async def fetch_states_once() -> Dict[str, Any]:
             out["ha_direct_connected"] = True
             return out
 
-    except Exception as e:
-        logger.warning(f"HA poll failed: {e}")
+    except httpx.HTTPError as e:
+        logger.warning("HA poll failed: %s", e)
         return {"booleans": {}, "ha_direct_connected": False}
 
 
@@ -343,23 +389,8 @@ async def call_turn(entity_id: str, turn_on: bool) -> bool:
     if domain not in ("input_boolean", "switch", "light"):
         return False
 
-    headers = {
-        "Authorization": f"Bearer {_token}",
-        "Content-Type": "application/json",
-    }
-    body = {"entity_id": entity_id}
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{_url}/api/services/{domain}/{service}",
-                headers=headers,
-                json=body,
-            )
-            return resp.status_code == 200
-    except Exception as e:
-        logger.error(f"HA service call failed: {e}")
-        return False
+    resp = await _ha_request("POST", f"/api/services/{domain}/{service}", json_body={"entity_id": entity_id})
+    return resp is not None and resp.status_code == 200
 
 
 async def toggle_entity(entity_id: str) -> bool:
@@ -377,21 +408,8 @@ async def toggle_entity(entity_id: str) -> bool:
     else:
         return False
 
-    headers = {
-        "Authorization": f"Bearer {_token}",
-        "Content-Type": "application/json",
-    }
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{_url}/api/services/{svc}",
-                headers=headers,
-                json={"entity_id": entity_id},
-            )
-            return resp.status_code == 200
-    except Exception as e:
-        logger.error(f"HA toggle failed: {e}")
-        return False
+    resp = await _ha_request("POST", f"/api/services/{svc}", json_body={"entity_id": entity_id})
+    return resp is not None and resp.status_code == 200
 
 
 def domain_for_press(entity_id: str) -> Optional[str]:
@@ -402,18 +420,5 @@ def domain_for_press(entity_id: str) -> Optional[str]:
 
 async def press_entity(entity_id: str) -> bool:
     """Fire button.press."""
-    headers = {
-        "Authorization": f"Bearer {_token}",
-        "Content-Type": "application/json",
-    }
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{_url}/api/services/button/press",
-                headers=headers,
-                json={"entity_id": entity_id},
-            )
-            return resp.status_code == 200
-    except Exception as e:
-        logger.error(f"HA button press failed: {e}")
-        return False
+    resp = await _ha_request("POST", "/api/services/button/press", json_body={"entity_id": entity_id})
+    return resp is not None and resp.status_code == 200

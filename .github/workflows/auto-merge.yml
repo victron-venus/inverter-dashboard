@@ -1,39 +1,21 @@
-name: Auto-merge PR
+name: Auto-merge PR (DISABLED)
+
+# DISABLED: auto-merge should not be used with auto-approve.
+# PRs from the owner now require manual review before merging to main.
+# This ensures human oversight for code that auto-deploys to all installations.
+#
+# To merge, use: gh pr merge <number> --squash --admin (requires manual approval first)
 
 on:
-  pull_request:
-    types: [opened, synchronize, labeled, unlabeled]
-  check_suite:
-    types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  auto-merge:
+  disabled:
     runs-on: ubuntu-latest
-    if: |
-      github.actor == '4alvit' &&
-      contains(github.event.pull_request.labels.*.name, 'auto-merge') &&
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.base.ref == 'main'
-
     steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-
-      - name: Auto-merge PR
-        uses: pascalgn/automerge-action@7961b8b5eec56cc088c140b56d864285eabd3f67 # v0.16.4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          required-statuses: |
-            CI
-            Python Security Scan
-        env:
-          MERGE_METHOD: squash
-          MERGE_COMMIT_MESSAGE: automatic
-          MERGE_RETRIES: 3
-          MERGE_RETRY_SLEEP: 10000
+      - name: Warn
+        run: echo "Auto-merge is disabled. PRs require manual review and merge."
