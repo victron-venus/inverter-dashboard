@@ -1,11 +1,10 @@
 """Tests for ha_client pure functions (no network, no HA required)."""
 
-import pytest
 
-from inverter_dashboard.ha_client import (
+from src.inverter_dashboard.ha_client import (
     _sensor_state_to_seconds,
     _boolish,
-    _parse_switch_entities,
+    _parse_ha_switch_entities,
     _appliance_field_value,
     _appliance_fallback,
     _default_switch_label,
@@ -90,52 +89,52 @@ class TestBoolish:
 
 
 # ---------------------------------------------------------------------------
-# _parse_switch_entities
+# _parse_ha_switch_entities
 # ---------------------------------------------------------------------------
 class TestParseSwitchEntities:
     def test_none_input(self):
-        entities, labels = _parse_switch_entities(None)
+        entities, labels = _parse_ha_switch_entities(None)
         assert entities == {}
         assert labels == {}
 
     def test_empty_dict(self):
-        entities, labels = _parse_switch_entities({})
+        entities, labels = _parse_ha_switch_entities({})
         assert entities == {}
         assert labels == {}
 
     def test_string_value(self):
         raw = {"recliner": "switch.recliner_recliner"}
-        entities, labels = _parse_switch_entities(raw)
+        entities, labels = _parse_ha_switch_entities(raw)
         assert entities == {"recliner": "switch.recliner_recliner"}
         assert labels == {}
 
     def test_tuple_value(self):
         raw = {"recliner": ("switch.recliner_recliner", "Recliner")}
-        entities, labels = _parse_switch_entities(raw)
+        entities, labels = _parse_ha_switch_entities(raw)
         assert entities == {"recliner": "switch.recliner_recliner"}
         assert labels == {"recliner": "Recliner"}
 
     def test_dict_value(self):
         raw = {"garage": {"entity": "switch.garage", "label": "Garage light"}}
-        entities, labels = _parse_switch_entities(raw)
+        entities, labels = _parse_ha_switch_entities(raw)
         assert entities == {"garage": "switch.garage"}
         assert labels == {"garage": "Garage light"}
 
     def test_dict_value_alt_keys(self):
         raw = {"light": {"id": "light.kitchen", "name": "Kitchen"}}
-        entities, labels = _parse_switch_entities(raw)
+        entities, labels = _parse_ha_switch_entities(raw)
         assert entities == {"light": "light.kitchen"}
         assert labels == {"light": "Kitchen"}
 
     def test_empty_key_skipped(self):
         raw = {"": "switch.foo"}
-        entities, labels = _parse_switch_entities(raw)
+        entities, labels = _parse_ha_switch_entities(raw)
         assert entities == {}
         assert labels == {}
 
     def test_whitespace_stripped(self):
         raw = {"key": "  switch.foo  "}
-        entities, labels = _parse_switch_entities(raw)
+        entities, labels = _parse_ha_switch_entities(raw)
         assert entities == {"key": "switch.foo"}
 
     def test_mixed_values(self):
@@ -144,13 +143,13 @@ class TestParseSwitchEntities:
             "b": ("switch.b", "B label"),
             "c": {"entity": "switch.c", "label": "C label"},
         }
-        entities, labels = _parse_switch_entities(raw)
+        entities, labels = _parse_ha_switch_entities(raw)
         assert set(entities.keys()) == {"a", "b", "c"}
         assert labels["b"] == "B label"
         assert labels["c"] == "C label"
 
     def test_non_dict_input(self):
-        entities, labels = _parse_switch_entities("not a dict")
+        entities, labels = _parse_ha_switch_entities("not a dict")
         assert entities == {}
         assert labels == {}
 
