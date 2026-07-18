@@ -28,13 +28,13 @@ class MqttState:
         self._on_state_update = callback
         self._main_loop = loop
 
-    def on_connect(self, client: mqtt.Client, userdata: Any, flags: Any, rc: Any, properties: Any = None) -> None:
+    def on_connect(self, client: mqtt.Client, _userdata: Any, _flags: Any, rc: Any, _properties: Any = None) -> None:
         """MQTT connected - subscribe to topics"""
         logger.info("MQTT connected to %s:%s", config.MQTT_HOST, config.MQTT_PORT)
         client.subscribe("inverter/state")
         client.subscribe("inverter/console")
 
-    def on_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    def on_message(self, _client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
         """MQTT message received"""
         try:
             if msg.topic == "inverter/state":

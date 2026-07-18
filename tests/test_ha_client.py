@@ -134,7 +134,7 @@ class TestParseSwitchEntities:
 
     def test_whitespace_stripped(self):
         raw = {"key": "  switch.foo  "}
-        entities, labels = _parse_ha_switch_entities(raw)
+        entities, _ = _parse_ha_switch_entities(raw)
         assert entities == {"key": "switch.foo"}
 
     def test_mixed_values(self):

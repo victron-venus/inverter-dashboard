@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Docker HEALTHCHECK: HTTP or HTTPS when dashboard.crt + dashboard.key exist in config.
-
-Note: CERT_NONE is used intentionally for self-signed localhost certs — the healthcheck
-runs inside the container, so there is no man-in-the-middle risk on 127.0.0.1.
-"""
+"""Docker HEALTHCHECK: HTTP or HTTPS when dashboard.crt + dashboard.key exist in config."""
 from __future__ import annotations
 
 import os
@@ -17,20 +13,19 @@ def main() -> int:
     crt = os.path.join(config, "dashboard.crt")
     key = os.path.join(config, "dashboard.key")
     host = f"127.0.0.1:{port}"
+    url = f"http://{host}/api/state"
     if os.path.isfile(crt) and os.path.isfile(key):
+        # For HTTPS with self-signed certs inside container at localhost:
+        # trust the system CA store but allow localhost IP without full verification.
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE  # Intentional: self-signed localhost cert inside container
+        ctx.verify_mode = ssl.CERT_NONE  # nosec: localhost-only healthcheck
         url = f"https://{host}/api/state"
         urllib.request.urlopen(url, context=ctx, timeout=8)
         return 0
-    url = f"http://{host}/api/state"
     urllib.request.urlopen(url, timeout=8)
     return 0
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception:
-        raise SystemExit(1)
+    raise SystemExit(main())

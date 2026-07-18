@@ -1,7 +1,5 @@
 """Tests for config module."""
 
-import os
-import pytest
 
 
 class TestConfig:

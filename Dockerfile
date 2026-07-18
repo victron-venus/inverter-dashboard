@@ -17,11 +17,10 @@ RUN pip install --no-cache-dir -e .
 # Overlay site_config.example.py at repo root (used by entrypoint / Docker config mount)
 COPY site_config.example.py entrypoint.sh ./
 
-RUN chmod +x entrypoint.sh && mkdir -p /app/config
-
 # Non-root user (Docker Scout / smaller attack surface).
 # UID/GID 1000 is a common default Linux user; override in compose if needed.
-RUN addgroup -g 1000 app && adduser -D -u 1000 -G app app && \
+RUN chmod +x entrypoint.sh && mkdir -p /app/config && \
+    addgroup -g 1000 app && adduser -D -u 1000 -G app app && \
     chown -R app:app /app
 
 USER app

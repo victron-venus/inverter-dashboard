@@ -114,7 +114,7 @@ async def api_state():
     }
 
 
-@app.post("/api/check-update")
+@app.post("/api/check-update", responses={401: {"description": "Missing secret"}, 403: {"description": "Invalid secret"}})
 async def api_check_update(request: Request):
     """Check for updates"""
     _verify_secret(request)
@@ -124,7 +124,7 @@ async def api_check_update(request: Request):
     return {'current': VERSION, 'latest': latest}
 
 
-@app.post("/api/update")
+@app.post("/api/update", responses={401: {"description": "Missing secret"}, 403: {"description": "Invalid secret"}})
 async def api_update(request: Request):
     """Self-update: download latest from GitHub and restart"""
     _verify_secret(request)

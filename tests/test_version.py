@@ -1,7 +1,5 @@
 """Tests for version module."""
 
-import os
-import tempfile
 import pytest
 
 from inverter_dashboard.version import get_version, SelfUpdateDisabled
