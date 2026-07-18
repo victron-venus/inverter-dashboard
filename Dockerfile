@@ -15,9 +15,9 @@ COPY VERSION ./
 RUN pip install --no-cache-dir -e .
 
 # Overlay site_config.example.py at repo root (used by entrypoint / Docker config mount)
-COPY site_config.example.py ./
+COPY site_config.example.py entrypoint.sh ./
 
-RUN chmod +x entrypoint.sh 2>/dev/null && mkdir -p /app/config
+RUN chmod +x entrypoint.sh && mkdir -p /app/config
 
 # Non-root user (Docker Scout / smaller attack surface).
 # UID/GID 1000 is a common default Linux user; override in compose if needed.
@@ -35,4 +35,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 EXPOSE 8080
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["--mqtt-host", "192.168.160.150", "--port", "8080"]
+CMD ["--mqtt-host", "Cerbo", "--port", "8080"]
