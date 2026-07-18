@@ -121,5 +121,5 @@ async def download_and_update() -> tuple[bool, str]:
         return True, new_version
 
     except (OSError, IOError, httpx.HTTPError) as e:
-        logger.error("Update failed: %s", e)
+        logger.exception("Update failed: %s", e)
         return False, str(e)

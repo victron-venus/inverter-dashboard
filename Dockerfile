@@ -14,10 +14,10 @@ COPY src/ ./src/
 COPY VERSION ./
 RUN pip install --no-cache-dir -e .
 
-# Overlay ha_secrets.example.py at repo root (used by entrypoint / Docker config mount)
-COPY ha_secrets.example.py ./
+# Overlay site_config.example.py at repo root (used by entrypoint / Docker config mount)
+COPY site_config.example.py ./
 
-RUN chmod +x entrypoint.sh 2>/dev/null; mkdir -p /app/config
+RUN chmod +x entrypoint.sh 2>/dev/null && mkdir -p /app/config
 
 # Non-root user (Docker Scout / smaller attack surface).
 # UID/GID 1000 is a common default Linux user; override in compose if needed.

@@ -48,9 +48,9 @@ class MqttState:
                 if len(self.console_lines) > config.CONSOLE_MAX_LINES:
                     self.console_lines.pop(0)
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.error("MQTT message parse error: %s", e)
+            logger.exception("MQTT message parse error: %s", e)
         except Exception as e:
-            logger.error("MQTT message error: %s", e)
+            logger.exception("MQTT message error: %s", e)
 
     def get_state(self) -> Dict[str, Any]:
         """Get current state"""
@@ -108,7 +108,7 @@ def start_client(client: mqtt.Client):
         client.loop_start()
         logger.info("MQTT client started, connecting to %s:%s", config.MQTT_HOST, config.MQTT_PORT)
     except Exception as e:
-        logger.error("MQTT connection failed: %s", e)
+        logger.exception("MQTT connection failed: %s", e)
 
 
 def stop_client(client: mqtt.Client):

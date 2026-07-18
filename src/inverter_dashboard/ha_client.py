@@ -263,20 +263,23 @@ async def _ha_request(
     timeout: float | None = None,
 ) -> httpx.Response | None:
     """Single helper for all HA REST calls. Returns response or None on error."""
+    import asyncio
+
     if not _configured:
         return None
     client = _get_http_client()
+    timeout_val = timeout or HA_REQUEST_TIMEOUT
     try:
-        resp = await client.request(
-            method,
-            f"{_url}{path}",
-            headers=_ha_headers(),
-            json=json_body,
-            timeout=timeout or HA_REQUEST_TIMEOUT,
-        )
+        async with asyncio.timeout(timeout_val):
+            resp = await client.request(
+                method,
+                f"{_url}{path}",
+                headers=_ha_headers(),
+                json=json_body,
+            )
         return resp
-    except httpx.HTTPError as e:
-        logger.error("HA request %s %s failed: %s", method, path, e)
+    except (httpx.HTTPError, asyncio.TimeoutError) as e:
+        logger.exception("HA request %s %s failed: %s", method, path, e)
         return None
 
 

@@ -5,13 +5,12 @@ Connects to Cerbo GX via MQTT, serves dashboard via WebSocket
 """
 
 import os
-import sys
 import asyncio
 import logging
 import argparse
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, Query, HTTPException, Request
+from fastapi import FastAPI, WebSocket, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 

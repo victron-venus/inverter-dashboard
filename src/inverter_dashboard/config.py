@@ -5,7 +5,7 @@ Configuration for Inverter Dashboard
 import os
 
 # MQTT settings
-MQTT_HOST = os.getenv('MQTT_HOST', '192.168.160.150')
+MQTT_HOST = os.getenv('MQTT_HOST', 'Cerbo')
 MQTT_PORT = int(os.getenv('MQTT_PORT', '1883'))
 
 # Web server settings

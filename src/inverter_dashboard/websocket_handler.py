@@ -122,7 +122,7 @@ async def handle_websocket(websocket: WebSocket, mqtt_client):
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        logger.error("WebSocket error: %s", e)
+        logger.exception("WebSocket error: %s", e)
     finally:
         ws_clients.discard(websocket)
         logger.info("WebSocket client disconnected (%d remaining)", len(ws_clients))
