@@ -40,7 +40,7 @@ def build_payload() -> Dict[str, Any]:
 
 
 def _with_ui_config(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge ha_secrets-derived ui_config (e.g. home_buttons) into payload."""
+    """Merge site_config-derived ui_config (e.g. home_buttons) into payload."""
     patch = ha_client.ui_config_patch()
     if not patch:
         return payload

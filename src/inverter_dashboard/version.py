@@ -79,7 +79,7 @@ async def download_and_update() -> tuple[bool, str]:
         'websocket_handler.py',
         'html_template.py',
         'ha_client.py',
-        'ha_secrets.example.py',
+        'site_config.example.py',
         'scripts/docker_healthcheck.py',
         'entrypoint.sh',
         'VERSION',

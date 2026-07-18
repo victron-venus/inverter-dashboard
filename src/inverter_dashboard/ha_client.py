@@ -1,11 +1,11 @@
 """
 Optional Home Assistant REST client for inverter-dashboard.
 
-Reads ha_secrets.py when present; if HA_DIRECT_CONTROLS is False or file missing,
+Reads site_config.py when present; if HA_DIRECT_CONTROLS is False or file missing,
 all UI state for switches comes from MQTT (inverter-control) only.
 
 When HA_DIRECT_CONTROLS is True and HA is configured, boolean/switch/water state for
-entities listed in ha_secrets comes only from HA REST polling — MQTT is not used as
+entities listed in site_config comes only from HA REST polling — MQTT is not used as
 fallback when HA is unreachable (values show off until HA responds again).
 """
 
@@ -49,9 +49,9 @@ _overlay: Dict[str, Any] = {
 _http_client: httpx.AsyncClient | None = None
 
 
-def _prepend_ha_secrets_import_path() -> None:
-    """Load ha_secrets from INVERTER_DASHBOARD_CONFIG (Docker mount) or app directory."""
-    # Walk up from package dir to repo root (where ha_secrets.py lives in dev/Docker)
+def _prepend_site_config_import_path() -> None:
+    """Load site_config from INVERTER_DASHBOARD_CONFIG (Docker mount) or app directory."""
+    # Walk up from package dir to repo root (where site_config.py lives in dev/Docker)
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = os.path.normpath(os.path.join(pkg_dir, '..', '..'))
 
@@ -64,16 +64,16 @@ def _prepend_ha_secrets_import_path() -> None:
     for d in candidates:
         if not d:
             continue
-        path_py = os.path.join(d, "ha_secrets.py")
+        path_py = os.path.join(d, "site_config.py")
         if os.path.isfile(path_py):
             if d not in sys.path:
                 sys.path.insert(0, d)
-            logger.info("Using ha_secrets.py from %s", d)
+            logger.info("Using site_config.py from %s", d)
             return
 
 
-def _parse_switch_entities(raw: Any) -> Tuple[Dict[str, str], Dict[str, str]]:
-    """Normalize HA_SWITCH_ENTITIES: value may be entity_id str, (entity, label), or dict with entity/label."""
+def _parse_ha_switch_entities(raw: Any) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Parse site_config.HA_SWITCH_ENTITIES: value may be entity_id str, (entity, label), or dict."""
     entities: Dict[str, str] = {}
     embedded_labels: Dict[str, str] = {}
     if not raw or not isinstance(raw, dict):
@@ -147,38 +147,38 @@ def _appliance_fallback(state_key: str) -> Any:
 
 
 def load_config():
-    """Import ha_secrets if present (see ha_secrets.example.py)."""
+    """Import site_config if present (see site_config.example.py)."""
     global _configured, _url, _token, _direct, _poll_interval
     global _boolean_entities, _switch_entities, _water_valve, _water_pump, _switch_labels
     global _appliance_entities
 
-    _prepend_ha_secrets_import_path()
+    _prepend_site_config_import_path()
 
     try:
-        import ha_secrets as hs  # type: ignore
+        import site_config as sc  # type: ignore
     except ImportError:
         _configured = False
         _boolean_entities = {}
         _switch_entities = {}
         _switch_labels = {}
         _appliance_entities = {}
-        logger.info("ha_secrets.py not found — switch state from MQTT only")
+        logger.info("site_config.py not found — switch state from MQTT only")
         return
 
-    _url = (getattr(hs, "HA_URL", "") or "").rstrip("/")
-    _token = getattr(hs, "HA_TOKEN", "") or ""
-    _direct = bool(getattr(hs, "HA_DIRECT_CONTROLS", False))
-    _poll_interval = float(getattr(hs, "HA_POLL_INTERVAL_SEC", 12))
+    _url = (getattr(sc, "HA_URL", "") or "").rstrip("/")
+    _token = getattr(sc, "HA_TOKEN", "") or ""
+    _direct = bool(getattr(sc, "HA_DIRECT_CONTROLS", False))
+    _poll_interval = float(getattr(sc, "HA_POLL_INTERVAL_SEC", 12))
 
-    _boolean_entities = dict(getattr(hs, "HA_BOOLEAN_ENTITIES", {}) or {})
-    _sw_raw = getattr(hs, "HA_SWITCH_ENTITIES", {}) or {}
-    _parsed_ent, _embedded_lab = _parse_switch_entities(_sw_raw)
+    _boolean_entities = dict(getattr(sc, "HA_BOOLEAN_ENTITIES", {}) or {})
+    _sw_raw = getattr(sc, "HA_SWITCH_ENTITIES", {}) or {}
+    _parsed_ent, _embedded_lab = _parse_ha_switch_entities(_sw_raw)
     _switch_entities = _parsed_ent
-    _manual_lab = dict(getattr(hs, "HA_SWITCH_LABELS", {}) or {})
+    _manual_lab = dict(getattr(sc, "HA_SWITCH_LABELS", {}) or {})
     _switch_labels = {**_embedded_lab, **_manual_lab}
-    _water_valve = getattr(hs, "HA_WATER_VALVE_ENTITY", "") or ""
-    _water_pump = getattr(hs, "HA_PUMP_SWITCH_ENTITY", "") or ""
-    _appliance_entities = dict(getattr(hs, "HA_APPLIANCE_ENTITIES", {}) or {})
+    _water_valve = getattr(sc, "HA_WATER_VALVE_ENTITY", "") or ""
+    _water_pump = getattr(sc, "HA_PUMP_SWITCH_ENTITY", "") or ""
+    _appliance_entities = dict(getattr(sc, "HA_APPLIANCE_ENTITIES", {}) or {})
 
     _configured = bool(_url and _token and _token != "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN")
     if _direct and not _configured:
@@ -215,14 +215,14 @@ def home_buttons_ui() -> List[Dict[str, Any]]:
 
 
 def ui_config_patch() -> Dict[str, Any]:
-    """Partial ui_config from ha_secrets (merged into WebSocket payloads)."""
+    """Partial ui_config from site_config (merged into WebSocket payloads)."""
     if not _switch_entities:
         return {}
     return {"home_buttons": home_buttons_ui()}
 
 
 def is_toggle_allowed(entity_id: str) -> bool:
-    """Only entity IDs listed in ha_secrets may be toggled from the dashboard."""
+    """Only entity IDs listed in site_config may be toggled from the dashboard."""
     if not entity_id or not _configured:
         return False
     allowed = set(_boolean_entities.values()) | set(_switch_entities.values())

@@ -17,7 +17,7 @@ ENV/
 # Environment
 .env
 .env.local
-ha_secrets.py
+site_config.py
 .certs/
 
 # OS

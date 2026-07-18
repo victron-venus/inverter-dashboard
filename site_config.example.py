@@ -1,9 +1,12 @@
 """
-Home Assistant credentials for inverter-dashboard (local copy — never commit).
+Site Configuration Example
 
-Docker: place **ha_secrets.py** on the host inside the folder you mount at **/app/config**
+Copy this file to site_config.py and fill in your values.
+site_config.py is NOT tracked by git.
+
+Docker: place **site_config.py** on the host inside the folder you mount at **/app/config**
 (set **INVERTER_DASHBOARD_CONFIG=/app/config** in compose — that path is the mount point, not a repo subfolder).
-Local dev: run **scripts/init-config.sh** to create **./ha_secrets.py** next to **server.py**, or copy this file manually.
+Local dev: run **scripts/init-config.sh** to create **./site_config.py** next to **server.py**, or copy this file manually.
 
 When HA_DIRECT_CONTROLS is True, the dashboard reads toggle/switch states and
 sends toggle commands directly to Home Assistant instead of relying on Cerbo MQTT
@@ -12,7 +15,7 @@ entities here without touching inverter-control.
 
 When inverter-control uses MQTT_SLIM_STATE=True, dishwasher/washer/dryer fields are
 not published on inverter/state — set HA_APPLIANCE_ENTITIES (below) so the dashboard
-polls those sensors from HA REST (same entity IDs as in inverter-control secrets).
+polls those sensors from HA REST (same entity IDs as in inverter-control site_config).
 """
 
 # ---------------------------------------------------------------------------
