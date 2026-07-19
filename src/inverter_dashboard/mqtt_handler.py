@@ -28,7 +28,9 @@ class MqttState:
         self._on_state_update = callback
         self._main_loop = loop
 
-    def on_connect(self, client: mqtt.Client, _userdata: Any, _flags: Any, rc: Any, _properties: Any = None) -> None:
+    def on_connect(
+        self, client: mqtt.Client, _userdata: Any, _flags: Any, rc: Any, _properties: Any = None
+    ) -> None:
         """MQTT connected - subscribe to topics"""
         logger.info("MQTT connected to %s:%s", config.MQTT_HOST, config.MQTT_PORT)
         client.subscribe("inverter/state")
@@ -61,30 +63,26 @@ class MqttState:
         return self.console_lines
 
 
-# Module-level singleton
-_state = MqttState()
+def _on_connect(
+    client: mqtt.Client, userdata: Any, flags: Any, rc: Any, properties: Any = None
+) -> None:
+    """MQTT connected - delegate to MqttState via user_data"""
+    state: MqttState = userdata
+    state.on_connect(client, userdata, flags, rc, properties)
 
 
-def set_state_callback(callback: Callable, loop: asyncio.AbstractEventLoop):
-    """Set callback to be called when state updates"""
-    _state.set_state_callback(callback, loop)
+def _on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    """MQTT message received - delegate to MqttState via user_data"""
+    state: MqttState = userdata
+    state.on_message(client, userdata, msg)
 
 
-def on_connect(client, userdata, flags, rc, properties=None):
-    """MQTT connected - subscribe to topics"""
-    _state.on_connect(client, userdata, flags, rc, properties)
-
-
-def on_message(client, userdata, msg):
-    """MQTT message received"""
-    _state.on_message(client, userdata, msg)
-
-
-def create_client() -> mqtt.Client:
+def create_client(state: MqttState) -> mqtt.Client:
     """Create and configure MQTT client"""
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    client.on_connect = on_connect
-    client.on_message = on_message
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, userdata=state)
+    client.on_connect = _on_connect
+    client.on_message = _on_message
+    client.reconnect_delay_set(min_delay=1, max_delay=60)
 
     if config.MQTT_USERNAME:
         client.username_pw_set(config.MQTT_USERNAME, config.MQTT_PASSWORD or None)
@@ -121,18 +119,4 @@ def stop_client(client: mqtt.Client):
 def publish_command(client: mqtt.Client, action: str, payload: Dict[str, Any]):
     """Publish command to inverter-control"""
     if client:
-        client.publish(
-            f"inverter/cmd/{action}",
-            json.dumps(payload) if payload else "",
-            qos=0
-        )
-
-
-def get_state() -> Dict[str, Any]:
-    """Get current state"""
-    return _state.get_state()
-
-
-def get_console() -> list:
-    """Get console lines"""
-    return _state.get_console()
+        client.publish(f"inverter/cmd/{action}", json.dumps(payload) if payload else "", qos=0)
