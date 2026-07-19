@@ -1,9 +1,14 @@
 """
 HTML/Vue.js template for the dashboard
+
+DEPRECATED: This file is deprecated. The dashboard frontend is now served as a
+pre-built Vue SPA from inverter-dashboard-vue/dist/. The Go dashboard
+(inverter-dashboard-go) is the primary implementation. This Python dashboard
+is maintained for backward compatibility only.
 """
 
 # CSS styles
-CSS_STYLES = '''
+CSS_STYLES = """
 :root {
     --bg-dark: #0a0a0a; --bg-card: #151515; --border: #2a2a2a;
     --text: #e0e0e0; --text-dim: #666; --text-value: #ccc; --accent: #00d4aa;
@@ -53,7 +58,7 @@ body.light #console { background: #f0f0f0; color: #000; }
 body.light .daily-stats { background: #e8e8e8; }
 body.light .toggle-btn.off { background: #ddd; color: #666; }
 body.light .subsection { border-color: #ccc; }
-'''
+"""
 
 
 def get_dashboard_html(secret: str = "") -> str:
@@ -94,7 +99,7 @@ def get_dashboard_html(secret: str = "") -> str:
                     <i class="fas fa-bolt me-1"></i>{{{{ essText }}}}
                 </div>
                 <div class="vr mx-1" style="border-left:1px solid #ccc;height:16px;"></div>
-                <div v-for="toggle in headerToggles" :key="toggle.id" 
+                <div v-for="toggle in headerToggles" :key="toggle.id"
                      class="toggle-btn" :class="state.booleans[toggle.id] === true || state.booleans[toggle.id] === 'on' ? 'on' : 'off'"
                      @click="send('toggle', {{entity: toggle.entity}})">
                     {{{{ toggle.label }}}}
@@ -111,10 +116,10 @@ def get_dashboard_html(secret: str = "") -> str:
             </div>
         </div>
     </div>
-    
+
     <!-- Daily stats -->
     <div class="daily-stats mb-2" v-html="dailyStatsHtml"></div>
-    
+
     <!-- Main stats -->
     <div class="row g-2 mb-2">
         <div class="col-md-2">
@@ -153,7 +158,7 @@ def get_dashboard_html(secret: str = "") -> str:
             </div></div>
         </div>
     </div>
-    
+
     <!-- Chart and side panels -->
     <div class="row g-2 mb-2">
         <div class="col-md-8">
@@ -221,15 +226,15 @@ def get_dashboard_html(secret: str = "") -> str:
                 <div class="card-header"><i class="fas fa-home me-2"></i>Home</div>
                 <div class="card-body py-1">
                     <div class="d-flex gap-1 flex-wrap">
-                        <div v-for="btn in homeButtons" :key="btn.id" class="toggle-btn" 
-                             :class="getButtonState(btn)" 
+                        <div v-for="btn in homeButtons" :key="btn.id" class="toggle-btn"
+                             :class="getButtonState(btn)"
                              @click="send('toggle', {{entity: btn.entity}})">{{{{ btn.label }}}}</div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    
+
     <!-- Batteries & Solar Production -->
     <div class="row g-2 mb-2">
         <div class="col-md-6">
@@ -269,7 +274,7 @@ def get_dashboard_html(secret: str = "") -> str:
             </div>
         </div>
     </div>
-    
+
     <!-- Loads -->
     <div class="row g-2 mb-2" v-if="state.features?.ha_loads !== false && sortedLoads.length">
         <div class="col-12">
@@ -286,7 +291,7 @@ def get_dashboard_html(secret: str = "") -> str:
             </div>
         </div>
     </div>
-    
+
     <!-- Status -->
     <div class="mt-2 text-center small" style="color:#666">
         <span class="status-dot" :class="state.ha_connected ? 'online' : 'offline'"></span>
@@ -304,7 +309,7 @@ def get_dashboard_html(secret: str = "") -> str:
 
 def get_vue_script() -> str:
     """Get Vue.js application script"""
-    return '''<script>
+    return """<script>
 const { createApp, ref, computed, onMounted, onUnmounted, watch, nextTick } = Vue;
 
 createApp({
@@ -315,26 +320,26 @@ createApp({
         const chartEl = ref(null);
         const isDark = ref(localStorage.getItem('theme') !== 'light');
         const updating = ref(false);
-        
+
         function toggleTheme() {
             isDark.value = !isDark.value;
             document.body.classList.toggle('light', !isDark.value);
             localStorage.setItem('theme', isDark.value ? 'dark' : 'light');
         }
-        
+
         if (!isDark.value) document.body.classList.add('light');
-        
+
         let ws = null;
         let chart = null;
         let reconnectTimer = null;
         let lastMessageTime = Date.now();
         let heartbeatTimer = null;
         let historyData = {timestamps: [], grid: [], solar: [], battery: [], setpoint: []};
-        
+
         function connect() {
             if (ws && ws.readyState === WebSocket.OPEN) return;
             if (reconnectTimer) clearTimeout(reconnectTimer);
-            
+
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             const secret = document.querySelector('meta[name="dashboard-secret"]')?.content || '';
             const tokenParam = secret ? `?token=${encodeURIComponent(secret)}` : '';
@@ -345,13 +350,13 @@ createApp({
                 reconnectTimer = setTimeout(connect, 2000);
                 return;
             }
-            
-            ws.onopen = () => { 
+
+            ws.onopen = () => {
                 wsConnected.value = true;
                 lastMessageTime = Date.now();
                 startHeartbeat();
             };
-            ws.onclose = () => { 
+            ws.onclose = () => {
                 wsConnected.value = false;
                 stopHeartbeat();
                 reconnectTimer = setTimeout(connect, 2000);
@@ -365,7 +370,7 @@ createApp({
                 const data = JSON.parse(e.data);
                 state.value = data;
                 mqttConnected.value = true;
-                
+
                 if (data.gt !== undefined) {
                     const now = Date.now() / 1000;
                     historyData.timestamps.push(now);
@@ -373,7 +378,7 @@ createApp({
                     historyData.solar.push(data.solar_total || 0);
                     historyData.battery.push(data.battery_power || 0);
                     historyData.setpoint.push(data.setpoint || 0);
-                    
+
                     if (historyData.timestamps.length > 1800) {
                         historyData.timestamps.shift();
                         historyData.grid.shift();
@@ -385,7 +390,7 @@ createApp({
                 }
             };
         }
-        
+
         function startHeartbeat() {
             stopHeartbeat();
             heartbeatTimer = setInterval(() => {
@@ -395,31 +400,31 @@ createApp({
                 }
             }, 5000);
         }
-        
+
         function stopHeartbeat() {
             if (heartbeatTimer) {
                 clearInterval(heartbeatTimer);
                 heartbeatTimer = null;
             }
         }
-        
+
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
                 if (!ws || ws.readyState !== WebSocket.OPEN) connect();
             }
         });
-        
+
         window.addEventListener('online', () => {
             if (ws) ws.close();
             setTimeout(connect, 500);
         });
-        
+
         function send(action, payload = {}) {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({action, ...payload}));
             }
         }
-        
+
         function formatPower(w) {
             const v = Math.abs(Math.floor(w || 0));
             const sign = w < 0 ? '-' : '';
@@ -454,24 +459,24 @@ createApp({
             const val = state.value[stateKey];
             return val === true || val === 'on' ? 'on' : 'off';
         }
-        
+
         const hasUpdate = computed(() => {
             const latest = state.value.latest_version;
             const current = state.value.dashboard_version;
             return latest && current && latest !== current;
         });
-        
+
         const updateBtnText = computed(() => {
             if (updating.value) return 'UPDATING...';
             if (hasUpdate.value) return 'v' + state.value.latest_version;
             return 'v' + (state.value.dashboard_version || '?');
         });
-        
+
         const updateTitle = computed(() => {
             if (hasUpdate.value) return 'Click to update to v' + state.value.latest_version;
             return 'Click to check for updates';
         });
-        
+
         async function checkOrUpdate() {
             if (hasUpdate.value) {
                 if (confirm('Update to v' + state.value.latest_version + '?')) {
@@ -507,7 +512,7 @@ createApp({
                 }
             }
         }
-        
+
         const essClass = computed(() => {
             const m = state.value.ess_mode;
             if (!m) return 'off';
@@ -520,16 +525,16 @@ createApp({
             if (m.is_external) return 'External';
             return m.mode_name || 'ESS';
         });
-        
+
         const mpptTotal = computed(() => (state.value.mppt_individual || []).reduce((a, b) => a + b, 0));
         const tasmotaTotal = computed(() => (state.value.tasmota_individual || []).reduce((a, b) => a + b, 0));
-        
+
         const evCharging = computed(() => {
             const kw = parseFloat(state.value.ev_charging_kw) || 0;
             return kw > 0 ? kw.toFixed(1) + 'kW' : '0';
         });
         const evPower = computed(() => formatPower(state.value.ev_power || 0));
-        
+
         const sortedLoads = computed(() => {
             const loads = state.value.loads || {};
             const uiConfig = state.value.ui_config || {};
@@ -540,12 +545,12 @@ createApp({
                 .filter(([name, v]) => v > minWatts && !hiddenLoads.includes(name))
                 .sort((a, b) => b[1] - a[1]);
         });
-        
+
         const homeButtons = computed(() => {
             const uiConfig = state.value.ui_config || {};
             return uiConfig.home_buttons || [];
         });
-        
+
         const headerToggles = computed(() => {
             const uiConfig = state.value.ui_config || {};
             return uiConfig.header_toggles || [
@@ -558,7 +563,7 @@ createApp({
                 {id: 'minimize_charging', label: 'MINIMIZE CHARGING', entity: 'input_boolean.minimize_charging'}
             ];
         });
-        
+
         const batteries = computed(() => {
             return (state.value.batteries || []).map(b => ({
                 name: b.name || 'Battery',
@@ -570,7 +575,7 @@ createApp({
                 time_to_go: b.time_to_go || ''
             }));
         });
-        
+
         const solarSources = computed(() => {
             const sources = [];
             (state.value.mppt_chargers || []).forEach(m => {
@@ -581,7 +586,7 @@ createApp({
             });
             return sources;
         });
-        
+
         const dailyStatsHtml = computed(() => {
             const ds = state.value.daily_stats || {};
             const prod = (ds.produced_today || 0).toFixed(2);
@@ -605,7 +610,7 @@ createApp({
             result += `🔋 I: ${batIn}kWh <span class="dim">(${batInY})</span>, O: ${batOut}kWh <span class="dim">(${batOutY})</span>; Δ: ${batDelta}kWh <span class="dim">(${batDeltaY})</span>`;
             return result;
         });
-        
+
         function initChart() {
             if (!chartEl.value) return;
             chart = new uPlot({
@@ -627,12 +632,12 @@ createApp({
                 },
             }, [[], [], [], [], []], chartEl.value);
         }
-        
+
         function updateChart() {
             if (!chart) return;
             chart.setData([historyData.timestamps, historyData.grid, historyData.solar, historyData.battery, historyData.setpoint]);
         }
-        
+
         onMounted(() => {
             connect();
             nextTick(() => initChart());
@@ -640,12 +645,12 @@ createApp({
                 if (chart && chartEl.value) chart.setSize({width: chartEl.value.clientWidth, height: 200});
             });
         });
-        
+
         onUnmounted(() => {
             if (ws) ws.close();
             if (reconnectTimer) clearTimeout(reconnectTimer);
         });
-        
+
         return {
             state, wsConnected, mqttConnected, chartEl, isDark, updating,
             essClass, essText, mpptTotal, tasmotaTotal, evCharging, evPower, sortedLoads, dailyStatsHtml,
@@ -654,4 +659,4 @@ createApp({
         };
     }
 }).mount('#app');
-</script>'''
+</script>"""
