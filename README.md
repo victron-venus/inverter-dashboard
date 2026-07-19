@@ -16,6 +16,31 @@ Real-time web dashboard for monitoring Victron inverter systems via MQTT. Design
 
 ![Inverter Dashboard](images/Screenshot.png)
 
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Venus["Venus OS (Cerbo GX)"]
+        INV["inverter-control"]
+        MQTT["MQTT Broker"]
+    end
+
+    subgraph Dashboard["Web Dashboard"]
+        WS["WebSocket Server\n:8080"]
+        UI["Web UI\nHTML/CSS/JS"]
+    end
+
+    subgraph Clients["Clients"]
+        BROWSER["Browser"]
+        MOBILE["Mobile"]
+    end
+
+    INV -->|"inverter/state"| MQTT
+    MQTT -->|"subscribe"| WS
+    WS -->|"push state"| UI
+    UI --> BROWSER & MOBILE
+```
+
 ## Features
 
 - Real-time power monitoring (Grid, Solar, Battery, Consumption)
@@ -97,7 +122,7 @@ By default the app and the published Docker image listen on **plain HTTP** (port
 
 **Choose one approach:**
 
-1. **Reverse proxy (recommended for production / LAN DNS)**  
+1. **Reverse proxy (recommended for production / LAN DNS)**
    Put **Caddy**, **Traefik**, or **nginx** in front of the container on port **443**, terminate Let’s Encrypt (or your certs) there, and proxy to `http://inverter-dashboard:8080`. You open `https://dashboard.example.com` in the browser; the container keeps HTTP internally.
 
 2. **TLS inside the Python app** (good for quick tests / single host)
@@ -221,6 +246,10 @@ docker run -p 8080:8080 -e MQTT_HOST=192.168.1.100 inverter-dashboard
 Docker images are built for:
 - `linux/amd64` (x86_64)
 - `linux/arm64` (Raspberry Pi 4, Apple Silicon, etc.)
+
+## Documentation
+
+- [System Architecture](./.github/docs/system-architecture.md) - Data flow diagrams, runbook
 
 ## Related Projects
 
