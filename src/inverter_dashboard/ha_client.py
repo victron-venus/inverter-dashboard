@@ -191,6 +191,16 @@ def is_direct_mode() -> bool:
     return _configured and _direct
 
 
+def dynamic_state_keys() -> set[str]:
+    """State keys contributed at runtime by site_config (HA switches/appliances).
+
+    These keys are user-configured (not known statically) so callers that filter
+    payloads against a fixed allowlist must union it with this set to avoid
+    dropping configured switch/appliance state.
+    """
+    return set(_boolean_entities) | set(_switch_entities) | set(_appliance_entities)
+
+
 def _default_switch_label(state_key: str) -> str:
     """Human-readable label from state_key when HA_SWITCH_LABELS has no override."""
     s = state_key

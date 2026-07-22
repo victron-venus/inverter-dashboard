@@ -86,7 +86,8 @@ def build_payload() -> dict[str, Any]:
     """Build the canonical state payload sent to all WebSocket clients."""
     mqtt = _state["mqtt_state"]
     state = ha_client.merge_overlay(mqtt.get_state())
-    filtered = {k: v for k, v in state.items() if k in _STATE_ALLOWLIST}
+    allowlist = _STATE_ALLOWLIST | ha_client.dynamic_state_keys()
+    filtered = {k: v for k, v in state.items() if k in allowlist}
     return _with_ui_config(
         {
             **filtered,
