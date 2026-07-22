@@ -14,6 +14,8 @@
 
 Real-time web dashboard for monitoring Victron inverter systems via MQTT. Designed to work with [inverter-control](https://github.com/victron-venus/inverter-control) on Cerbo GX.
 
+> **Dashboard options:** For Cerbo GX deployments, [**inverter-dashboard-go**](https://github.com/victron-venus/inverter-dashboard-go) is the recommended primary (single binary, low footprint). **This repo** targets Docker/NAS installs (`alvit/inverter-dashboard`). For a native app, see [**inverter-desktop**](https://github.com/victron-venus/inverter-desktop).
+
 ![Inverter Dashboard](images/Screenshot.png)
 
 ## Architecture
@@ -265,7 +267,7 @@ This project is part of the Victron Venus OS integration suite:
 | [dbus-tasmota-pv](https://github.com/victron-venus/dbus-tasmota-pv) | Tasmota smart plug integration as a PV inverter on D-Bus |
 | [esphome-jbd-bms-mqtt](https://github.com/victron-venus/esphome-jbd-bms-mqtt) | ESP32 Bluetooth monitor for JBD BMS batteries |
 | [inverter-monitoring](https://github.com/victron-venus/inverter-monitoring) | TIG (Telegraf, InfluxDB, Grafana) monitoring stack |
-| [terraform-github-victron](https://github.com/4alvit/terraform-github-victron) | Infrastructure as Code for the GitHub organization |
+| [terraform-github](https://github.com/victron-venus/terraform-github) | Infrastructure as Code for the GitHub organization |
 
 ## Author
 
