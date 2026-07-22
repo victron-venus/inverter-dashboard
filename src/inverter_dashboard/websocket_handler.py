@@ -4,7 +4,7 @@ WebSocket handler for real-time dashboard updates
 
 import json
 import logging
-from typing import Set, Dict, Any
+from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -16,13 +16,13 @@ from .config import DEFAULT_POWER_MIN, DEFAULT_POWER_MAX, DEFAULT_LOOP_INTERVAL,
 logger = logging.getLogger(__name__)
 
 # Connected WebSocket clients
-ws_clients: Set[WebSocket] = set()
+ws_clients: set[WebSocket] = set()
 
 # Mutable module-level state (avoids global statements)
-_state: Dict[str, Any] = {"latest_version": None, "mqtt_state": None}
+_state: dict[str, Any] = {"latest_version": None, "mqtt_state": None}
 
 
-def set_latest_version(version: str | None):
+def set_latest_version(version: str | None) -> None:
     """Update cached latest version"""
     _state["latest_version"] = version
 
@@ -32,7 +32,7 @@ def set_mqtt_state(mqtt_state):
     _state["mqtt_state"] = mqtt_state
 
 
-def build_payload() -> Dict[str, Any]:
+def build_payload() -> dict[str, Any]:
     """Build the canonical state payload sent to all WebSocket clients."""
     mqtt = _state["mqtt_state"]
     state = ha_client.merge_overlay(mqtt.get_state())
@@ -46,7 +46,7 @@ def build_payload() -> Dict[str, Any]:
     )
 
 
-def _with_ui_config(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _with_ui_config(payload: dict[str, Any]) -> dict[str, Any]:
     """Merge site_config-derived ui_config (e.g. home_buttons) into payload."""
     patch = ha_client.ui_config_patch()
     if not patch:
@@ -79,7 +79,7 @@ async def broadcast_state():
         ws_clients.discard(ws)
 
 
-async def _dispatch_action(action: str, data: Dict[str, Any], mqtt_client):
+async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client):
     """Dispatch a single WebSocket action."""
     if action == "toggle":
         entity = data.get("entity")

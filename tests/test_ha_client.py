@@ -1,6 +1,5 @@
 """Tests for ha_client pure functions (no network, no HA required)."""
 
-
 from src.inverter_dashboard.ha_client import (
     _sensor_state_to_seconds,
     _boolish,
@@ -159,16 +158,27 @@ class TestParseSwitchEntities:
 # ---------------------------------------------------------------------------
 class TestApplianceFieldValue:
     def test_binary_sensor_on(self):
-        assert _appliance_field_value("dishwasher_running", "binary_sensor.dishwasher_running", "on") is True
+        assert (
+            _appliance_field_value("dishwasher_running", "binary_sensor.dishwasher_running", "on")
+            is True
+        )
 
     def test_binary_sensor_off(self):
-        assert _appliance_field_value("dishwasher_running", "binary_sensor.dishwasher_running", "off") is False
+        assert (
+            _appliance_field_value("dishwasher_running", "binary_sensor.dishwasher_running", "off")
+            is False
+        )
 
     def test_sensor_seconds(self):
-        assert _appliance_field_value("dishwasher_duration", "sensor.dishwasher_duration", "3600") == 3600
+        assert (
+            _appliance_field_value("dishwasher_duration", "sensor.dishwasher_duration", "3600")
+            == 3600
+        )
 
     def test_sensor_hh_mm_ss(self):
-        assert _appliance_field_value("washer_time", "sensor.washer_remaining_time", "1:30:00") == 5400
+        assert (
+            _appliance_field_value("washer_time", "sensor.washer_remaining_time", "1:30:00") == 5400
+        )
 
     def test_sensor_power_running(self):
         assert _appliance_field_value("washer_power", "sensor.washer_power", "150.0") is True

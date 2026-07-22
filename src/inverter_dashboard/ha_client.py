@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -31,16 +31,16 @@ _token = ""
 _direct = False
 _poll_interval = 12.0
 
-_boolean_entities: Dict[str, str] = {}
-_switch_entities: Dict[str, str] = {}
+_boolean_entities: dict[str, str] = {}
+_switch_entities: dict[str, str] = {}
 _water_valve = ""
 _water_pump = ""
-_switch_labels: Dict[str, str] = {}
+_switch_labels: dict[str, str] = {}
 # Dashboard keys -> HA entity IDs (washer/dishwasher telemetry omitted from MQTT when inverter-control uses MQTT_SLIM_STATE)
-_appliance_entities: Dict[str, str] = {}
+_appliance_entities: dict[str, str] = {}
 
 # Latest overlay merged into WebSocket payloads (replaced wholesale on each HA poll)
-_overlay: Dict[str, Any] = {
+_overlay: dict[str, Any] = {
     "booleans": {},
     "ha_direct_connected": False,
 }
@@ -53,7 +53,7 @@ def _prepend_site_config_import_path() -> None:
     """Load site_config from INVERTER_DASHBOARD_CONFIG (Docker mount) or app directory."""
     # Walk up from package dir to repo root (where site_config.py lives in dev/Docker)
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
-    repo_root = os.path.normpath(os.path.join(pkg_dir, '..', '..'))
+    repo_root = os.path.normpath(os.path.join(pkg_dir, "..", ".."))
 
     candidates = []
     env_dir = os.environ.get("INVERTER_DASHBOARD_CONFIG", "").strip()
@@ -72,10 +72,10 @@ def _prepend_site_config_import_path() -> None:
             return
 
 
-def _parse_ha_switch_entities(raw: Any) -> Tuple[Dict[str, str], Dict[str, str]]:
+def _parse_ha_switch_entities(raw: Any) -> tuple[dict[str, str], dict[str, str]]:
     """Parse site_config.HA_SWITCH_ENTITIES: value may be entity_id str, (entity, label), or dict."""
-    entities: Dict[str, str] = {}
-    embedded_labels: Dict[str, str] = {}
+    entities: dict[str, str] = {}
+    embedded_labels: dict[str, str] = {}
     if not raw or not isinstance(raw, dict):
         return entities, embedded_labels
     for state_key, val in raw.items():
@@ -98,7 +98,7 @@ def _parse_ha_switch_entities(raw: Any) -> Tuple[Dict[str, str], Dict[str, str]]
     return entities, embedded_labels
 
 
-def _sensor_state_to_seconds(raw: Optional[str]) -> int:
+def _sensor_state_to_seconds(raw: str | None) -> int:
     """Parse HA sensor state to seconds for dashboard timers (matches inverter-control numeric / HH:MM:SS)."""
     if raw in (None, "unavailable", "unknown", "None", ""):
         return 0
@@ -119,13 +119,13 @@ def _sensor_state_to_seconds(raw: Optional[str]) -> int:
     return 0
 
 
-def _boolish(raw: Optional[str]) -> bool:
+def _boolish(raw: str | None) -> bool:
     if raw is None:
         return False
     return str(raw).lower() in ("on", "true", "yes", "1")
 
 
-def _appliance_field_value(state_key: str, entity_id: str, raw: Optional[str]) -> Any:
+def _appliance_field_value(state_key: str, entity_id: str, raw: str | None) -> Any:
     """Map HA state string to dashboard type (bool vs seconds)."""
     domain = entity_id.split(".")[0]
     if domain in ("binary_sensor", "switch", "light", "input_boolean"):
@@ -182,7 +182,9 @@ def load_config():
 
     _configured = bool(_url and _token and _token != "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN")
     if _direct and not _configured:
-        logger.warning("HA_DIRECT_CONTROLS enabled but HA_URL/HA_TOKEN not set — falling back to MQTT")
+        logger.warning(
+            "HA_DIRECT_CONTROLS enabled but HA_URL/HA_TOKEN not set — falling back to MQTT"
+        )
 
 
 def is_direct_mode() -> bool:
@@ -197,7 +199,7 @@ def _default_switch_label(state_key: str) -> str:
     return s.replace("_", " ").upper()
 
 
-def home_buttons_ui() -> List[Dict[str, Any]]:
+def home_buttons_ui() -> list[dict[str, Any]]:
     """Home card buttons: one row per HA_SWITCH_ENTITIES entry (order preserved)."""
     rows = []
     for state_key, entity_id in _switch_entities.items():
@@ -214,7 +216,7 @@ def home_buttons_ui() -> List[Dict[str, Any]]:
     return rows
 
 
-def ui_config_patch() -> Dict[str, Any]:
+def ui_config_patch() -> dict[str, Any]:
     """Partial ui_config from site_config (merged into WebSocket payloads)."""
     if not _switch_entities:
         return {}
@@ -233,7 +235,7 @@ def is_toggle_allowed(entity_id: str) -> bool:
     return entity_id in allowed
 
 
-def replace_overlay(data: Dict[str, Any]) -> None:
+def replace_overlay(data: dict[str, Any]) -> None:
     """Replace HA overlay (used after successful poll or toggle refresh)."""
     global _overlay
     _overlay = data
@@ -263,8 +265,6 @@ async def _ha_request(
     timeout: float | None = None,
 ) -> httpx.Response | None:
     """Single helper for all HA REST calls. Returns response or None on error."""
-    import asyncio
-
     if not _configured:
         return None
     client = _get_http_client()
@@ -283,7 +283,7 @@ async def _ha_request(
         return None
 
 
-async def _get_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -> Optional[str]:
+async def _get_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -> str | None:
     """GET /api/states/{entity_id} → state string."""
     safe = quote(entity_id, safe="")
     try:
@@ -296,13 +296,13 @@ async def _get_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -
         return None
 
 
-async def fetch_states_once() -> Dict[str, Any]:
+async def fetch_states_once() -> dict[str, Any]:
     """Fetch all configured entities; returns overlay dict for merging into MQTT state."""
     if not is_direct_mode():
         return {}
 
     headers = _ha_headers()
-    out: Dict[str, Any] = {"booleans": {}}
+    out: dict[str, Any] = {"booleans": {}}
 
     try:
         async with httpx.AsyncClient(timeout=HA_POLL_TIMEOUT) as client:
@@ -335,7 +335,7 @@ async def fetch_states_once() -> Dict[str, Any]:
         return {"booleans": {}, "ha_direct_connected": False}
 
 
-def merge_overlay(base: Dict[str, Any]) -> Dict[str, Any]:
+def merge_overlay(base: dict[str, Any]) -> dict[str, Any]:
     """Merge MQTT state with HA overlay; in direct mode HA-owned keys never fall back to MQTT."""
     merged = dict(base)
     merged.setdefault("booleans", {})
@@ -392,7 +392,9 @@ async def call_turn(entity_id: str, turn_on: bool) -> bool:
     if domain not in ("input_boolean", "switch", "light"):
         return False
 
-    resp = await _ha_request("POST", f"/api/services/{domain}/{service}", json_body={"entity_id": entity_id})
+    resp = await _ha_request(
+        "POST", f"/api/services/{domain}/{service}", json_body={"entity_id": entity_id}
+    )
     return resp is not None and resp.status_code == 200
 
 
@@ -415,7 +417,7 @@ async def toggle_entity(entity_id: str) -> bool:
     return resp is not None and resp.status_code == 200
 
 
-def domain_for_press(entity_id: str) -> Optional[str]:
+def domain_for_press(entity_id: str) -> str | None:
     if entity_id.startswith("button."):
         return "button"
     return None
@@ -423,5 +425,7 @@ def domain_for_press(entity_id: str) -> Optional[str]:
 
 async def press_entity(entity_id: str) -> bool:
     """Fire button.press."""
-    resp = await _ha_request("POST", "/api/services/button/press", json_body={"entity_id": entity_id})
+    resp = await _ha_request(
+        "POST", "/api/services/button/press", json_body={"entity_id": entity_id}
+    )
     return resp is not None and resp.status_code == 200

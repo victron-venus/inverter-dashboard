@@ -5,27 +5,27 @@ Configuration for Inverter Dashboard
 import os
 
 # MQTT settings
-MQTT_HOST = os.getenv('MQTT_HOST', 'Cerbo')
-MQTT_PORT = int(os.getenv('MQTT_PORT', '1883'))
+MQTT_HOST = os.getenv("MQTT_HOST", "Cerbo")
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 
 # Web server settings
-WEB_PORT = int(os.getenv('WEB_PORT', '8080'))
+WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
 
 # Dashboard authentication — REQUIRED. Set via DASHBOARD_SECRET env var.
 # Protects WebSocket commands and /api/* management endpoints.
 # Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-DASHBOARD_SECRET = os.getenv('DASHBOARD_SECRET', '')
+DASHBOARD_SECRET = os.getenv("DASHBOARD_SECRET", "")
 
 # Self-update settings
-SELF_UPDATE_ENABLED = os.getenv('SELF_UPDATE_ENABLED', 'false').lower() in ('1', 'true', 'yes')
+SELF_UPDATE_ENABLED = os.getenv("SELF_UPDATE_ENABLED", "false").lower() in ("1", "true", "yes")
 # Pin updates to a specific git tag/revision instead of main (empty = use GITHUB_RAW_URL default)
-UPDATE_PIN = os.getenv('UPDATE_PIN', '')
+UPDATE_PIN = os.getenv("UPDATE_PIN", "")
 
 # MQTT authentication (optional)
-MQTT_USERNAME = os.getenv('MQTT_USERNAME', '')
-MQTT_PASSWORD = os.getenv('MQTT_PASSWORD', '')
-MQTT_TLS = os.getenv('MQTT_TLS', '').lower() in ('1', 'true', 'yes')
-MQTT_CA_CERT = os.getenv('MQTT_CA_CERT', '')
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
+MQTT_TLS = os.getenv("MQTT_TLS", "").lower() in ("1", "true", "yes")
+MQTT_CA_CERT = os.getenv("MQTT_CA_CERT", "")
 
 # Default inverter limits (used by websocket_handler)
 DEFAULT_POWER_MIN = -2300

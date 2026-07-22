@@ -5,7 +5,7 @@ MQTT client handler for receiving state from Cerbo
 import json
 import asyncio
 import logging
-from typing import Dict, Any, Callable
+from typing import Any, Callable
 
 import paho.mqtt.client as mqtt
 
@@ -18,7 +18,7 @@ class MqttState:
     """Encapsulated MQTT state and connection management."""
 
     def __init__(self) -> None:
-        self.current_state: Dict[str, Any] = {}
+        self.current_state: dict[str, Any] = {}
         self.console_lines: list[str] = []
         self._on_state_update: Callable | None = None
         self._main_loop: asyncio.AbstractEventLoop | None = None
@@ -54,7 +54,7 @@ class MqttState:
         except Exception as e:
             logger.exception("MQTT message error: %s", e)
 
-    def get_state(self) -> Dict[str, Any]:
+    def get_state(self) -> dict[str, Any]:
         """Get current state"""
         return self.current_state
 
@@ -99,7 +99,7 @@ def create_client(state: MqttState) -> mqtt.Client:
     return client
 
 
-def start_client(client: mqtt.Client):
+def start_client(client: mqtt.Client) -> None:
     """Start MQTT client connection"""
     try:
         client.connect(config.MQTT_HOST, config.MQTT_PORT, 60)
@@ -109,14 +109,14 @@ def start_client(client: mqtt.Client):
         logger.exception("MQTT connection failed: %s", e)
 
 
-def stop_client(client: mqtt.Client):
+def stop_client(client: mqtt.Client) -> None:
     """Stop MQTT client"""
     if client:
         client.loop_stop()
         client.disconnect()
 
 
-def publish_command(client: mqtt.Client, action: str, payload: Dict[str, Any]):
+def publish_command(client: mqtt.Client, action: str, payload: dict[str, Any]) -> None:
     """Publish command to inverter-control"""
     if client:
         client.publish(f"inverter/cmd/{action}", json.dumps(payload) if payload else "", qos=0)

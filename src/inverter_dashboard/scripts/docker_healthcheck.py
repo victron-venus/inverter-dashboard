@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Docker HEALTHCHECK: HTTP or HTTPS when dashboard.crt + dashboard.key exist in config."""
+
 from __future__ import annotations
 
 import os
