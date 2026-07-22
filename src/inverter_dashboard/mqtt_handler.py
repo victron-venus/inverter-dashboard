@@ -86,7 +86,7 @@ def create_client(state: MqttState) -> mqtt.Client:
 
     if config.MQTT_USERNAME:
         client.username_pw_set(config.MQTT_USERNAME, config.MQTT_PASSWORD or None)
-        logger.info("MQTT auth configured (username: %s)", config.MQTT_USERNAME)
+        logger.debug("MQTT auth configured (username: %s)", config.MQTT_USERNAME)
 
     if config.MQTT_TLS:
         if config.MQTT_CA_CERT:

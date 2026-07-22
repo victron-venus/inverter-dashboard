@@ -92,7 +92,7 @@ app = FastAPI(title="Inverter Dashboard", lifespan=lifespan)
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Serve dashboard page"""
-    return get_dashboard_html(secret=DASHBOARD_SECRET)
+    return get_dashboard_html()
 
 
 @app.websocket("/ws")

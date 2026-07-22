@@ -18,6 +18,56 @@ logger = logging.getLogger(__name__)
 # Connected WebSocket clients
 ws_clients: set[WebSocket] = set()
 
+# Keys from inverter/state that are safe to forward to WebSocket clients.
+# Defense-in-depth: prevents accidental inclusion of sensitive fields.
+_STATE_ALLOWLIST: set[str] = {
+    "gt",
+    "g1",
+    "g2",
+    "tt",
+    "t1",
+    "t2",
+    "solar_total",
+    "mppt_total",
+    "tasmota_total",
+    "battery_soc",
+    "battery_power",
+    "battery_voltage",
+    "battery_current",
+    "setpoint",
+    "inverter_state",
+    "version",
+    "dashboard_version",
+    "latest_version",
+    "uptime",
+    "ha_connected",
+    "ha_direct_connected",
+    "dry_run",
+    "ess_mode",
+    "booleans",
+    "features",
+    "mppt_individual",
+    "tasmota_individual",
+    "mppt_chargers",
+    "batteries",
+    "loads",
+    "ui_config",
+    "daily_stats",
+    "ev_charging_kw",
+    "ev_power",
+    "car_soc",
+    "water_level",
+    "water_valve",
+    "pump_switch",
+    "dishwasher_running",
+    "dishwasher_duration",
+    "washer_time",
+    "washer_power",
+    "dryer_time",
+    "dryer_power",
+    "console",
+}
+
 # Mutable module-level state (avoids global statements)
 _state: dict[str, Any] = {"latest_version": None, "mqtt_state": None}
 
@@ -36,9 +86,10 @@ def build_payload() -> dict[str, Any]:
     """Build the canonical state payload sent to all WebSocket clients."""
     mqtt = _state["mqtt_state"]
     state = ha_client.merge_overlay(mqtt.get_state())
+    filtered = {k: v for k, v in state.items() if k in _STATE_ALLOWLIST}
     return _with_ui_config(
         {
-            **state,
+            **filtered,
             "console": mqtt.get_console()[-CONSOLE_SEND_LINES:],
             "dashboard_version": VERSION,
             "latest_version": _state["latest_version"],
