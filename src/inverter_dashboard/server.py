@@ -179,11 +179,11 @@ def main():
         )
     logger.info("Starting Remote Dashboard v%s", VERSION)
     logger.info("  MQTT: %s:%s", args.mqtt_host, args.mqtt_port)
-    logger.info("  Web:  %s://0.0.0.0:%s", proto, args.port)
+    logger.info("  Web:  %s://%s:%s", proto, config.HOST, args.port)
 
     uvicorn.run(
         app,
-        host="0.0.0.0",
+        host=config.HOST,
         port=args.port,
         ssl_certfile=args.ssl_cert,
         ssl_keyfile=args.ssl_key,

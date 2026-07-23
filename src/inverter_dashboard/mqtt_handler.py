@@ -29,7 +29,7 @@ class MqttState:
         self._main_loop = loop
 
     def on_connect(
-        self, client: mqtt.Client, _userdata: Any, _flags: Any, rc: Any, _properties: Any = None
+        self, client: mqtt.Client, _userdata: Any, _flags: Any, _rc: Any, _properties: Any = None
     ) -> None:
         """MQTT connected - subscribe to topics"""
         logger.info("MQTT connected to %s:%s", config.MQTT_HOST, config.MQTT_PORT)

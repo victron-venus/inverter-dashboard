@@ -9,6 +9,7 @@ MQTT_HOST = os.getenv("MQTT_HOST", "Cerbo")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 
 # Web server settings
+HOST = os.getenv("HOST", "127.0.0.1")  # Default to localhost for security
 WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
 
 # Dashboard authentication — REQUIRED. Set via DASHBOARD_SECRET env var.

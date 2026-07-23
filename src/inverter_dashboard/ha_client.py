@@ -141,7 +141,7 @@ def _appliance_field_value(state_key: str, entity_id: str, raw: str | None) -> A
 
 
 def _appliance_fallback(state_key: str) -> Any:
-    if state_key.endswith("_time") or state_key.endswith("_duration"):
+    if state_key.endswith(("_time", "_duration")):
         return 0
     return False
 

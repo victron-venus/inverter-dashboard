@@ -5,6 +5,8 @@ Version management and self-update functionality
 import os
 import sys
 import logging
+import aiofiles
+
 import httpx
 
 
@@ -107,8 +109,8 @@ async def download_and_update() -> tuple[bool, str]:
                 if parent:
                     os.makedirs(parent, exist_ok=True)
 
-                with open(filepath, "w") as f:
-                    f.write(content)
+                async with aiofiles.open(filepath, "w") as f:
+                    await f.write(content)
 
                 if filename == "VERSION":
                     new_version = content.strip()
