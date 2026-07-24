@@ -43,6 +43,18 @@ flowchart LR
     UI --> BROWSER & MOBILE
 ```
 
+---
+
+## Release Channels & CI/CD
+
+This repository follows a multi-channel release strategy managed by GitHub Actions:
+
+- **Stable Releases**: Tagged as `vX.Y.Z` (e.g., `v1.0.0`). Publishes PyInstaller standalone executables for Linux, macOS, and Windows.
+- **Pre-releases**: Tagged as `vX.Y.Z-rc.N` or `vX.Y.Z-beta.N`. Automatically published as **Pre-release** on GitHub Releases to isolate testing releases.
+- **Nightly Builds**: Built daily at 02:00 UTC. Publishes PyInstaller binaries to the **[Nightly Build Release](https://github.com/victron-venus/inverter-dashboard/releases/tag/nightly)** and updates the Docker image tag `ghcr.io/victron-venus/inverter-dashboard:nightly`.
+
+---
+
 ## Features
 
 - Real-time power monitoring (Grid, Solar, Battery, Consumption)
