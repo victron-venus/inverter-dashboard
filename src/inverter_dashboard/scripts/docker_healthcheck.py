@@ -34,7 +34,7 @@ def main() -> int:
         if e.code in (401, 403):
             return 0
         return 1
-    except (urllib.error.URLError, OSError):
+    except OSError:
         return 1
 
 
