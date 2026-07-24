@@ -9,13 +9,13 @@ env:
   PYTHON_VERSION: '3.13'
   PYINSTALLER_VERSION: '6.11.1'
 
-permissions:
-  contents: write
-  packages: write
+permissions: {}  # Scoped per job below
 
 jobs:
   docker-nightly:
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Docker Buildx
@@ -72,6 +72,8 @@ jobs:
   release-nightly:
     needs: [docker-nightly, build-linux]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download all artifacts
