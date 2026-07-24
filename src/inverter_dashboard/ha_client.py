@@ -262,15 +262,13 @@ async def _ha_request(
     path: str,
     *,
     json_body: dict | None = None,
-    timeout: float | None = None,
 ) -> httpx.Response | None:
     """Single helper for all HA REST calls. Returns response or None on error."""
     if not _configured:
         return None
     client = _get_http_client()
-    timeout_val = timeout or HA_REQUEST_TIMEOUT
     try:
-        async with asyncio.timeout(timeout_val):
+        async with asyncio.timeout(HA_REQUEST_TIMEOUT):
             resp = await client.request(
                 method,
                 f"{_url}{path}",
