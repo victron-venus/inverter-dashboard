@@ -6,7 +6,7 @@ WORKDIR /app
 RUN apk add --no-cache bash git
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --only-binary :all: -r requirements.txt
 
 # Install as editable package so `python -m inverter_dashboard` works
 COPY pyproject.toml ./
