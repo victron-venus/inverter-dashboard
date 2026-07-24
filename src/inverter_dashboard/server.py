@@ -8,10 +8,12 @@ import os
 import asyncio
 import logging
 import argparse
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from . import config
@@ -88,10 +90,27 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Inverter Dashboard", lifespan=lifespan)
 
 
+# Mount Vue SPA dist assets if available (higher priority than fallback routes)
+def _mount_vue_dist():
+    """Mount Vue SPA dist/ directory if it exists."""
+    static_dir = Path(__file__).parent / "static"
+    dist_dir = static_dir / "dist"
+    if dist_dir.is_dir():
+        app.mount("/static", StaticFiles(directory=str(dist_dir)), name="vue_dist")
+        logger.info("Mounted Vue SPA from %s", dist_dir)
+
+
+_mount_vue_dist()
+
+
 # Routes
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """Serve dashboard page"""
+    """Serve Vue SPA if available, fallback to embedded template"""
+    static_dir = Path(__file__).parent / "static"
+    index_path = static_dir / "dist" / "index.html"
+    if index_path.is_file():
+        return index_path.read_text()
     return get_dashboard_html()
 
 
