@@ -117,7 +117,7 @@ async def fetch_states_once():
 
 ### Configuration Reference
 
-In `site_config.py` (created via [`scripts/init-config.sh`](scripts/init-config.sh)):
+In `local_config.py` (created via [`scripts/init-config.sh`](scripts/init-config.sh)):
 
 ```python
 # Default: MQTT-only mode (recommended)
@@ -198,21 +198,21 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 | `MQTT_HOST` | `192.168.160.150` | MQTT broker hostname |
 | `MQTT_PORT` | `1883` | MQTT broker port |
 | `WEB_PORT` | `8080` | Web server port (inside the container) |
-| `INVERTER_DASHBOARD_CONFIG` | `/app/config` | Host folder mounted read-only: `site_config.py` and optional TLS files |
+| `INVERTER_DASHBOARD_CONFIG` | `/app/config` | Host folder mounted read-only: `local_config.py` and optional TLS files |
 
-### Secrets (`site_config.py`) + optional HTTPS
+### Secrets (`local_config.py`) + optional HTTPS
 
-Committed template only: [`site_config.example.py`](site_config.example.py). Your real file is **`site_config.py`** in the **repository root** (next to `server.py`) — **gitignored** (never push). There is no separate `config/` folder in the repo.
+Committed template only: [`local_config.example.py`](local_config.example.py). Your real file is **`local_config.py`** in the **repository root** (next to `server.py`) — **gitignored** (never push). There is no separate `config/` folder in the repo.
 
-If Cerbo **inverter-control** uses **`MQTT_SLIM_STATE`** (slim `inverter/state`), dishwasher/washer/dryer fields are omitted from MQTT — add **`HA_APPLIANCE_ENTITIES`** in **`site_config.py`** so the dashboard polls those sensors from Home Assistant (same keys as full MQTT state).
+If Cerbo **inverter-control** uses **`MQTT_SLIM_STATE`** (slim `inverter/state`), dishwasher/washer/dryer fields are omitted from MQTT — add **`HA_APPLIANCE_ENTITIES`** in **`local_config.py`** so the dashboard polls those sensors from Home Assistant (same keys as full MQTT state).
 
 **Synology NAS (deploy path used in this repo):**
 
 | Location | Purpose |
 |---------|---------|
-| `/volume1/docker/inverter-dashboard/config` | **On the NAS host only:** a folder that is **bind-mounted** read-only into the container as **`/app/config`**. Put **`site_config.py`** here together with optional **`dashboard.crt`** / **`dashboard.key`**. The folder name on disk is convention (matches [`docker-compose.yml`](docker-compose.yml) / [`portainer-stack.yml`](portainer-stack.yml)); it is **not** a `config/` directory inside the Git clone. |
+| `/volume1/docker/inverter-dashboard/config` | **On the NAS host only:** a folder that is **bind-mounted** read-only into the container as **`/app/config`**. Put **`local_config.py`** here together with optional **`dashboard.crt`** / **`dashboard.key`**. The folder name on disk is convention (matches [`docker-compose.yml`](docker-compose.yml) / [`portainer-stack.yml`](portainer-stack.yml)); it is **not** a `config/` directory inside the Git clone. |
 
-- **After clone (any machine):** `./scripts/init-config.sh` creates **`./site_config.py`** from the example; fill in **`HA_TOKEN`** / **`HA_URL`** (typically the same long-lived token as inverter-control **`secrets.py`**).
+- **After clone (any machine):** `./scripts/init-config.sh` creates **`./local_config.py`** from the example; fill in **`HA_TOKEN`** / **`HA_URL`** (typically the same long-lived token as inverter-control **`secrets.py`**).
 - **`postinstall.sh`** (in repo root): run **on your Mac/PC** (not on the NAS). Put **`Host synology`** (user, hostname, keys) in **`~/.ssh/config`**, then simply **`./postinstall.sh`** — it runs **`ssh synology`** by default (override with **`SYNOLOGY_SSH`** only if you use another alias).
 
   Expects **passwordless `sudo`** on the NAS for **`docker` / `docker compose`** and for writing under **`/volume1/docker/...`**. Files are pushed with **`ssh` + stdin** (not `scp`), so it still works if Synology has disabled the SFTP/SCP subsystem. Then **`sudo install`** from a temp dir. Env: **`SYNOLOGY_SSH`**, **`REMOTE_BASE`**, **`SOURCE_CONFIG`** (defaults to **repo root** next to **`postinstall.sh`**), **`STACK_FILE`**, **`DOCKER`** (default **`sudo /usr/local/bin/docker`** — under **`sudo`** DSM often has no **`docker`** in **`PATH`**). On **macOS**, if **`dashboard.crt`** exists next to **`postinstall.sh`** or under **`.certs/`**, the script imports it as trusted when missing: tries **System** keychain (`System.keychain-db` / `System.keychain`), then **login** keychain if needed (**`SKIP_MAC_TRUST=1`** to skip).
@@ -236,7 +236,7 @@ By default the app and the published Docker image listen on **plain HTTP** (port
 
 2. **TLS inside the Python app** (good for quick tests / single host)
 
-   **Docker (recommended layout):** mount your host config folder to **`/app/config`**, put **`dashboard.crt`** and **`dashboard.key`** next to **`site_config.py`**. The entrypoint detects both files and passes **`--ssl-cert`** / **`--ssl-key`** automatically on the **same** port as without TLS (default 8080). Map ports e.g. `"8443:8080"` if you want HTTPS on 8443 externally.
+   **Docker (recommended layout):** mount your host config folder to **`/app/config`**, put **`dashboard.crt`** and **`dashboard.key`** next to **`local_config.py`**. The entrypoint detects both files and passes **`--ssl-cert`** / **`--ssl-key`** automatically on the **same** port as without TLS (default 8080). Map ports e.g. `"8443:8080"` if you want HTTPS on 8443 externally.
 
    Generate certs (repo includes a helper):
 
@@ -263,7 +263,7 @@ By default the app and the published Docker image listen on **plain HTTP** (port
      - /volume1/docker/inverter-dashboard/config:/app/config:ro
    ```
 
-   On a dev PC without `/volume1`, comment out this volume or bind a local folder (e.g. repo root or any directory that contains **`site_config.py`** and optional TLS files) to **`/app/config`** instead.
+   On a dev PC without `/volume1`, comment out this volume or bind a local folder (e.g. repo root or any directory that contains **`local_config.py`** and optional TLS files) to **`/app/config`** instead.
 
    If you omit **`dashboard.crt`** / **`dashboard.key`** on the host, the app stays on HTTP.
 
@@ -336,7 +336,7 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Optional: ./site_config.py for Home Assistant direct mode (gitignored)
+# Optional: ./local_config.py for Home Assistant direct mode (gitignored)
 ./scripts/init-config.sh
 
 # Run
