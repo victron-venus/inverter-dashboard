@@ -15,8 +15,8 @@ COPY VERSION ./
 RUN uv sync --frozen --no-dev --no-editable
 ENV PATH="/app/.venv/bin:${PATH}"
 
-# Overlay site_config.example.py at repo root (used by entrypoint / Docker config mount)
-COPY site_config.example.py entrypoint.sh ./
+# Overlay local_config.example.py at repo root (used by entrypoint / Docker config mount)
+COPY local_config.example.py entrypoint.sh ./
 
 # Non-root user (Docker Scout / smaller attack surface).
 # UID/GID 1000 is a common default Linux user; override in compose if needed.
