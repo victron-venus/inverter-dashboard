@@ -15,7 +15,7 @@ def main() -> int:
     crt = os.path.join(config, "dashboard.crt")
     key = os.path.join(config, "dashboard.key")
     host = f"127.0.0.1:{port}"
-    url = f"http://{host}/api/state"
+    url = f"http://{host}/api/state"  # NOSONAR: localhost-only container healthcheck, HTTPS used below when TLS is configured
     timeout = 8
 
     try:

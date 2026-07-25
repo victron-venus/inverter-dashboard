@@ -1,18 +1,19 @@
-FROM python:3.14-alpine@sha256:26730869004e2b9c4b9ad09cab8625e81d256d1ce97e72df5520e806b1709f92
+# python:3.14-alpine — pinned by digest only (avoid tag+digest duplication).
+FROM python@sha256:26730869004e2b9c4b9ad09cab8625e81d256d1ce97e72df5520e806b1709f92
 
 WORKDIR /app
 
 # bash: entrypoint uses bash ([[ ]], arrays). git: clone at build time and git fetch in entrypoint.
+# uv: installs from the committed lockfile for reproducible, hash-verified dependency resolution.
+COPY --from=ghcr.io/astral-sh/uv@sha256:ba4857bf2a068e9bc0e64eed8563b065908a4cd6bfb66b531a9c424c8e25e142 /uv /usr/local/bin/uv
 RUN apk add --no-cache bash git
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install as editable package so `python -m inverter_dashboard` works
-COPY pyproject.toml ./
+# Install pinned dependencies (incl. transitive) from uv.lock — no unresolved version ranges.
+COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
 COPY VERSION ./
-RUN pip install --no-cache-dir -e .
+RUN uv sync --frozen --no-dev --no-editable
+ENV PATH="/app/.venv/bin:${PATH}"
 
 # Overlay site_config.example.py at repo root (used by entrypoint / Docker config mount)
 COPY site_config.example.py entrypoint.sh ./

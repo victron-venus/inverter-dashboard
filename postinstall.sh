@@ -63,7 +63,7 @@ maybe_generate_dashboard_tls() {
 
 # Before importing: drop prior copies (same fingerprint or same CN) to avoid duplicates / stale certs after regeneration.
 remove_dashboard_cert_from_mac_keychains() {
-  local cert="$1" hash="$2" cn="$3"
+  local hash="$1" cn="$2"
   local k
   for k in \
       /Library/Keychains/System.keychain-db \
@@ -111,7 +111,7 @@ trust_dashboard_cert_on_mac_if_needed() {
   done
 
   echo ">>> macOS: removing previous dashboard.crt entries from keychains (if any)..."
-  remove_dashboard_cert_from_mac_keychains "$cert" "$hash" "$cn"
+  remove_dashboard_cert_from_mac_keychains "$hash" "$cn"
 
   local errfile
   errfile=$(mktemp)
