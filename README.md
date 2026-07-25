@@ -45,6 +45,101 @@ flowchart LR
 
 ---
 
+## Home Assistant Integration: Local-First Architecture
+
+The dashboard uses a **local-first approach** for Home Assistant integrations — MQTT bridging, not direct cloud polling.
+
+### Why Not Direct HA REST Polling?
+
+Home Assistant runs in the cloud (outside the home network). Direct API polling creates critical problems:
+
+| Problem | Impact |
+|---|---|
+| **Internet dependency** | Dashboard fails when connectivity drops |
+| **Latency** | MQTT delivers state in ~100ms; HA API polling takes 12+ seconds per cycle |
+| **Rate limits** | HA cloud API has request limits; excessive polling triggers throttling |
+| **Cloud HA downtime** | Dashboard loses all switch/sensor visibility |
+| **Single point of failure** | Cloud HA becomes a hard dependency |
+
+### Our Approach: Local MQTT Bridging
+
+```
+Home Assistant (cloud)
+    │
+    ▼
+inverter-control (on Cerbo GX)
+    │  ← polls HA locally (when configured)
+    ▼
+MQTT (local broker)
+    │
+    ▼
+Dashboard ← receives all entity states via MQTT payload
+```
+
+**inverter-control** bridges entity states into MQTT `inverter/state` every 2–5 seconds. Dashboard receives everything from one source.
+
+### Two Modes of Operation
+
+#### Mode 1: MQTT-State (Default) — `HA_DIRECT_CONTROLS = False` ✓
+
+```python
+# ha_client.py — merge_overlay is no-op; HA state from MQTT only
+if not is_direct_mode():
+    return merged
+```
+
+- **No HTTP calls from dashboard to HA cloud**
+- Entity states arrive via MQTT `inverter/state` at ~2–5s intervals
+- Works when HA cloud is down or internet is out
+- **Recommended for all production deployments**
+
+#### Mode 2: Direct Polling — `HA_DIRECT_CONTROLS = True` (diagnostic only)
+
+```python
+# Dashboard polls HA REST API every 12 seconds
+async def fetch_states_once():
+    for key, eid in _boolean_entities.items():
+        st = await _get_state(client, headers, eid)
+        booleans[key] = st == "on"
+    out["ha_direct_connected"] = True
+```
+
+- If HA cloud is unreachable → all switches show "off" until reconnection
+- **Not recommended for production**
+
+### Key Benefits
+
+1. **Offline resilience**: MQTT state still flows when internet/HA cloud is down
+2. **Sub-second updates**: MQTT delivers entity states every cycle (~2–5s), far faster than 12s API polling
+3. **No vendor lock-in**: Dashboard works with MQTT broker alone
+4. **Fail-safe defaults**: Disconnected direct mode → all switches show `False`
+5. **Zero API rate limit risk**: No direct HA REST calls from dashboard
+
+### Configuration Reference
+
+In `site_config.py` (created via [`scripts/init-config.sh`](scripts/init-config.sh)):
+
+```python
+# Default: MQTT-only mode (recommended)
+HA_DIRECT_CONTROLS = False
+
+# Direct polling mode (diagnostic only — not recommended)
+HA_DIRECT_CONTROLS = True
+HA_URL = "https://homeassistant.local:8123"
+HA_TOKEN = "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN"
+
+# HA entity mappings (used by both modes)
+HA_BOOLEAN_ENTITIES = {
+    "only_charging": "input_boolean.only_charging",
+}
+HA_SWITCH_ENTITIES = {
+    "home_no_feed": "input_boolean.no_feed",
+    "home_house_support": "input_boolean.house_support",
+}
+```
+
+---
+
 ## Release Channels & CI/CD
 
 This repository follows a multi-channel release strategy managed by GitHub Actions:
