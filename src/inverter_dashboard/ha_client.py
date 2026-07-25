@@ -1,11 +1,11 @@
 """
 Optional Home Assistant REST client for inverter-dashboard.
 
-Reads site_config.py when present; if HA_DIRECT_CONTROLS is False or file missing,
+Reads local_config.py when present; if HA_DIRECT_CONTROLS is False or file missing,
 all UI state for switches comes from MQTT (inverter-control) only.
 
 When HA_DIRECT_CONTROLS is True and HA is configured, boolean/switch/water state for
-entities listed in site_config comes only from HA REST polling — MQTT is not used as
+entities listed in local_config comes only from HA REST polling — MQTT is not used as
 fallback when HA is unreachable (values show off until HA responds again).
 """
 
@@ -49,9 +49,9 @@ _overlay: dict[str, Any] = {
 _http_client: httpx.AsyncClient | None = None
 
 
-def _prepend_site_config_import_path() -> None:
-    """Load site_config from INVERTER_DASHBOARD_CONFIG (Docker mount) or app directory."""
-    # Walk up from package dir to repo root (where site_config.py lives in dev/Docker)
+def _prepend_local_config_import_path() -> None:
+    """Load local_config from INVERTER_DASHBOARD_CONFIG (Docker mount) or app directory."""
+    # Walk up from package dir to repo root (where local_config.py lives in dev/Docker)
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = os.path.normpath(os.path.join(pkg_dir, "..", ".."))
 
@@ -64,11 +64,11 @@ def _prepend_site_config_import_path() -> None:
     for d in candidates:
         if not d:
             continue
-        path_py = os.path.join(d, "site_config.py")
+        path_py = os.path.join(d, "local_config.py")
         if os.path.isfile(path_py):
             if d not in sys.path:
                 sys.path.insert(0, d)
-            logger.info("Using site_config.py from %s", d)
+            logger.info("Using local_config.py from %s", d)
             return
 
 
@@ -100,7 +100,7 @@ def _switch_entity_from_value(val: Any) -> tuple[str | None, str | None]:
 
 
 def _parse_ha_switch_entities(raw: Any) -> tuple[dict[str, str], dict[str, str]]:
-    """Parse site_config.HA_SWITCH_ENTITIES: value may be entity_id str, (entity, label), or dict."""
+    """Parse local_config.HA_SWITCH_ENTITIES: value may be entity_id str, (entity, label), or dict."""
     entities: dict[str, str] = {}
     embedded_labels: dict[str, str] = {}
     if not raw or not isinstance(raw, dict):
@@ -165,22 +165,22 @@ def _appliance_fallback(state_key: str) -> Any:
 
 
 def load_config():
-    """Import site_config if present (see site_config.example.py)."""
+    """Import local_config if present (see local_config.example.py)."""
     global _configured, _url, _token, _direct, _poll_interval
     global _boolean_entities, _switch_entities, _water_valve, _water_pump, _switch_labels
     global _appliance_entities
 
-    _prepend_site_config_import_path()
+    _prepend_local_config_import_path()
 
     try:
-        import site_config as sc  # type: ignore
+        import local_config as sc  # type: ignore
     except ImportError:
         _configured = False
         _boolean_entities = {}
         _switch_entities = {}
         _switch_labels = {}
         _appliance_entities = {}
-        logger.info("site_config.py not found — switch state from MQTT only")
+        logger.info("local_config.py not found — switch state from MQTT only")
         return
 
     _url = (getattr(sc, "HA_URL", "") or "").rstrip("/")
@@ -235,14 +235,14 @@ def home_buttons_ui() -> list[dict[str, Any]]:
 
 
 def ui_config_patch() -> dict[str, Any]:
-    """Partial ui_config from site_config (merged into WebSocket payloads)."""
+    """Partial ui_config from local_config (merged into WebSocket payloads)."""
     if not _switch_entities:
         return {}
     return {"home_buttons": home_buttons_ui()}
 
 
 def is_toggle_allowed(entity_id: str) -> bool:
-    """Only entity IDs listed in site_config may be toggled from the dashboard."""
+    """Only entity IDs listed in local_config may be toggled from the dashboard."""
     if not entity_id or not _configured:
         return False
     allowed = set(_boolean_entities.values()) | set(_switch_entities.values())

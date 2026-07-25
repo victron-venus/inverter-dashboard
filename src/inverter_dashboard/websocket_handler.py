@@ -98,7 +98,7 @@ def build_payload() -> dict[str, Any]:
 
 
 def _with_ui_config(payload: dict[str, Any]) -> dict[str, Any]:
-    """Merge site_config-derived ui_config (e.g. home_buttons) into payload."""
+    """Merge local_config-derived ui_config (e.g. home_buttons) into payload."""
     patch = ha_client.ui_config_patch()
     if not patch:
         return payload

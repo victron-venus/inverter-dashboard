@@ -124,8 +124,8 @@ docker restart inverter-dashboard
 curl -s -H "Authorization: Bearer $HA_TOKEN" \
   $HA_URL/api/states/sensor.home_totalusage_1s | jq
 
-# Check site_config.py has correct entity IDs
-docker exec inverter-dashboard cat /app/config/site_config.py
+# Check local_config.py has correct entity IDs
+docker exec inverter-dashboard cat /app/config/local_config.py
 ```
 
 ---

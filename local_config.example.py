@@ -1,12 +1,12 @@
 """
 Site Configuration Example
 
-Copy this file to site_config.py and fill in your values.
-site_config.py is NOT tracked by git.
+Copy this file to local_config.py and fill in your values.
+local_config.py is NOT tracked by git.
 
-Docker: place **site_config.py** on the host inside the folder you mount at **/app/config**
+Docker: place **local_config.py** on the host inside the folder you mount at **/app/config**
 (set **INVERTER_DASHBOARD_CONFIG=/app/config** in compose — that path is the mount point, not a repo subfolder).
-Local dev: run **scripts/init-config.sh** to create **./site_config.py** next to **server.py**, or copy this file manually.
+Local dev: run **scripts/init-config.sh** to create **./local_config.py** next to **server.py**, or copy this file manually.
 
 When HA_DIRECT_CONTROLS is True, the dashboard reads toggle/switch states and
 sends toggle commands directly to Home Assistant instead of relying on Cerbo MQTT
