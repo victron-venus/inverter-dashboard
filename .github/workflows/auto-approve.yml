@@ -25,5 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.inputs.acknowledge == 'YES'
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
       - name: Warn
         run: echo "Auto-approve is disabled. Please use manual review instead."
