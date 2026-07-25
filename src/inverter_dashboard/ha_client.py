@@ -72,6 +72,33 @@ def _prepend_site_config_import_path() -> None:
             return
 
 
+def _switch_entity_from_sequence(val: tuple | list) -> tuple[str | None, str | None]:
+    """Extract (entity, label) from a (entity, label)-style tuple/list value."""
+    entity = str(val[0]).strip() if len(val) >= 1 and val[0] else None
+    label = str(val[1]).strip() if len(val) >= 2 and val[1] else None
+    return entity, label
+
+
+def _switch_entity_from_dict(val: dict) -> tuple[str | None, str | None]:
+    """Extract (entity, label) from a dict-style value."""
+    eid = val.get("entity") or val.get("id") or val.get("entity_id")
+    lab = val.get("label") or val.get("short") or val.get("name")
+    entity = str(eid).strip() if eid else None
+    label = str(lab).strip() if lab else None
+    return entity, label
+
+
+def _switch_entity_from_value(val: Any) -> tuple[str | None, str | None]:
+    """Normalize a single HA_SWITCH_ENTITIES value to (entity, label)."""
+    if isinstance(val, str):
+        return val.strip(), None
+    if isinstance(val, (tuple, list)):
+        return _switch_entity_from_sequence(val)
+    if isinstance(val, dict):
+        return _switch_entity_from_dict(val)
+    return None, None
+
+
 def _parse_ha_switch_entities(raw: Any) -> tuple[dict[str, str], dict[str, str]]:
     """Parse site_config.HA_SWITCH_ENTITIES: value may be entity_id str, (entity, label), or dict."""
     entities: dict[str, str] = {}
@@ -81,20 +108,11 @@ def _parse_ha_switch_entities(raw: Any) -> tuple[dict[str, str], dict[str, str]]
     for state_key, val in raw.items():
         if not state_key:
             continue
-        if isinstance(val, str):
-            entities[state_key] = val.strip()
-        elif isinstance(val, (tuple, list)):
-            if len(val) >= 1 and val[0]:
-                entities[state_key] = str(val[0]).strip()
-            if len(val) >= 2 and val[1]:
-                embedded_labels[state_key] = str(val[1]).strip()
-        elif isinstance(val, dict):
-            eid = val.get("entity") or val.get("id") or val.get("entity_id")
-            if eid:
-                entities[state_key] = str(eid).strip()
-            lab = val.get("label") or val.get("short") or val.get("name")
-            if lab:
-                embedded_labels[state_key] = str(lab).strip()
+        entity, label = _switch_entity_from_value(val)
+        if entity:
+            entities[state_key] = entity
+        if label:
+            embedded_labels[state_key] = label
     return entities, embedded_labels
 
 
@@ -276,7 +294,7 @@ async def _ha_request(
                 json=json_body,
             )
         return resp
-    except (httpx.HTTPError, asyncio.TimeoutError) as e:
+    except (httpx.HTTPError, TimeoutError) as e:
         logger.exception("HA request %s %s failed: %s", method, path, e)
         return None
 
@@ -333,6 +351,33 @@ async def fetch_states_once() -> dict[str, Any]:
         return {"booleans": {}, "ha_direct_connected": False}
 
 
+def _apply_connected_overlay(merged: dict[str, Any], o: dict[str, Any]) -> None:
+    """Fill merged dashboard state from a live HA overlay."""
+    merged["booleans"] = dict(o.get("booleans") or {})
+    for k in _switch_entities:
+        merged[k] = bool(o.get(k))
+    if _water_valve:
+        merged["water_valve"] = bool(o.get("water_valve"))
+    if _water_pump:
+        merged["pump_switch"] = bool(o.get("pump_switch"))
+    for k in _appliance_entities:
+        if k in o:
+            merged[k] = o[k]
+
+
+def _apply_disconnected_overlay(merged: dict[str, Any]) -> None:
+    """Fill merged dashboard state with safe defaults when HA is unreachable."""
+    merged["booleans"] = dict.fromkeys(_boolean_entities, False)
+    for k in _switch_entities:
+        merged[k] = False
+    if _water_valve:
+        merged["water_valve"] = False
+    if _water_pump:
+        merged["pump_switch"] = False
+    for k in _appliance_entities:
+        merged[k] = _appliance_fallback(k)
+
+
 def merge_overlay(base: dict[str, Any]) -> dict[str, Any]:
     """Merge MQTT state with HA overlay; in direct mode HA-owned keys never fall back to MQTT."""
     merged = dict(base)
@@ -345,26 +390,9 @@ def merge_overlay(base: dict[str, Any]) -> dict[str, Any]:
     merged["ha_direct_connected"] = connected
 
     if connected:
-        merged["booleans"] = dict(o.get("booleans") or {})
-        for k in _switch_entities:
-            merged[k] = bool(o.get(k))
-        if _water_valve:
-            merged["water_valve"] = bool(o.get("water_valve"))
-        if _water_pump:
-            merged["pump_switch"] = bool(o.get("pump_switch"))
-        for k in _appliance_entities:
-            if k in o:
-                merged[k] = o[k]
+        _apply_connected_overlay(merged, o)
     else:
-        merged["booleans"] = {k: False for k in _boolean_entities}
-        for k in _switch_entities:
-            merged[k] = False
-        if _water_valve:
-            merged["water_valve"] = False
-        if _water_pump:
-            merged["pump_switch"] = False
-        for k in _appliance_entities:
-            merged[k] = _appliance_fallback(k)
+        _apply_disconnected_overlay(merged)
 
     return merged
 

@@ -83,7 +83,9 @@ async def lifespan(_app: FastAPI):
         try:
             await ha_task
         except asyncio.CancelledError:
-            pass
+            # Expected: we just cancelled ha_task ourselves above.
+            if not ha_task.cancelled():
+                raise
     mqtt_handler.stop_client(_mqtt["client"])
 
 

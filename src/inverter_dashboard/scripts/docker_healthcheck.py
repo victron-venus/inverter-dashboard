@@ -15,13 +15,17 @@ def main() -> int:
     crt = os.path.join(config, "dashboard.crt")
     key = os.path.join(config, "dashboard.key")
     host = f"127.0.0.1:{port}"
-    url = f"http://{host}/api/state"
+    # Localhost-only container healthcheck; HTTPS is used below when TLS is configured.
+    url = f"http://{host}/api/state"  # NOSONAR
     timeout = 8
 
     try:
         if os.path.isfile(crt) and os.path.isfile(key):
             # For HTTPS with self-signed certs inside container at localhost:
             # trust the dashboard's own cert file instead of disabling verification.
+            # Hostname verification stays enabled (ssl.PROTOCOL_TLS_CLIENT default);
+            # scripts/ssl-local-deploy.sh always issues dashboard.crt with 127.0.0.1
+            # as an IP SAN, so the handshake against https://127.0.0.1 succeeds.
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             ctx.load_verify_locations(cafile=crt)
             url = f"https://{host}/api/state"
