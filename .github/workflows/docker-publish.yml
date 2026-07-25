@@ -37,7 +37,7 @@ jobs:
 
       - name: Download Vue SPA from inverter-dashboard-vue
         run: |
-          gh release download victron-venus/inverter-dashboard-vue --pattern 'vue-spa-dist.tar.gz' --dir dist-tmp
+          gh release download --repo victron-venus/inverter-dashboard-vue --pattern 'vue-spa-dist.tar.gz' --dir dist-tmp
           mkdir -p src/inverter_dashboard/static
           tar -xzf dist-tmp/vue-spa-dist.tar.gz -C src/inverter_dashboard/static/
           rm -rf dist-tmp

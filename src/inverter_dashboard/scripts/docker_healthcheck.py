@@ -22,10 +22,9 @@ def main() -> int:
     try:
         if os.path.isfile(crt) and os.path.isfile(key):
             # For HTTPS with self-signed certs inside container at localhost:
-            # Use secure context with hostname verification disabled only for localhost.
+            # trust the dashboard's own cert file instead of disabling verification.
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            ctx.check_hostname = False  # NOSONAR
-            ctx.verify_mode = ssl.CERT_NONE  # NOSONAR
+ctx.load_verify_locations(cafile=crt)
             url = f"https://{host}/api/state"
             urllib.request.urlopen(url, context=ctx, timeout=timeout)
         else:
@@ -36,7 +35,7 @@ def main() -> int:
         if e.code in (401, 403):
             return 0
         return 1
-    except (urllib.error.URLError, OSError, ssl.SSLError):
+    except OSError:
         return 1
 
 
