@@ -296,7 +296,7 @@ async def _ha_request(
                 json=json_body,
             )
         return resp
-    except (httpx.HTTPError, asyncio.TimeoutError) as e:
+    except (httpx.HTTPError, TimeoutError) as e:
         logger.exception("HA request %s %s failed: %s", method, path, e)
         return None
 

@@ -12,7 +12,7 @@ RUN apk add --no-cache bash git
 COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
 COPY VERSION ./
-RUN uv sync --frozen --no-dev --no-editable
+RUN uv sync --frozen --no-dev --no-editable --no-build
 ENV PATH="/app/.venv/bin:${PATH}"
 
 # Overlay site_config.example.py at repo root (used by entrypoint / Docker config mount)

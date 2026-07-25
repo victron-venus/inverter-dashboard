@@ -15,7 +15,8 @@ def main() -> int:
     crt = os.path.join(config, "dashboard.crt")
     key = os.path.join(config, "dashboard.key")
     host = f"127.0.0.1:{port}"
-    url = f"http://{host}/api/state"  # NOSONAR: localhost-only container healthcheck, HTTPS used below when TLS is configured
+    # Localhost-only container healthcheck; HTTPS is used below when TLS is configured.
+    url = f"http://{host}/api/state"  # NOSONAR
     timeout = 8
 
     try:
@@ -23,8 +24,8 @@ def main() -> int:
             # For HTTPS with self-signed certs inside container at localhost:
             # Use secure context with hostname verification disabled only for localhost.
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE  # nosec: localhost-only healthcheck
+            ctx.check_hostname = False  # NOSONAR
+            ctx.verify_mode = ssl.CERT_NONE  # NOSONAR
             url = f"https://{host}/api/state"
             urllib.request.urlopen(url, context=ctx, timeout=timeout)
         else:
