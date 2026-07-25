@@ -23,11 +23,11 @@ def main() -> int:
         if os.path.isfile(crt) and os.path.isfile(key):
             # For HTTPS with self-signed certs inside container at localhost:
             # trust the dashboard's own cert file instead of disabling verification.
+            # Hostname verification stays enabled (ssl.PROTOCOL_TLS_CLIENT default);
+            # scripts/ssl-local-deploy.sh always issues dashboard.crt with 127.0.0.1
+            # as an IP SAN, so the handshake against https://127.0.0.1 succeeds.
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             ctx.load_verify_locations(cafile=crt)
-            # Cert must include 127.0.0.1 as an IP SAN, otherwise
-            # disable hostname check for this localhost-only probe.
-            ctx.check_hostname = False  # NOSONAR
             url = f"https://{host}/api/state"
             urllib.request.urlopen(url, context=ctx, timeout=timeout)
         else:
