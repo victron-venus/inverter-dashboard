@@ -1,13 +1,12 @@
 """
-MQTT client handler for receiving state from Cerbo
+Async MQTT client handler using aiomqtt for non-blocking I/O in FastAPI event loop
 """
 
-import json
 import asyncio
+import json
 import logging
 from typing import Any, Callable
-
-import paho.mqtt.client as mqtt
+from aiomqtt import Client, MqttError
 
 from . import config
 
@@ -28,24 +27,16 @@ class MqttState:
         self._on_state_update = callback
         self._main_loop = loop
 
-    def on_connect(
-        self, client: mqtt.Client, _userdata: Any, _flags: Any, _rc: Any, _properties: Any = None
-    ) -> None:
-        """MQTT connected - subscribe to topics"""
-        logger.info("MQTT connected to %s:%s", config.MQTT_HOST, config.MQTT_PORT)
-        client.subscribe("inverter/state")
-        client.subscribe("inverter/console")
-
-    def on_message(self, _client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
-        """MQTT message received"""
+    def on_message(self, topic: str, payload: bytes) -> None:
+        """Process incoming MQTT message"""
         try:
-            if msg.topic == "inverter/state":
-                self.current_state = json.loads(msg.payload.decode())
+            if topic == "inverter/state":
+                self.current_state = json.loads(payload.decode())
                 if self._on_state_update and self._main_loop and self._main_loop.is_running():
                     asyncio.run_coroutine_threadsafe(self._on_state_update(), self._main_loop)
 
-            elif msg.topic == "inverter/console":
-                line = msg.payload.decode()
+            elif topic == "inverter/console":
+                line = payload.decode()
                 self.console_lines.append(line)
                 if len(self.console_lines) > config.CONSOLE_MAX_LINES:
                     self.console_lines.pop(0)
@@ -63,60 +54,165 @@ class MqttState:
         return self.console_lines
 
 
-def _on_connect(
-    client: mqtt.Client, userdata: Any, flags: Any, rc: Any, properties: Any = None
-) -> None:
-    """MQTT connected - delegate to MqttState via user_data"""
-    state: MqttState = userdata
-    state.on_connect(client, userdata, flags, rc, properties)
+class AsyncMqttClient:
+    """Async MQTT client using aiomqtt with automatic reconnection."""
+
+    def __init__(  # pylint: disable=too-many-arguments
+        self,
+        state: MqttState,
+        *,
+        host: str = config.MQTT_HOST,
+        port: int = config.MQTT_PORT,
+        username: str | None = config.MQTT_USERNAME,
+        password: str | None = config.MQTT_PASSWORD,
+        tls: bool = config.MQTT_TLS,
+        ca_cert: str | None = config.MQTT_CA_CERT,
+    ) -> None:
+        self.state = state
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.tls = tls
+        self.ca_cert = ca_cert
+
+        self._client: Client | None = None
+        self._tasks: list[asyncio.Task] = []
+        self._running = False
+
+    async def connect(self) -> None:
+        """Connect to MQTT broker"""
+        if self._client is not None:
+            return
+
+        logger.info("Connecting to MQTT broker at %s:%s", self.host, self.port)
+
+        self._client = Client(
+            hostname=self.host,
+            port=self.port,
+            username=self.username,
+            password=self.password,
+            tls_params=({"ca_certs": self.ca_cert} if self.tls and self.ca_cert else {}) if self.tls else None,
+            tls_insecure=self.tls and not self.ca_cert,
+        )
+
+        await self._client
+        logger.info("Connected to MQTT broker")
+
+        # Subscribe to topics
+        await self._client.subscribe("inverter/state")
+        await self._client.subscribe("inverter/console")
+        logger.info("Subscribed to MQTT topics")
+
+    async def start(self) -> None:
+        """Start the message processing loop"""
+        if self._running:
+            return
+
+        await self.connect()
+        self._running = True
+
+        # Start message handler task
+        task = asyncio.create_task(self._message_loop())
+        self._tasks.append(task)
+
+    async def _message_loop(self) -> None:
+        """Process incoming messages"""
+        if self._client is None:
+            logger.error("MQTT client not initialized")
+            return
+        try:
+            async for message in self._client.messages:
+                self.state.on_message(message.topic.value, message.payload)
+        except MqttError as e:
+            logger.error("MQTT message loop error: %s", e)
+            if self._running:
+                await self._reconnect()
+        except Exception as e:  # pylint: disable=broad-except
+            if isinstance(e, asyncio.CancelledError):
+                raise
+            logger.exception("Unexpected error in message loop: %s", e)
+            if self._running:
+                await self._reconnect()
+
+    async def _reconnect(self) -> None:
+        """Attempt to reconnect with exponential backoff"""
+        delay = 1
+        max_delay = 60
+
+        while self._running:
+            logger.info("Attempting to reconnect in %ds...", delay)
+            await asyncio.sleep(delay)
+
+            try:
+                await self.connect()
+                logger.info("Reconnected to MQTT broker")
+                return
+            except MqttError as e:
+                logger.warning("Reconnection failed: %s", e)
+                delay = min(delay * 2, max_delay)
+
+    async def publish(self, action: str, payload: dict[str, Any] | None = None) -> None:
+        """Publish command to inverter-control"""
+        if self._client is None:
+            logger.warning("Cannot publish: MQTT client not connected")
+            return
+
+        topic = f"inverter/cmd/{action}"
+        message = json.dumps(payload) if payload else ""
+
+        try:
+            await self._client.publish(topic, message, qos=0)
+            logger.debug("Published command to %s", topic)
+        except MqttError as e:
+            logger.error("Failed to publish to %s: %s", topic, e)
+
+    async def stop(self) -> None:
+        """Stop the client and cleanup"""
+        self._running = False
+
+        # Cancel message loop task
+        for task in self._tasks:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        self._tasks.clear()
+
+        # Close client
+        if self._client:
+            try:
+                await self._client
+            except Exception as e:  # pylint: disable=broad-except
+                logger.exception("Error closing MQTT client: %s", e)
+            self._client = None
+
+        logger.info("MQTT client stopped")
 
 
-def _on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
-    """MQTT message received - delegate to MqttState via user_data"""
-    state: MqttState = userdata
-    state.on_message(client, userdata, msg)
+# Global client reference (for backward compatibility with publish_command)
+_async_client: AsyncMqttClient | None = None
 
 
-def create_client(state: MqttState) -> mqtt.Client:
-    """Create and configure MQTT client"""
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, userdata=state)
-    client.on_connect = _on_connect
-    client.on_message = _on_message
-    client.reconnect_delay_set(min_delay=1, max_delay=60)
-
-    if config.MQTT_USERNAME:
-        client.username_pw_set(config.MQTT_USERNAME, config.MQTT_PASSWORD or None)
-        logger.debug("MQTT auth configured (username: %s)", config.MQTT_USERNAME)
-
-    if config.MQTT_TLS:
-        if config.MQTT_CA_CERT:
-            client.tls_set(ca_certs=config.MQTT_CA_CERT)
-        else:
-            client.tls_set()
-        client.tls_insecure(True)
-        logger.info("MQTT TLS enabled")
-
-    return client
+def create_client(state: MqttState) -> AsyncMqttClient:
+    """Create async MQTT client - backward compatible interface"""
+    global _async_client  # pylint: disable=global-statement
+    _async_client = AsyncMqttClient(state)
+    return _async_client
 
 
-def start_client(client: mqtt.Client) -> None:
-    """Start MQTT client connection"""
-    try:
-        client.connect(config.MQTT_HOST, config.MQTT_PORT, 60)
-        client.loop_start()
-        logger.info("MQTT client started, connecting to %s:%s", config.MQTT_HOST, config.MQTT_PORT)
-    except Exception as e:
-        logger.exception("MQTT connection failed: %s", e)
+async def start_client(client: AsyncMqttClient) -> None:
+    """Start async MQTT client - backward compatible interface"""
+    await client.start()
 
 
-def stop_client(client: mqtt.Client) -> None:
-    """Stop MQTT client"""
-    if client:
-        client.loop_stop()
-        client.disconnect()
+async def stop_client(client: AsyncMqttClient) -> None:
+    """Stop async MQTT client - backward compatible interface"""
+    await client.stop()
 
 
-def publish_command(client: mqtt.Client, action: str, payload: dict[str, Any]) -> None:
-    """Publish command to inverter-control"""
-    if client:
-        client.publish(f"inverter/cmd/{action}", json.dumps(payload) if payload else "", qos=0)
+async def publish_command(client: AsyncMqttClient, action: str, payload: dict[str, Any] | None = None) -> None:
+    """Publish command - backward compatible interface (now async)"""
+    await client.publish(action, payload)
