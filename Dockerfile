@@ -16,7 +16,7 @@ COPY pyproject.toml uv.lock VERSION ./
 COPY src ./src
 
 # Install production dependencies + package into isolated venv
-RUN uv sync --frozen --no-dev --no-editable --no-build --python python
+RUN uv sync --frozen --no-dev --no-editable --python python
 
 
 # =============================================================================
