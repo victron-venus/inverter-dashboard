@@ -8,13 +8,17 @@ FROM python@sha256:26730869004e2b9c4b9ad09cab8625e81d256d1ce97e72df5520e806b1709
 WORKDIR /app
 
 # Install uv for fast, reproducible dependency resolution
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv@sha256:ba4857bf2a068e9bc0e64eed8563b065908a4cd6bfb66b531a9c424c8e25e142 /uv /usr/local/bin/uv
 
 # Install build dependencies only (removed at runtime)
 RUN apk add --no-cache gcc musl-dev libffi-dev
 
-# Copy full project (needed for package installation with pyproject.toml)
-COPY . .
+# Copy only what's needed for package installation with pyproject.toml
+COPY pyproject.toml uv.lock VERSION ./
+COPY src ./src
+
+# Copy .git checkout so the runtime stage can support opt-in self-update
+COPY .git ./.git
 
 # Install production dependencies + package into isolated venv
 RUN uv sync --frozen --no-dev --no-editable --python python
@@ -27,8 +31,8 @@ FROM python@sha256:26730869004e2b9c4b9ad09cab8625e81d256d1ce97e72df5520e806b1709
 
 WORKDIR /app
 
-# Runtime-only dependencies: bash for entrypoint, tini for signal handling
-RUN apk add --no-cache bash tini
+# Runtime-only dependencies: bash for entrypoint, git for opt-in self-update, tini for signal handling
+RUN apk add --no-cache bash git tini
 
 # Create non-root user
 RUN addgroup -g 1000 app && adduser -D -u 1000 -G app app
@@ -39,6 +43,9 @@ COPY --from=builder /app/.venv /app/.venv
 # Copy app source (excluding tests, configs, etc.)
 COPY --from=builder /app/src /app/src
 COPY --from=builder /app/VERSION /app/VERSION
+
+# Copy .git checkout so the opt-in SELF_UPDATE_ENABLED path in entrypoint.sh can fetch/reset
+COPY --from=builder /app/.git /app/.git
 
 # Config and entrypoint
 COPY local_config.example.py entrypoint.sh ./
