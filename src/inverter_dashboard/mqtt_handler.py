@@ -193,10 +193,8 @@ class AsyncMqttClient:
         # Cancel message loop task
         for task in self._tasks:
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
 
         self._tasks.clear()
 
