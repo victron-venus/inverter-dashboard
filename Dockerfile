@@ -17,11 +17,8 @@ RUN apk add --no-cache gcc libffi-dev musl-dev
 COPY pyproject.toml uv.lock VERSION ./
 COPY src ./src
 
-# Copy .git checkout so the runtime stage can support opt-in self-update
-COPY .git ./.git
-
 # Install production dependencies + package into isolated venv
-RUN uv sync --frozen --no-dev --no-editable --no-build --python python
+RUN uv sync --frozen --no-dev --no-editable --python python
 
 
 # =============================================================================
@@ -43,8 +40,9 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 COPY --from=builder /app/VERSION /app/VERSION
 
-# Copy .git checkout so the opt-in SELF_UPDATE_ENABLED path in entrypoint.sh can fetch/reset
-COPY --from=builder /app/.git /app/.git
+# Copy .git checkout directly (avoids duplicating it in the builder stage) so the
+# opt-in SELF_UPDATE_ENABLED path in entrypoint.sh can fetch/reset
+COPY .git ./.git
 
 # Config and entrypoint
 COPY local_config.example.py entrypoint.sh ./
