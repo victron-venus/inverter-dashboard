@@ -60,7 +60,7 @@ async def lifespan(_app: FastAPI):
     ha_client.load_config()
     _mqtt["state"] = mqtt_handler.MqttState()
     _mqtt["client"] = mqtt_handler.create_client(_mqtt["state"])
-    _mqtt["state"].set_state_callback(websocket_handler.broadcast_state, asyncio.get_running_loop())
+    _mqtt["state"].set_state_callback(websocket_handler.broadcast_state)
     websocket_handler.set_mqtt_state(_mqtt["state"])
     await mqtt_handler.start_client(_mqtt["client"])
     ha_task = None

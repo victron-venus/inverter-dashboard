@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from typing import Any, Callable
-from aiomqtt import Client, MqttError
+from aiomqtt import Client, MqttError, TLSParameters
 
 from . import config
 
@@ -20,20 +20,18 @@ class MqttState:
         self.current_state: dict[str, Any] = {}
         self.console_lines: list[str] = []
         self._on_state_update: Callable | None = None
-        self._main_loop: asyncio.AbstractEventLoop | None = None
 
-    def set_state_callback(self, callback: Callable, loop: asyncio.AbstractEventLoop) -> None:
+    def set_state_callback(self, callback: Callable) -> None:
         """Set callback to be called when state updates"""
         self._on_state_update = callback
-        self._main_loop = loop
 
-    def on_message(self, topic: str, payload: bytes) -> None:
+    async def on_message(self, topic: str, payload: bytes) -> None:
         """Process incoming MQTT message"""
         try:
             if topic == "inverter/state":
                 self.current_state = json.loads(payload.decode())
-                if self._on_state_update and self._main_loop and self._main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(self._on_state_update(), self._main_loop)
+                if self._on_state_update:
+                    await self._on_state_update()
 
             elif topic == "inverter/console":
                 line = payload.decode()
@@ -87,16 +85,20 @@ class AsyncMqttClient:
 
         logger.info("Connecting to MQTT broker at %s:%s", self.host, self.port)
 
+        tls_params = None
+        if self.tls:
+            tls_params = TLSParameters(ca_certs=self.ca_cert) if self.ca_cert else TLSParameters()
+
         self._client = Client(
             hostname=self.host,
             port=self.port,
             username=self.username,
             password=self.password,
-            tls_params=({"ca_certs": self.ca_cert} if self.tls and self.ca_cert else {}) if self.tls else None,
+            tls_params=tls_params,
             tls_insecure=self.tls and not self.ca_cert,
         )
 
-        await self._client
+        await self._client.__aenter__()
         logger.info("Connected to MQTT broker")
 
         # Subscribe to topics
@@ -123,7 +125,7 @@ class AsyncMqttClient:
             return
         try:
             async for message in self._client.messages:
-                self.state.on_message(message.topic.value, message.payload)
+                await self.state.on_message(message.topic.value, message.payload)
         except MqttError as e:
             logger.error("MQTT message loop error: %s", e)
             if self._running:
@@ -140,6 +142,9 @@ class AsyncMqttClient:
         delay = 1
         max_delay = 60
 
+        # Drop the dead client so connect() actually reconnects
+        self._client = None
+
         while self._running:
             logger.info("Attempting to reconnect in %ds...", delay)
             await asyncio.sleep(delay)
@@ -147,9 +152,12 @@ class AsyncMqttClient:
             try:
                 await self.connect()
                 logger.info("Reconnected to MQTT broker")
+                # Resume processing messages on the new connection
+                self._tasks.append(asyncio.create_task(self._message_loop()))
                 return
             except MqttError as e:
                 logger.warning("Reconnection failed: %s", e)
+                self._client = None
                 delay = min(delay * 2, max_delay)
 
     async def publish(self, action: str, payload: dict[str, Any] | None = None) -> None:
@@ -184,7 +192,7 @@ class AsyncMqttClient:
         # Close client
         if self._client:
             try:
-                await self._client
+                await self._client.__aexit__(None, None, None)
             except Exception as e:  # pylint: disable=broad-except
                 logger.exception("Error closing MQTT client: %s", e)
             self._client = None
