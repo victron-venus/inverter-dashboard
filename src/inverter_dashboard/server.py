@@ -60,9 +60,9 @@ async def lifespan(_app: FastAPI):
     ha_client.load_config()
     _mqtt["state"] = mqtt_handler.MqttState()
     _mqtt["client"] = mqtt_handler.create_client(_mqtt["state"])
-    _mqtt["state"].set_state_callback(websocket_handler.broadcast_state, asyncio.get_running_loop())
+    _mqtt["state"].set_state_callback(websocket_handler.broadcast_state)
     websocket_handler.set_mqtt_state(_mqtt["state"])
-    mqtt_handler.start_client(_mqtt["client"])
+    await mqtt_handler.start_client(_mqtt["client"])
     ha_task = None
     if ha_client.is_direct_mode():
         ha_task = asyncio.create_task(ha_client.ha_poll_loop())
@@ -86,7 +86,7 @@ async def lifespan(_app: FastAPI):
             # Expected: we just cancelled ha_task ourselves above.
             if not ha_task.cancelled():
                 raise
-    mqtt_handler.stop_client(_mqtt["client"])
+    await mqtt_handler.stop_client(_mqtt["client"])
 
 
 app = FastAPI(title="Inverter Dashboard", lifespan=lifespan)

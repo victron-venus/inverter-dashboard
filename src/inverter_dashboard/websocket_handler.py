@@ -141,15 +141,15 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client):
                 ha_client.replace_overlay(fresh)
             await broadcast_state()
             return
-        mqtt_handler.publish_command(mqtt_client, "toggle", {"entity": entity})
+        await mqtt_handler.publish_command(mqtt_client, "toggle", {"entity": entity})
     elif action == "press":
-        mqtt_handler.publish_command(mqtt_client, "press", {"entity": data.get("entity")})
+        await mqtt_handler.publish_command(mqtt_client, "press", {"entity": data.get("entity")})
     elif action == "setpoint":
-        mqtt_handler.publish_command(mqtt_client, "setpoint", {"value": data.get("value")})
+        await mqtt_handler.publish_command(mqtt_client, "setpoint", {"value": data.get("value")})
     elif action == "dry_run":
-        mqtt_handler.publish_command(mqtt_client, "dry_run", {})
+        await mqtt_handler.publish_command(mqtt_client, "dry_run", {})
     elif action == "limits":
-        mqtt_handler.publish_command(
+        await mqtt_handler.publish_command(
             mqtt_client,
             "limits",
             {
@@ -158,9 +158,9 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client):
             },
         )
     elif action == "ess_mode":
-        mqtt_handler.publish_command(mqtt_client, "ess_mode", {})
+        await mqtt_handler.publish_command(mqtt_client, "ess_mode", {})
     elif action == "loop_interval":
-        mqtt_handler.publish_command(
+        await mqtt_handler.publish_command(
             mqtt_client,
             "loop_interval",
             {"interval": data.get("interval", DEFAULT_LOOP_INTERVAL)},
