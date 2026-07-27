@@ -11,6 +11,11 @@ WORKDIR /app
 # Install uv for fast, reproducible dependency resolution
 COPY --from=ghcr.io/astral-sh/uv@sha256:ba4857bf2a068e9bc0e64eed8563b065908a4cd6bfb66b531a9c424c8e25e142 /uv /usr/local/bin/uv
 
+# Install build dependencies only (removed at runtime). Required because not
+# all dependencies ship prebuilt cp314 musllinux wheels, so some must be
+# compiled from source during uv sync.
+RUN apk add --no-cache gcc libffi-dev musl-dev
+
 # Copy only what's needed for package installation with pyproject.toml
 COPY pyproject.toml uv.lock VERSION ./
 COPY src ./src
