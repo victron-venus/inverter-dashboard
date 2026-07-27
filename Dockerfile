@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # =============================================================================
 # Multi-stage build for ultra-slim inverter-dashboard image (~40MB target)
 # =============================================================================
@@ -28,9 +29,16 @@ FROM python@sha256:26730869004e2b9c4b9ad09cab8625e81d256d1ce97e72df5520e806b1709
 
 WORKDIR /app
 
-# Runtime-only dependencies: bash for entrypoint, git for opt-in self-update, tini for signal handling
+# Build arg to opt into bundling .git for the SELF_UPDATE_ENABLED entrypoint path.
+# Disabled by default so the default image stays close to the ~40MB target and
+# doesn't ship full commit history/metadata.
+ARG INCLUDE_GIT_FOR_SELF_UPDATE=false
+
+# Runtime-only dependencies: bash for entrypoint, tini for signal handling.
+# git is only installed when self-update support is explicitly requested.
 # Create non-root user in the same layer to keep RUN instructions consolidated
-RUN apk add --no-cache bash git tini && \
+RUN apk add --no-cache bash tini && \
+    if [ "$INCLUDE_GIT_FOR_SELF_UPDATE" = "true" ]; then apk add --no-cache git; fi && \
     addgroup -g 1000 app && adduser -D -u 1000 -G app app
 
 # Copy virtual environment from builder
@@ -40,9 +48,13 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 COPY --from=builder /app/VERSION /app/VERSION
 
-# Copy .git checkout directly (avoids duplicating it in the builder stage) so the
-# opt-in SELF_UPDATE_ENABLED path in entrypoint.sh can fetch/reset
-COPY .git ./.git
+# Bind-mount (not COPY) the .git checkout so it never lands in an image layer
+# unless self-update support is explicitly requested. This keeps the default
+# image close to the ~40MB target and avoids shipping full git history/metadata.
+RUN --mount=type=bind,source=.git,target=/tmp/git-src \
+    if [ "$INCLUDE_GIT_FOR_SELF_UPDATE" = "true" ]; then \
+        cp -a /tmp/git-src /app/.git; \
+    fi
 
 # Config and entrypoint
 COPY local_config.example.py entrypoint.sh ./
