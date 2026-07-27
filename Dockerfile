@@ -11,7 +11,7 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv@sha256:ba4857bf2a068e9bc0e64eed8563b065908a4cd6bfb66b531a9c424c8e25e142 /uv /usr/local/bin/uv
 
 # Install build dependencies only (removed at runtime)
-RUN apk add --no-cache gcc musl-dev libffi-dev
+RUN apk add --no-cache gcc libffi-dev musl-dev
 
 # Copy only what's needed for package installation with pyproject.toml
 COPY pyproject.toml uv.lock VERSION ./
@@ -21,7 +21,7 @@ COPY src ./src
 COPY .git ./.git
 
 # Install production dependencies + package into isolated venv
-RUN uv sync --frozen --no-dev --no-editable --python python
+RUN uv sync --frozen --no-dev --no-editable --no-build --python python
 
 
 # =============================================================================
@@ -32,10 +32,9 @@ FROM python@sha256:26730869004e2b9c4b9ad09cab8625e81d256d1ce97e72df5520e806b1709
 WORKDIR /app
 
 # Runtime-only dependencies: bash for entrypoint, git for opt-in self-update, tini for signal handling
-RUN apk add --no-cache bash git tini
-
-# Create non-root user
-RUN addgroup -g 1000 app && adduser -D -u 1000 -G app app
+# Create non-root user in the same layer to keep RUN instructions consolidated
+RUN apk add --no-cache bash git tini && \
+    addgroup -g 1000 app && adduser -D -u 1000 -G app app
 
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
