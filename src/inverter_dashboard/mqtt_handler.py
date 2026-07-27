@@ -86,8 +86,13 @@ class AsyncMqttClient:
         logger.info("Connecting to MQTT broker at %s:%s", self.host, self.port)
 
         tls_params = None
+        tls_insecure = False
         if self.tls:
-            tls_params = TLSParameters(ca_certs=self.ca_cert) if self.ca_cert else TLSParameters()
+            if self.ca_cert:
+                tls_params = TLSParameters(ca_certs=self.ca_cert)
+            else:
+                tls_params = TLSParameters()
+                tls_insecure = True
 
         self._client = Client(
             hostname=self.host,
@@ -95,7 +100,7 @@ class AsyncMqttClient:
             username=self.username,
             password=self.password,
             tls_params=tls_params,
-            tls_insecure=self.tls and not self.ca_cert,
+            tls_insecure=tls_insecure,
         )
 
         await self._client.__aenter__()
@@ -127,7 +132,7 @@ class AsyncMqttClient:
             async for message in self._client.messages:
                 await self.state.on_message(message.topic.value, message.payload)
         except MqttError as e:
-            logger.error("MQTT message loop error: %s", e)
+            logger.exception("MQTT message loop error: %s", e)
             if self._running:
                 await self._reconnect()
         except Exception as e:  # pylint: disable=broad-except
@@ -143,6 +148,11 @@ class AsyncMqttClient:
         max_delay = 60
 
         # Drop the dead client so connect() actually reconnects
+        if self._client is not None:
+            try:
+                await self._client.__aexit__(None, None, None)
+            except Exception:  # pylint: disable=broad-except
+                pass
         self._client = None
 
         while self._running:
@@ -153,6 +163,7 @@ class AsyncMqttClient:
                 await self.connect()
                 logger.info("Reconnected to MQTT broker")
                 # Resume processing messages on the new connection
+                self._tasks = [task for task in self._tasks if not task.done()]
                 self._tasks.append(asyncio.create_task(self._message_loop()))
                 return
             except MqttError as e:
@@ -173,7 +184,7 @@ class AsyncMqttClient:
             await self._client.publish(topic, message, qos=0)
             logger.debug("Published command to %s", topic)
         except MqttError as e:
-            logger.error("Failed to publish to %s: %s", topic, e)
+            logger.exception("Failed to publish to %s: %s", topic, e)
 
     async def stop(self) -> None:
         """Stop the client and cleanup"""
@@ -193,9 +204,12 @@ class AsyncMqttClient:
         if self._client:
             try:
                 await self._client.__aexit__(None, None, None)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:  # pylint: disable=broad-except
                 logger.exception("Error closing MQTT client: %s", e)
-            self._client = None
+            finally:
+                self._client = None
 
         logger.info("MQTT client stopped")
 
