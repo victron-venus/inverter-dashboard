@@ -25,8 +25,8 @@ python3 -m venv "${BUILD_ROOT}/venv"
 # shellcheck source=/dev/null
 source "${BUILD_ROOT}/venv/bin/activate"
 
-pip install --quiet pyinstaller==${PYINSTALLER_VERSION}
-pip install --quiet -r "${SCRIPT_DIR}/requirements.txt"
+pip install --quiet --only-binary :all: pyinstaller==${PYINSTALLER_VERSION}
+pip install --quiet --only-binary :all: -r "${SCRIPT_DIR}/requirements.txt"
 
 cd "${SCRIPT_DIR}"
 

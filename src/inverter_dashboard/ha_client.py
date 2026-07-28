@@ -1,11 +1,11 @@
 """
 Optional Home Assistant REST client for inverter-dashboard.
 
-Reads site_config.py when present; if HA_DIRECT_CONTROLS is False or file missing,
+Reads local_config.py when present; if HA_DIRECT_CONTROLS is False or file missing,
 all UI state for switches comes from MQTT (inverter-control) only.
 
 When HA_DIRECT_CONTROLS is True and HA is configured, boolean/switch/water state for
-entities listed in site_config comes only from HA REST polling — MQTT is not used as
+entities listed in local_config comes only from HA REST polling — MQTT is not used as
 fallback when HA is unreachable (values show off until HA responds again).
 """
 
@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -31,16 +31,16 @@ _token = ""
 _direct = False
 _poll_interval = 12.0
 
-_boolean_entities: Dict[str, str] = {}
-_switch_entities: Dict[str, str] = {}
+_boolean_entities: dict[str, str] = {}
+_switch_entities: dict[str, str] = {}
 _water_valve = ""
 _water_pump = ""
-_switch_labels: Dict[str, str] = {}
+_switch_labels: dict[str, str] = {}
 # Dashboard keys -> HA entity IDs (washer/dishwasher telemetry omitted from MQTT when inverter-control uses MQTT_SLIM_STATE)
-_appliance_entities: Dict[str, str] = {}
+_appliance_entities: dict[str, str] = {}
 
 # Latest overlay merged into WebSocket payloads (replaced wholesale on each HA poll)
-_overlay: Dict[str, Any] = {
+_overlay: dict[str, Any] = {
     "booleans": {},
     "ha_direct_connected": False,
 }
@@ -49,11 +49,11 @@ _overlay: Dict[str, Any] = {
 _http_client: httpx.AsyncClient | None = None
 
 
-def _prepend_site_config_import_path() -> None:
-    """Load site_config from INVERTER_DASHBOARD_CONFIG (Docker mount) or app directory."""
-    # Walk up from package dir to repo root (where site_config.py lives in dev/Docker)
+def _prepend_local_config_import_path() -> None:
+    """Load local_config from INVERTER_DASHBOARD_CONFIG (Docker mount) or app directory."""
+    # Walk up from package dir to repo root (where local_config.py lives in dev/Docker)
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
-    repo_root = os.path.normpath(os.path.join(pkg_dir, '..', '..'))
+    repo_root = os.path.normpath(os.path.join(pkg_dir, "..", ".."))
 
     candidates = []
     env_dir = os.environ.get("INVERTER_DASHBOARD_CONFIG", "").strip()
@@ -64,41 +64,59 @@ def _prepend_site_config_import_path() -> None:
     for d in candidates:
         if not d:
             continue
-        path_py = os.path.join(d, "site_config.py")
+        path_py = os.path.join(d, "local_config.py")
         if os.path.isfile(path_py):
             if d not in sys.path:
                 sys.path.insert(0, d)
-            logger.info("Using site_config.py from %s", d)
+            logger.info("Using local_config.py from %s", d)
             return
 
 
-def _parse_ha_switch_entities(raw: Any) -> Tuple[Dict[str, str], Dict[str, str]]:
-    """Parse site_config.HA_SWITCH_ENTITIES: value may be entity_id str, (entity, label), or dict."""
-    entities: Dict[str, str] = {}
-    embedded_labels: Dict[str, str] = {}
+def _switch_entity_from_sequence(val: tuple | list) -> tuple[str | None, str | None]:
+    """Extract (entity, label) from a (entity, label)-style tuple/list value."""
+    entity = str(val[0]).strip() if len(val) >= 1 and val[0] else None
+    label = str(val[1]).strip() if len(val) >= 2 and val[1] else None
+    return entity, label
+
+
+def _switch_entity_from_dict(val: dict) -> tuple[str | None, str | None]:
+    """Extract (entity, label) from a dict-style value."""
+    eid = val.get("entity") or val.get("id") or val.get("entity_id")
+    lab = val.get("label") or val.get("short") or val.get("name")
+    entity = str(eid).strip() if eid else None
+    label = str(lab).strip() if lab else None
+    return entity, label
+
+
+def _switch_entity_from_value(val: Any) -> tuple[str | None, str | None]:
+    """Normalize a single HA_SWITCH_ENTITIES value to (entity, label)."""
+    if isinstance(val, str):
+        return val.strip(), None
+    if isinstance(val, (tuple, list)):
+        return _switch_entity_from_sequence(val)
+    if isinstance(val, dict):
+        return _switch_entity_from_dict(val)
+    return None, None
+
+
+def _parse_ha_switch_entities(raw: Any) -> tuple[dict[str, str], dict[str, str]]:
+    """Parse local_config.HA_SWITCH_ENTITIES: value may be entity_id str, (entity, label), or dict."""
+    entities: dict[str, str] = {}
+    embedded_labels: dict[str, str] = {}
     if not raw or not isinstance(raw, dict):
         return entities, embedded_labels
     for state_key, val in raw.items():
         if not state_key:
             continue
-        if isinstance(val, str):
-            entities[state_key] = val.strip()
-        elif isinstance(val, (tuple, list)):
-            if len(val) >= 1 and val[0]:
-                entities[state_key] = str(val[0]).strip()
-            if len(val) >= 2 and val[1]:
-                embedded_labels[state_key] = str(val[1]).strip()
-        elif isinstance(val, dict):
-            eid = val.get("entity") or val.get("id") or val.get("entity_id")
-            if eid:
-                entities[state_key] = str(eid).strip()
-            lab = val.get("label") or val.get("short") or val.get("name")
-            if lab:
-                embedded_labels[state_key] = str(lab).strip()
+        entity, label = _switch_entity_from_value(val)
+        if entity:
+            entities[state_key] = entity
+        if label:
+            embedded_labels[state_key] = label
     return entities, embedded_labels
 
 
-def _sensor_state_to_seconds(raw: Optional[str]) -> int:
+def _sensor_state_to_seconds(raw: str | None) -> int:
     """Parse HA sensor state to seconds for dashboard timers (matches inverter-control numeric / HH:MM:SS)."""
     if raw in (None, "unavailable", "unknown", "None", ""):
         return 0
@@ -119,13 +137,13 @@ def _sensor_state_to_seconds(raw: Optional[str]) -> int:
     return 0
 
 
-def _boolish(raw: Optional[str]) -> bool:
+def _boolish(raw: str | None) -> bool:
     if raw is None:
         return False
     return str(raw).lower() in ("on", "true", "yes", "1")
 
 
-def _appliance_field_value(state_key: str, entity_id: str, raw: Optional[str]) -> Any:
+def _appliance_field_value(state_key: str, entity_id: str, raw: str | None) -> Any:
     """Map HA state string to dashboard type (bool vs seconds)."""
     domain = entity_id.split(".")[0]
     if domain in ("binary_sensor", "switch", "light", "input_boolean"):
@@ -141,28 +159,28 @@ def _appliance_field_value(state_key: str, entity_id: str, raw: Optional[str]) -
 
 
 def _appliance_fallback(state_key: str) -> Any:
-    if state_key.endswith("_time") or state_key.endswith("_duration"):
+    if state_key.endswith(("_time", "_duration")):
         return 0
     return False
 
 
 def load_config():
-    """Import site_config if present (see site_config.example.py)."""
+    """Import local_config if present (see local_config.example.py)."""
     global _configured, _url, _token, _direct, _poll_interval
     global _boolean_entities, _switch_entities, _water_valve, _water_pump, _switch_labels
     global _appliance_entities
 
-    _prepend_site_config_import_path()
+    _prepend_local_config_import_path()
 
     try:
-        import site_config as sc  # type: ignore
+        import local_config as sc  # type: ignore
     except ImportError:
         _configured = False
         _boolean_entities = {}
         _switch_entities = {}
         _switch_labels = {}
         _appliance_entities = {}
-        logger.info("site_config.py not found — switch state from MQTT only")
+        logger.info("local_config.py not found — switch state from MQTT only")
         return
 
     _url = (getattr(sc, "HA_URL", "") or "").rstrip("/")
@@ -182,7 +200,9 @@ def load_config():
 
     _configured = bool(_url and _token and _token != "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN")
     if _direct and not _configured:
-        logger.warning("HA_DIRECT_CONTROLS enabled but HA_URL/HA_TOKEN not set — falling back to MQTT")
+        logger.warning(
+            "HA_DIRECT_CONTROLS enabled but HA_URL/HA_TOKEN not set — falling back to MQTT"
+        )
 
 
 def is_direct_mode() -> bool:
@@ -197,7 +217,7 @@ def _default_switch_label(state_key: str) -> str:
     return s.replace("_", " ").upper()
 
 
-def home_buttons_ui() -> List[Dict[str, Any]]:
+def home_buttons_ui() -> list[dict[str, Any]]:
     """Home card buttons: one row per HA_SWITCH_ENTITIES entry (order preserved)."""
     rows = []
     for state_key, entity_id in _switch_entities.items():
@@ -214,15 +234,15 @@ def home_buttons_ui() -> List[Dict[str, Any]]:
     return rows
 
 
-def ui_config_patch() -> Dict[str, Any]:
-    """Partial ui_config from site_config (merged into WebSocket payloads)."""
+def ui_config_patch() -> dict[str, Any]:
+    """Partial ui_config from local_config (merged into WebSocket payloads)."""
     if not _switch_entities:
         return {}
     return {"home_buttons": home_buttons_ui()}
 
 
 def is_toggle_allowed(entity_id: str) -> bool:
-    """Only entity IDs listed in site_config may be toggled from the dashboard."""
+    """Only entity IDs listed in local_config may be toggled from the dashboard."""
     if not entity_id or not _configured:
         return False
     allowed = set(_boolean_entities.values()) | set(_switch_entities.values())
@@ -233,7 +253,7 @@ def is_toggle_allowed(entity_id: str) -> bool:
     return entity_id in allowed
 
 
-def replace_overlay(data: Dict[str, Any]) -> None:
+def replace_overlay(data: dict[str, Any]) -> None:
     """Replace HA overlay (used after successful poll or toggle refresh)."""
     global _overlay
     _overlay = data
@@ -260,17 +280,13 @@ async def _ha_request(
     path: str,
     *,
     json_body: dict | None = None,
-    timeout: float | None = None,
 ) -> httpx.Response | None:
     """Single helper for all HA REST calls. Returns response or None on error."""
-    import asyncio
-
     if not _configured:
         return None
     client = _get_http_client()
-    timeout_val = timeout or HA_REQUEST_TIMEOUT
     try:
-        async with asyncio.timeout(timeout_val):
+        async with asyncio.timeout(HA_REQUEST_TIMEOUT):
             resp = await client.request(
                 method,
                 f"{_url}{path}",
@@ -278,12 +294,12 @@ async def _ha_request(
                 json=json_body,
             )
         return resp
-    except (httpx.HTTPError, asyncio.TimeoutError) as e:
+    except (httpx.HTTPError, TimeoutError) as e:
         logger.exception("HA request %s %s failed: %s", method, path, e)
         return None
 
 
-async def _get_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -> Optional[str]:
+async def _get_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -> str | None:
     """GET /api/states/{entity_id} → state string."""
     safe = quote(entity_id, safe="")
     try:
@@ -296,13 +312,13 @@ async def _get_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -
         return None
 
 
-async def fetch_states_once() -> Dict[str, Any]:
+async def fetch_states_once() -> dict[str, Any]:
     """Fetch all configured entities; returns overlay dict for merging into MQTT state."""
     if not is_direct_mode():
         return {}
 
     headers = _ha_headers()
-    out: Dict[str, Any] = {"booleans": {}}
+    out: dict[str, Any] = {"booleans": {}}
 
     try:
         async with httpx.AsyncClient(timeout=HA_POLL_TIMEOUT) as client:
@@ -335,7 +351,34 @@ async def fetch_states_once() -> Dict[str, Any]:
         return {"booleans": {}, "ha_direct_connected": False}
 
 
-def merge_overlay(base: Dict[str, Any]) -> Dict[str, Any]:
+def _apply_connected_overlay(merged: dict[str, Any], o: dict[str, Any]) -> None:
+    """Fill merged dashboard state from a live HA overlay."""
+    merged["booleans"] = dict(o.get("booleans") or {})
+    for k in _switch_entities:
+        merged[k] = bool(o.get(k))
+    if _water_valve:
+        merged["water_valve"] = bool(o.get("water_valve"))
+    if _water_pump:
+        merged["pump_switch"] = bool(o.get("pump_switch"))
+    for k in _appliance_entities:
+        if k in o:
+            merged[k] = o[k]
+
+
+def _apply_disconnected_overlay(merged: dict[str, Any]) -> None:
+    """Fill merged dashboard state with safe defaults when HA is unreachable."""
+    merged["booleans"] = dict.fromkeys(_boolean_entities, False)
+    for k in _switch_entities:
+        merged[k] = False
+    if _water_valve:
+        merged["water_valve"] = False
+    if _water_pump:
+        merged["pump_switch"] = False
+    for k in _appliance_entities:
+        merged[k] = _appliance_fallback(k)
+
+
+def merge_overlay(base: dict[str, Any]) -> dict[str, Any]:
     """Merge MQTT state with HA overlay; in direct mode HA-owned keys never fall back to MQTT."""
     merged = dict(base)
     merged.setdefault("booleans", {})
@@ -347,26 +390,9 @@ def merge_overlay(base: Dict[str, Any]) -> Dict[str, Any]:
     merged["ha_direct_connected"] = connected
 
     if connected:
-        merged["booleans"] = dict(o.get("booleans") or {})
-        for k in _switch_entities:
-            merged[k] = bool(o.get(k))
-        if _water_valve:
-            merged["water_valve"] = bool(o.get("water_valve"))
-        if _water_pump:
-            merged["pump_switch"] = bool(o.get("pump_switch"))
-        for k in _appliance_entities:
-            if k in o:
-                merged[k] = o[k]
+        _apply_connected_overlay(merged, o)
     else:
-        merged["booleans"] = {k: False for k in _boolean_entities}
-        for k in _switch_entities:
-            merged[k] = False
-        if _water_valve:
-            merged["water_valve"] = False
-        if _water_pump:
-            merged["pump_switch"] = False
-        for k in _appliance_entities:
-            merged[k] = _appliance_fallback(k)
+        _apply_disconnected_overlay(merged)
 
     return merged
 
@@ -392,7 +418,9 @@ async def call_turn(entity_id: str, turn_on: bool) -> bool:
     if domain not in ("input_boolean", "switch", "light"):
         return False
 
-    resp = await _ha_request("POST", f"/api/services/{domain}/{service}", json_body={"entity_id": entity_id})
+    resp = await _ha_request(
+        "POST", f"/api/services/{domain}/{service}", json_body={"entity_id": entity_id}
+    )
     return resp is not None and resp.status_code == 200
 
 
@@ -415,7 +443,7 @@ async def toggle_entity(entity_id: str) -> bool:
     return resp is not None and resp.status_code == 200
 
 
-def domain_for_press(entity_id: str) -> Optional[str]:
+def domain_for_press(entity_id: str) -> str | None:
     if entity_id.startswith("button."):
         return "button"
     return None
@@ -423,5 +451,7 @@ def domain_for_press(entity_id: str) -> Optional[str]:
 
 async def press_entity(entity_id: str) -> bool:
     """Fire button.press."""
-    resp = await _ha_request("POST", "/api/services/button/press", json_body={"entity_id": entity_id})
+    resp = await _ha_request(
+        "POST", "/api/services/button/press", json_body={"entity_id": entity_id}
+    )
     return resp is not None and resp.status_code == 200

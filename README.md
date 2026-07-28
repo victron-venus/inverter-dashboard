@@ -14,6 +14,8 @@
 
 Real-time web dashboard for monitoring Victron inverter systems via MQTT. Designed to work with [inverter-control](https://github.com/victron-venus/inverter-control) on Cerbo GX.
 
+> **Dashboard options:** For Cerbo GX deployments, [**inverter-dashboard-go**](https://github.com/victron-venus/inverter-dashboard-go) is the recommended primary (single binary, low footprint). **This repo** targets Docker/NAS installs (`alvit/inverter-dashboard`). For a native app, see [**inverter-desktop**](https://github.com/victron-venus/inverter-desktop).
+
 ![Inverter Dashboard](images/Screenshot.png)
 
 ## Architecture
@@ -40,6 +42,122 @@ flowchart LR
     WS -->|"push state"| UI
     UI --> BROWSER & MOBILE
 ```
+
+---
+
+## Home Assistant Integration: Local-First Architecture
+
+The dashboard uses a **local-first approach** for Home Assistant integrations — MQTT bridging, not direct cloud polling.
+
+### Why Not Direct HA REST Polling?
+
+Home Assistant runs in the cloud (outside the home network). Direct API polling creates critical problems:
+
+| Problem | Impact |
+|---|---|
+| **Internet dependency** | Dashboard fails when connectivity drops |
+| **Latency** | MQTT delivers state in ~100ms; HA API polling takes 12+ seconds per cycle |
+| **Rate limits** | HA cloud API has request limits; excessive polling triggers throttling |
+| **Cloud HA downtime** | Dashboard loses all switch/sensor visibility |
+| **Single point of failure** | Cloud HA becomes a hard dependency |
+
+### Our Approach: Local MQTT Bridging
+
+```
+Home Assistant (cloud)
+    │
+    ▼
+inverter-control (on Cerbo GX)
+    │  ← polls HA locally (when configured)
+    ▼
+MQTT (local broker)
+    │
+    ▼
+Dashboard ← receives all entity states via MQTT payload
+```
+
+**inverter-control** bridges entity states into MQTT `inverter/state` every 2–5 seconds. Dashboard receives everything from one source.
+
+### Two Modes of Operation
+
+#### Mode 1: MQTT-State (Default) — `HA_DIRECT_CONTROLS = False` ✓
+
+```python
+# ha_client.py — merge_overlay is no-op; HA state from MQTT only
+if not is_direct_mode():
+    return merged
+```
+
+- **No HTTP calls from dashboard to HA cloud**
+- Entity states arrive via MQTT `inverter/state` at ~2–5s intervals
+- Works when HA cloud is down or internet is out
+- **Recommended for all production deployments**
+
+#### Mode 2: Direct Polling — `HA_DIRECT_CONTROLS = True` (diagnostic only)
+
+```python
+# Dashboard polls HA REST API every 12 seconds
+async def fetch_states_once():
+    for key, eid in _boolean_entities.items():
+        st = await _get_state(client, headers, eid)
+        booleans[key] = st == "on"
+    out["ha_direct_connected"] = True
+```
+
+- If HA cloud is unreachable → all switches show "off" until reconnection
+- **Not recommended for production**
+
+### Key Benefits
+
+1. **Offline resilience**: MQTT state still flows when internet/HA cloud is down
+2. **Sub-second updates**: MQTT delivers entity states every cycle (~2–5s), far faster than 12s API polling
+3. **No vendor lock-in**: Dashboard works with MQTT broker alone
+4. **Fail-safe defaults**: Disconnected direct mode → all switches show `False`
+5. **Zero API rate limit risk**: No direct HA REST calls from dashboard
+
+### Configuration Reference
+
+In `local_config.py` (created via [`scripts/init-config.sh`](scripts/init-config.sh)):
+
+```python
+# Default: MQTT-only mode (recommended)
+HA_DIRECT_CONTROLS = False
+
+# Direct polling mode (diagnostic only — not recommended)
+HA_DIRECT_CONTROLS = True
+HA_URL = "https://homeassistant.local:8123"
+HA_TOKEN = "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN"
+
+# HA entity mappings (used by both modes)
+HA_BOOLEAN_ENTITIES = {
+    "only_charging": "input_boolean.only_charging",
+}
+HA_SWITCH_ENTITIES = {
+    "home_no_feed": "input_boolean.no_feed",
+    "home_house_support": "input_boolean.house_support",
+}
+```
+
+---
+
+## Release Channels & CI/CD
+
+This repository follows a multi-channel release strategy managed by GitHub Actions:
+
+- **Stable Releases**: Tagged as `vX.Y.Z` (e.g., `v1.0.0`). Publishes PyInstaller standalone executables for Linux, macOS, and Windows.
+- **Pre-releases**: Tagged as `vX.Y.Z-rc.N` or `vX.Y.Z-beta.N`. Automatically published as **Pre-release** on GitHub Releases to isolate testing releases.
+- **Nightly Builds**: Built daily at 02:00 UTC. Publishes PyInstaller binaries to the **[Nightly Build Release](https://github.com/victron-venus/inverter-dashboard/releases/tag/nightly)** and updates the Docker image tag `ghcr.io/victron-venus/inverter-dashboard:nightly`.
+
+---
+
+## Completed Features
+
+- ✅ **CI/CD Releases & Nightly Builds**: Docker `:nightly` build and PyInstaller binaries configured
+- ✅ **Async MQTT Migration**: Refactored `mqtt_handler.py` to use `aiomqtt` (asyncio wrapper for paho-mqtt) for non-blocking I/O in the FastAPI event loop
+- ✅ **Ultra-Slim Multi-Arch Docker Image**: Refactored `Dockerfile` using `uv` (fast Python package installer) and multi-stage builds to reduce image size to ~40MB (achieved 84MB from 149MB - further reduction needs distroless/scratch base)
+- ✅ **Static Vue Asset Mounting**: Added FastAPI StaticFiles mounting route for `inverter-dashboard-vue` compiled dist assets
+
+---
 
 ## Features
 
@@ -89,21 +207,21 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 | `MQTT_HOST` | `192.168.160.150` | MQTT broker hostname |
 | `MQTT_PORT` | `1883` | MQTT broker port |
 | `WEB_PORT` | `8080` | Web server port (inside the container) |
-| `INVERTER_DASHBOARD_CONFIG` | `/app/config` | Host folder mounted read-only: `site_config.py` and optional TLS files |
+| `INVERTER_DASHBOARD_CONFIG` | `/app/config` | Host folder mounted read-only: `local_config.py` and optional TLS files |
 
-### Secrets (`site_config.py`) + optional HTTPS
+### Secrets (`local_config.py`) + optional HTTPS
 
-Committed template only: [`site_config.example.py`](site_config.example.py). Your real file is **`site_config.py`** in the **repository root** (next to `server.py`) — **gitignored** (never push). There is no separate `config/` folder in the repo.
+Committed template only: [`local_config.example.py`](local_config.example.py). Your real file is **`local_config.py`** in the **repository root** (next to `server.py`) — **gitignored** (never push). There is no separate `config/` folder in the repo.
 
-If Cerbo **inverter-control** uses **`MQTT_SLIM_STATE`** (slim `inverter/state`), dishwasher/washer/dryer fields are omitted from MQTT — add **`HA_APPLIANCE_ENTITIES`** in **`site_config.py`** so the dashboard polls those sensors from Home Assistant (same keys as full MQTT state).
+If Cerbo **inverter-control** uses **`MQTT_SLIM_STATE`** (slim `inverter/state`), dishwasher/washer/dryer fields are omitted from MQTT — add **`HA_APPLIANCE_ENTITIES`** in **`local_config.py`** so the dashboard polls those sensors from Home Assistant (same keys as full MQTT state).
 
 **Synology NAS (deploy path used in this repo):**
 
 | Location | Purpose |
 |---------|---------|
-| `/volume1/docker/inverter-dashboard/config` | **On the NAS host only:** a folder that is **bind-mounted** read-only into the container as **`/app/config`**. Put **`site_config.py`** here together with optional **`dashboard.crt`** / **`dashboard.key`**. The folder name on disk is convention (matches [`docker-compose.yml`](docker-compose.yml) / [`portainer-stack.yml`](portainer-stack.yml)); it is **not** a `config/` directory inside the Git clone. |
+| `/volume1/docker/inverter-dashboard/config` | **On the NAS host only:** a folder that is **bind-mounted** read-only into the container as **`/app/config`**. Put **`local_config.py`** here together with optional **`dashboard.crt`** / **`dashboard.key`**. The folder name on disk is convention (matches [`docker-compose.yml`](docker-compose.yml) / [`portainer-stack.yml`](portainer-stack.yml)); it is **not** a `config/` directory inside the Git clone. |
 
-- **After clone (any machine):** `./scripts/init-config.sh` creates **`./site_config.py`** from the example; fill in **`HA_TOKEN`** / **`HA_URL`** (typically the same long-lived token as inverter-control **`secrets.py`**).
+- **After clone (any machine):** `./scripts/init-config.sh` creates **`./local_config.py`** from the example; fill in **`HA_TOKEN`** / **`HA_URL`** (typically the same long-lived token as inverter-control **`secrets.py`**).
 - **`postinstall.sh`** (in repo root): run **on your Mac/PC** (not on the NAS). Put **`Host synology`** (user, hostname, keys) in **`~/.ssh/config`**, then simply **`./postinstall.sh`** — it runs **`ssh synology`** by default (override with **`SYNOLOGY_SSH`** only if you use another alias).
 
   Expects **passwordless `sudo`** on the NAS for **`docker` / `docker compose`** and for writing under **`/volume1/docker/...`**. Files are pushed with **`ssh` + stdin** (not `scp`), so it still works if Synology has disabled the SFTP/SCP subsystem. Then **`sudo install`** from a temp dir. Env: **`SYNOLOGY_SSH`**, **`REMOTE_BASE`**, **`SOURCE_CONFIG`** (defaults to **repo root** next to **`postinstall.sh`**), **`STACK_FILE`**, **`DOCKER`** (default **`sudo /usr/local/bin/docker`** — under **`sudo`** DSM often has no **`docker`** in **`PATH`**). On **macOS**, if **`dashboard.crt`** exists next to **`postinstall.sh`** or under **`.certs/`**, the script imports it as trusted when missing: tries **System** keychain (`System.keychain-db` / `System.keychain`), then **login** keychain if needed (**`SKIP_MAC_TRUST=1`** to skip).
@@ -127,7 +245,7 @@ By default the app and the published Docker image listen on **plain HTTP** (port
 
 2. **TLS inside the Python app** (good for quick tests / single host)
 
-   **Docker (recommended layout):** mount your host config folder to **`/app/config`**, put **`dashboard.crt`** and **`dashboard.key`** next to **`site_config.py`**. The entrypoint detects both files and passes **`--ssl-cert`** / **`--ssl-key`** automatically on the **same** port as without TLS (default 8080). Map ports e.g. `"8443:8080"` if you want HTTPS on 8443 externally.
+   **Docker (recommended layout):** mount your host config folder to **`/app/config`**, put **`dashboard.crt`** and **`dashboard.key`** next to **`local_config.py`**. The entrypoint detects both files and passes **`--ssl-cert`** / **`--ssl-key`** automatically on the **same** port as without TLS (default 8080). Map ports e.g. `"8443:8080"` if you want HTTPS on 8443 externally.
 
    Generate certs (repo includes a helper):
 
@@ -154,7 +272,7 @@ By default the app and the published Docker image listen on **plain HTTP** (port
      - /volume1/docker/inverter-dashboard/config:/app/config:ro
    ```
 
-   On a dev PC without `/volume1`, comment out this volume or bind a local folder (e.g. repo root or any directory that contains **`site_config.py`** and optional TLS files) to **`/app/config`** instead.
+   On a dev PC without `/volume1`, comment out this volume or bind a local folder (e.g. repo root or any directory that contains **`local_config.py`** and optional TLS files) to **`/app/config`** instead.
 
    If you omit **`dashboard.crt`** / **`dashboard.key`** on the host, the app stays on HTTP.
 
@@ -227,7 +345,7 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Optional: ./site_config.py for Home Assistant direct mode (gitignored)
+# Optional: ./local_config.py for Home Assistant direct mode (gitignored)
 ./scripts/init-config.sh
 
 # Run
@@ -265,7 +383,7 @@ This project is part of the Victron Venus OS integration suite:
 | [dbus-tasmota-pv](https://github.com/victron-venus/dbus-tasmota-pv) | Tasmota smart plug integration as a PV inverter on D-Bus |
 | [esphome-jbd-bms-mqtt](https://github.com/victron-venus/esphome-jbd-bms-mqtt) | ESP32 Bluetooth monitor for JBD BMS batteries |
 | [inverter-monitoring](https://github.com/victron-venus/inverter-monitoring) | TIG (Telegraf, InfluxDB, Grafana) monitoring stack |
-| [terraform-github-victron](https://github.com/4alvit/terraform-github-victron) | Infrastructure as Code for the GitHub organization |
+| [terraform-github](https://github.com/4alvit/terraform-github) | Infrastructure as Code for the GitHub organization |
 
 ## Author
 

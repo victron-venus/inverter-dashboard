@@ -1,10 +1,10 @@
 """Tests for config module."""
 
 
-
 class TestConfig:
     def test_defaults(self):
         from inverter_dashboard import config
+
         assert config.MQTT_PORT == 1883
         assert config.WEB_PORT == 8080
         assert config.SELF_UPDATE_ENABLED is False
@@ -15,10 +15,12 @@ class TestConfig:
 
     def test_dashboard_secret_default_empty(self):
         from inverter_dashboard import config
+
         # Default should be empty (unset)
         assert config.DASHBOARD_SECRET == "" or isinstance(config.DASHBOARD_SECRET, str)
 
     def test_github_raw_url(self):
         from inverter_dashboard import config
+
         assert "raw.githubusercontent.com" in config.GITHUB_RAW_URL
         assert config.GITHUB_REPO in config.GITHUB_RAW_URL

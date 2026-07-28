@@ -30,12 +30,15 @@ Thumbs.db
 # Logs
 *.log
 
-commit.sh
-commit.txt
-release.txt
+commit.*
+release.*
 logs
+bandit-results.sarif
+bandit-results.json
 
 # Package build
 *.egg-info/
 dist/
 build/
+
+.scannerwork

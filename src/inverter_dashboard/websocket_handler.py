@@ -4,7 +4,7 @@ WebSocket handler for real-time dashboard updates
 
 import json
 import logging
-from typing import Set, Dict, Any
+from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -16,31 +16,89 @@ from .config import DEFAULT_POWER_MIN, DEFAULT_POWER_MAX, DEFAULT_LOOP_INTERVAL,
 logger = logging.getLogger(__name__)
 
 # Connected WebSocket clients
-ws_clients: Set[WebSocket] = set()
+ws_clients: set[WebSocket] = set()
 
-# Latest version (cached)
-latest_version: str | None = None
+# Keys from inverter/state that are safe to forward to WebSocket clients.
+# Defense-in-depth: prevents accidental inclusion of sensitive fields.
+_STATE_ALLOWLIST: set[str] = {
+    "gt",
+    "g1",
+    "g2",
+    "tt",
+    "t1",
+    "t2",
+    "solar_total",
+    "mppt_total",
+    "tasmota_total",
+    "battery_soc",
+    "battery_power",
+    "battery_voltage",
+    "battery_current",
+    "setpoint",
+    "inverter_state",
+    "version",
+    "dashboard_version",
+    "latest_version",
+    "uptime",
+    "ha_connected",
+    "ha_direct_connected",
+    "dry_run",
+    "ess_mode",
+    "booleans",
+    "features",
+    "mppt_individual",
+    "tasmota_individual",
+    "mppt_chargers",
+    "batteries",
+    "loads",
+    "ui_config",
+    "daily_stats",
+    "ev_charging_kw",
+    "ev_power",
+    "car_soc",
+    "water_level",
+    "water_valve",
+    "pump_switch",
+    "dishwasher_running",
+    "dishwasher_duration",
+    "washer_time",
+    "washer_power",
+    "dryer_time",
+    "dryer_power",
+    "console",
+}
+
+# Mutable module-level state (avoids global statements)
+_state: dict[str, Any] = {"latest_version": None, "mqtt_state": None}
 
 
-def set_latest_version(version: str | None):
+def set_latest_version(version: str | None) -> None:
     """Update cached latest version"""
-    global latest_version
-    latest_version = version
+    _state["latest_version"] = version
 
 
-def build_payload() -> Dict[str, Any]:
+def set_mqtt_state(mqtt_state):
+    """Set the MqttState reference for state reads."""
+    _state["mqtt_state"] = mqtt_state
+
+
+def build_payload() -> dict[str, Any]:
     """Build the canonical state payload sent to all WebSocket clients."""
-    state = ha_client.merge_overlay(mqtt_handler.get_state())
-    return _with_ui_config({
-        **state,
-        'console': mqtt_handler.get_console()[-CONSOLE_SEND_LINES:],
-        'dashboard_version': VERSION,
-        'latest_version': latest_version,
-    })
+    mqtt = _state["mqtt_state"]
+    state = ha_client.merge_overlay(mqtt.get_state())
+    filtered = {k: v for k, v in state.items() if k in _STATE_ALLOWLIST}
+    return _with_ui_config(
+        {
+            **filtered,
+            "console": mqtt.get_console()[-CONSOLE_SEND_LINES:],
+            "dashboard_version": VERSION,
+            "latest_version": _state["latest_version"],
+        }
+    )
 
 
-def _with_ui_config(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge site_config-derived ui_config (e.g. home_buttons) into payload."""
+def _with_ui_config(payload: dict[str, Any]) -> dict[str, Any]:
+    """Merge local_config-derived ui_config (e.g. home_buttons) into payload."""
     patch = ha_client.ui_config_patch()
     if not patch:
         return payload
@@ -72,6 +130,43 @@ async def broadcast_state():
         ws_clients.discard(ws)
 
 
+async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client):
+    """Dispatch a single WebSocket action."""
+    if action == "toggle":
+        entity = data.get("entity")
+        if entity and ha_client.is_direct_mode() and ha_client.is_toggle_allowed(entity):
+            await ha_client.toggle_entity(entity)
+            fresh = await ha_client.fetch_states_once()
+            if fresh.get("ha_direct_connected"):
+                ha_client.replace_overlay(fresh)
+            await broadcast_state()
+            return
+        await mqtt_handler.publish_command(mqtt_client, "toggle", {"entity": entity})
+    elif action == "press":
+        await mqtt_handler.publish_command(mqtt_client, "press", {"entity": data.get("entity")})
+    elif action == "setpoint":
+        await mqtt_handler.publish_command(mqtt_client, "setpoint", {"value": data.get("value")})
+    elif action == "dry_run":
+        await mqtt_handler.publish_command(mqtt_client, "dry_run", {})
+    elif action == "limits":
+        await mqtt_handler.publish_command(
+            mqtt_client,
+            "limits",
+            {
+                "min": data.get("min", DEFAULT_POWER_MIN),
+                "max": data.get("max", DEFAULT_POWER_MAX),
+            },
+        )
+    elif action == "ess_mode":
+        await mqtt_handler.publish_command(mqtt_client, "ess_mode", {})
+    elif action == "loop_interval":
+        await mqtt_handler.publish_command(
+            mqtt_client,
+            "loop_interval",
+            {"interval": data.get("interval", DEFAULT_LOOP_INTERVAL)},
+        )
+
+
 async def handle_websocket(websocket: WebSocket, mqtt_client):
     """Handle WebSocket connection"""
     await websocket.accept()
@@ -79,45 +174,13 @@ async def handle_websocket(websocket: WebSocket, mqtt_client):
     logger.info("WebSocket client connected (%d total)", len(ws_clients))
 
     try:
-        # Send initial state
         await websocket.send_json(build_payload())
 
-        # Handle incoming messages
         while True:
             data = await websocket.receive_json()
-            action = data.get('action')
-
-            if action == 'toggle':
-                entity = data.get('entity')
-                if (
-                    entity
-                    and ha_client.is_direct_mode()
-                    and ha_client.is_toggle_allowed(entity)
-                ):
-                    await ha_client.toggle_entity(entity)
-                    fresh = await ha_client.fetch_states_once()
-                    if fresh.get("ha_direct_connected"):
-                        ha_client.replace_overlay(fresh)
-                    await broadcast_state()
-                else:
-                    mqtt_handler.publish_command(mqtt_client, 'toggle', {'entity': entity})
-            elif action == 'press':
-                mqtt_handler.publish_command(mqtt_client, 'press', {'entity': data.get('entity')})
-            elif action == 'setpoint':
-                mqtt_handler.publish_command(mqtt_client, 'setpoint', {'value': data.get('value')})
-            elif action == 'dry_run':
-                mqtt_handler.publish_command(mqtt_client, 'dry_run', {})
-            elif action == 'limits':
-                mqtt_handler.publish_command(mqtt_client, 'limits', {
-                    'min': data.get('min', DEFAULT_POWER_MIN),
-                    'max': data.get('max', DEFAULT_POWER_MAX)
-                })
-            elif action == 'ess_mode':
-                mqtt_handler.publish_command(mqtt_client, 'ess_mode', {})
-            elif action == 'loop_interval':
-                mqtt_handler.publish_command(mqtt_client, 'loop_interval', {
-                    'interval': data.get('interval', DEFAULT_LOOP_INTERVAL)
-                })
+            action = data.get("action")
+            if action:
+                await _dispatch_action(action, data, mqtt_client)
 
     except WebSocketDisconnect:
         pass
