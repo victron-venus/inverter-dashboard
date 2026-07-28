@@ -40,7 +40,7 @@ ARG INCLUDE_GIT_FOR_SELF_UPDATE=false
 # libffi for compiled extensions (e.g. cffi/cryptography) linked at build time.
 # git is only installed when self-update support is explicitly requested.
 # Create non-root user in the same layer to keep RUN instructions consolidated
-RUN apk add --no-cache bash tini libffi && \
+RUN apk add --no-cache bash libffi tini && \
     if [ "$INCLUDE_GIT_FOR_SELF_UPDATE" = "true" ]; then apk add --no-cache git; fi && \
     addgroup -g 1000 app && adduser -D -u 1000 -G app app
 
