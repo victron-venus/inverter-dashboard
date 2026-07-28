@@ -28,8 +28,8 @@ flowchart LR
     end
 
     subgraph Dashboard["Web Dashboard"]
-        WS["WebSocket Server\n:8080"]
-        UI["Web UI\nHTML/CSS/JS"]
+        WS["WebSocket Server<br/>:8080"]
+        UI["Web UI<br/>HTML/CSS/JS"]
     end
 
     subgraph Clients["Clients"]

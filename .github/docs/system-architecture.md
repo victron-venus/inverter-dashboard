@@ -12,7 +12,7 @@ flowchart LR
     subgraph Dashboard["inverter-dashboard"]
         WS["WebSocket"]
         API["API Server"]
-        HA["Home Assistant\n(optional)"]
+        HA["Home Assistant<br/>(optional)"]
     end
 
     subgraph Client["Browser Clients"]
@@ -50,8 +50,8 @@ sequenceDiagram
 ```mermaid
 flowchart TB
     subgraph Sources["State Sources"]
-        MQTT["inverter/state\nfrom Cerbo"]
-        HA["HA sensors\nDirect poll"]
+        MQTT["inverter/state<br/>from Cerbo"]
+        HA["HA sensors<br/>Direct poll"]
     end
 
     subgraph Merge["State Merge"]
@@ -124,8 +124,8 @@ docker restart inverter-dashboard
 curl -s -H "Authorization: Bearer $HA_TOKEN" \
   $HA_URL/api/states/sensor.home_totalusage_1s | jq
 
-# Check local_config.py has correct entity IDs
-docker exec inverter-dashboard cat /app/config/local_config.py
+# Check site_config.py has correct entity IDs
+docker exec inverter-dashboard cat /app/config/site_config.py
 ```
 
 ---
