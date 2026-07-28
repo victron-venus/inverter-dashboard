@@ -150,6 +150,15 @@ This repository follows a multi-channel release strategy managed by GitHub Actio
 
 ---
 
+## Completed Features
+
+- ✅ **CI/CD Releases & Nightly Builds**: Docker `:nightly` build and PyInstaller binaries configured
+- ✅ **Async MQTT Migration**: Refactored `mqtt_handler.py` to use `aiomqtt` (asyncio wrapper for paho-mqtt) for non-blocking I/O in the FastAPI event loop
+- ✅ **Ultra-Slim Multi-Arch Docker Image**: Refactored `Dockerfile` using `uv` (fast Python package installer) and multi-stage builds to reduce image size to ~40MB (achieved 84MB from 149MB - further reduction needs distroless/scratch base)
+- ✅ **Static Vue Asset Mounting**: Added FastAPI StaticFiles mounting route for `inverter-dashboard-vue` compiled dist assets
+
+---
+
 ## Features
 
 - Real-time power monitoring (Grid, Solar, Battery, Consumption)
