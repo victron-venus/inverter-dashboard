@@ -12,7 +12,7 @@ flowchart LR
     subgraph Dashboard["inverter-dashboard"]
         WS["WebSocket"]
         API["API Server"]
-        HA["Home Assistant\n(optional)"]
+        HA["Home Assistant<br/>(optional)"]
     end
 
     subgraph Client["Browser Clients"]
@@ -50,8 +50,8 @@ sequenceDiagram
 ```mermaid
 flowchart TB
     subgraph Sources["State Sources"]
-        MQTT["inverter/state\nfrom Cerbo"]
-        HA["HA sensors\nDirect poll"]
+        MQTT["inverter/state<br/>from Cerbo"]
+        HA["HA sensors<br/>Direct poll"]
     end
 
     subgraph Merge["State Merge"]
