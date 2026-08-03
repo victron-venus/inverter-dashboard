@@ -2,7 +2,7 @@
 # Exact versions pinned (kept in sync with uv.lock) for reproducible PyInstaller builds.
 fastapi==0.140.7
 uvicorn==0.52.0
-websockets==16.1.1
+websockets==17.0.1
 paho-mqtt==2.1.0
 msgpack==1.2.1
 httpx==0.28.1
