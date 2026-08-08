@@ -161,20 +161,20 @@ def _start_version_check():
 
 async def _shutdown_tasks(ha_task):
     """Cancel and await all background tasks."""
+    cancelled = False
     if ha_task:
         ha_task.cancel()
         try:
             await ha_task
         except asyncio.CancelledError:
-            pass
+            cancelled = True
 
     for task in _app_state.mqtt_tasks:
         task.cancel()
     if _app_state.mqtt_tasks:
         await asyncio.gather(*_app_state.mqtt_tasks, return_exceptions=True)
 
-    # Re-raise if cancelled during task cleanup
-    if ha_task and ha_task.cancelled():
+    if cancelled:
         raise asyncio.CancelledError
 
 
