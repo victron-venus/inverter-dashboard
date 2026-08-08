@@ -4,23 +4,26 @@ Remote Web Dashboard for Inverter Control
 Connects to Cerbo GX via MQTT, serves dashboard via WebSocket
 """
 
-import os
 import asyncio
+import json
 import logging
 import argparse
+import os
 from pathlib import Path
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Callable, Any
 
 from fastapi import FastAPI, WebSocket, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
+from aiomqtt import Client, MqttError
+
 from . import config
 from .config import MQTT_HOST, MQTT_PORT, WEB_PORT, DASHBOARD_SECRET
 from .version import VERSION, check_latest_version, download_and_update, SelfUpdateDisabled
-from . import mqtt_handler
 from . import websocket_handler
 from . import ha_client
 
@@ -28,11 +31,55 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+class MqttState:
+    """Encapsulated MQTT state."""
+
+    def __init__(self) -> None:
+        self.current_state: dict[str, Any] = {}
+        self.console_lines: list[str] = []
+        self._on_state_update: Callable | None = None
+
+    def set_state_callback(self, callback: Callable) -> None:
+        """Set callback to be called when state updates"""
+        self._on_state_update = callback
+
+    async def on_message(self, topic: str, payload: bytes) -> None:
+        """Process incoming MQTT message"""
+        try:
+            if topic == "inverter/state":
+                self.current_state = json.loads(payload.decode())
+                if self._on_state_update:
+                    await self._on_state_update()
+
+            elif topic == "inverter/console":
+                line = payload.decode()
+                self.console_lines.append(line)
+                if len(self.console_lines) > config.CONSOLE_MAX_LINES:
+                    self.console_lines.pop(0)
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            logger.exception("MQTT message parse error: %s", e)
+        except Exception as e:
+            logger.exception("MQTT message error: %s", e)
+
+    def get_state(self) -> dict[str, Any]:
+        """Get current state"""
+        return self.current_state
+
+    def get_console(self) -> list[str]:
+        """Get console lines"""
+        return self.console_lines
+
+
 @dataclass
 class AppState:
     """Application state container."""
-    mqtt_state: mqtt_handler.MqttState | None = None
-    mqtt_client: mqtt_handler.AsyncMqttClient | None = None
+    mqtt_state: MqttState | None = None
+    mqtt_client: Client | None = None
+    mqtt_tasks: list[asyncio.Task] = None
+
+    def __post_init__(self):
+        if self.mqtt_tasks is None:
+            self.mqtt_tasks = []
 
 
 # Module-level app state
@@ -66,11 +113,39 @@ async def lifespan(_app: FastAPI):
 
     # Startup
     ha_client.load_config()
-    _app_state.mqtt_state = mqtt_handler.MqttState()
-    _app_state.mqtt_client = mqtt_handler.AsyncMqttClient(_app_state.mqtt_state)
+    _app_state.mqtt_state = MqttState()
+    _app_state.mqtt_client = Client(
+        hostname=config.MQTT_HOST,
+        port=config.MQTT_PORT,
+        username=config.MQTT_USERNAME,
+        password=config.MQTT_PASSWORD,
+        tls_params=None,
+        tls_insecure=False,
+    )
     _app_state.mqtt_state.set_state_callback(websocket_handler.broadcast_state)
     websocket_handler.set_mqtt_state(_app_state.mqtt_state)
-    await _app_state.mqtt_client.start()
+
+    # Start MQTT connection and message loop
+    async def mqtt_connect_and_loop():
+        await _app_state.mqtt_client.__aenter__()  # pylint: disable=unnecessary-dunder-call
+        logger.info("Connected to MQTT broker")
+        await _app_state.mqtt_client.subscribe("inverter/state")
+        await _app_state.mqtt_client.subscribe("inverter/console")
+        logger.info("Subscribed to MQTT topics")
+
+        try:
+            async for message in _app_state.mqtt_client.messages:
+                await _app_state.mqtt_state.on_message(message.topic.value, message.payload)
+        except MqttError:
+            logger.exception("MQTT message loop error")
+        except Exception as e:  # pylint: disable=broad-except
+            if isinstance(e, asyncio.CancelledError):
+                raise
+            logger.exception("Unexpected error in message loop: %s", e)
+
+    mqtt_task = asyncio.create_task(mqtt_connect_and_loop())
+    _app_state.mqtt_tasks.append(mqtt_task)
+
     ha_task = None
     if ha_client.is_direct_mode():
         ha_task = asyncio.create_task(ha_client.ha_poll_loop())
@@ -91,10 +166,22 @@ async def lifespan(_app: FastAPI):
         try:
             await ha_task
         except asyncio.CancelledError:
-            # Expected: we just cancelled ha_task ourselves above.
-            if not ha_task.cancelled():
-                raise
-    await _app_state.mqtt_client.stop()
+            pass
+
+    for task in _app_state.mqtt_tasks:
+        task.cancel()
+    if _app_state.mqtt_tasks:
+        await asyncio.gather(*_app_state.mqtt_tasks, return_exceptions=True)
+
+    if _app_state.mqtt_client:
+        try:
+            await _app_state.mqtt_client.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception("Error closing MQTT client: %s", e)
+        finally:
+            _app_state.mqtt_client = None
 
 
 app = FastAPI(title="Inverter Dashboard", lifespan=lifespan)

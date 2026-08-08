@@ -8,12 +8,30 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict
+from aiomqtt import Client
 
 from . import ha_client
 from .version import VERSION
 from .config import DEFAULT_POWER_MIN, DEFAULT_POWER_MAX, DEFAULT_LOOP_INTERVAL, CONSOLE_SEND_LINES
 
 logger = logging.getLogger(__name__)
+
+
+async def mqtt_publish(client: Client, action: str, payload: dict[str, Any] | None = None) -> None:
+    """Publish command to inverter-control using aiomqtt Client."""
+    if client is None:
+        logger.warning("Cannot publish: MQTT client not connected")
+        return
+
+    topic = f"inverter/cmd/{action}"
+    message = json.dumps(payload) if payload else ""
+
+    try:
+        await client.publish(topic, message, qos=0)
+        logger.debug("Published command to %s", topic)
+    except Exception as e:
+        logger.exception("Failed to publish to %s: %s", topic, e)
+
 
 # Connected WebSocket clients
 ws_clients: set[WebSocket] = set()
@@ -166,7 +184,7 @@ async def broadcast_state():
         ws_clients.discard(ws)
 
 
-async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client):
+async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Client):
     """Dispatch a single WebSocket action."""
     if action == "toggle":
         entity = data.get("entity")
@@ -177,15 +195,16 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client):
                 ha_client.replace_overlay(fresh)
             await broadcast_state()
             return
-        await mqtt_client.publish("toggle", {"entity": entity})
+        await mqtt_publish(mqtt_client, "toggle", {"entity": entity})
     elif action == "press":
-        await mqtt_client.publish("press", {"entity": data.get("entity")})
+        await mqtt_publish(mqtt_client, "press", {"entity": data.get("entity")})
     elif action == "setpoint":
-        await mqtt_client.publish("setpoint", {"value": data.get("value")})
+        await mqtt_publish(mqtt_client, "setpoint", {"value": data.get("value")})
     elif action == "dry_run":
-        await mqtt_client.publish("dry_run", {})
+        await mqtt_publish(mqtt_client, "dry_run", {})
     elif action == "limits":
-        await mqtt_client.publish(
+        await mqtt_publish(
+            mqtt_client,
             "limits",
             {
                 "min": data.get("min", DEFAULT_POWER_MIN),
@@ -193,9 +212,10 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client):
             },
         )
     elif action == "ess_mode":
-        await mqtt_client.publish("ess_mode", {})
+        await mqtt_publish(mqtt_client, "ess_mode", {})
     elif action == "loop_interval":
-        await mqtt_client.publish(
+        await mqtt_publish(
+            mqtt_client,
             "loop_interval",
             {"interval": data.get("interval", DEFAULT_LOOP_INTERVAL)},
         )
