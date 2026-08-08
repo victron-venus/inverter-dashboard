@@ -52,16 +52,9 @@ class Config(BaseSettings):
     def GITHUB_RAW_URL(self) -> str:
         return f"https://raw.githubusercontent.com/{self.GITHUB_REPO}/main"
 
-    @field_validator("SELF_UPDATE_ENABLED", mode="before")
+    @field_validator("SELF_UPDATE_ENABLED", "MQTT_TLS", mode="before")
     @classmethod
     def _parse_bool(cls, v: str | bool) -> bool:
-        if isinstance(v, bool):
-            return v
-        return v.lower() in ("1", "true", "yes")
-
-    @field_validator("MQTT_TLS", mode="before")
-    @classmethod
-    def _parse_mqtt_tls(cls, v: str | bool) -> bool:
         if isinstance(v, bool):
             return v
         return v.lower() in ("1", "true", "yes")
