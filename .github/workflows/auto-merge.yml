@@ -1,26 +1,2 @@
-name: Auto-merge PR (DISABLED)
-
-# DISABLED: auto-merge should not be used with auto-approve.
-# PRs from the owner now require manual review before merging to main.
-# This ensures human oversight for code that auto-deploys to all installations.
-#
-# To merge, use: gh pr merge <number> --squash --admin (requires manual approval first)
-
-on:
-  workflow_dispatch:
-
-permissions:
-  contents: write
-  pull-requests: write
-
-jobs:
-  disabled:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-
-      - name: Warn
-        run: echo "Auto-merge is disabled. PRs require manual review and merge."
+# REMOVED - auto-approve/auto-merge disabled for security. See CLAUDE.md for workflow.
+# PRs require manual review before merging to main.
