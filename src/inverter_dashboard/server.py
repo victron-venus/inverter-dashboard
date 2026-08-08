@@ -107,7 +107,7 @@ def _verify_secret(request: Request, token: str | None = None) -> None:
     raise HTTPException(status_code=403, detail="invalid secret")
 
 
-async def _start_mqtt_client():
+def _start_mqtt_client():
     """Start MQTT client connection and message loop."""
     _app_state.mqtt_state = MqttState()
     _app_state.mqtt_client = Client(
@@ -142,14 +142,14 @@ async def _start_mqtt_client():
     _app_state.mqtt_tasks.append(mqtt_task)
 
 
-async def _start_ha_polling():
+def _start_ha_polling():
     """Start HA polling task if direct mode enabled."""
     if ha_client.is_direct_mode():
         return asyncio.create_task(ha_client.ha_poll_loop())
     return None
 
 
-async def _start_version_check():
+def _start_version_check():
     """Start background version check task."""
     async def _bg_version_check():
         latest = await check_latest_version()
@@ -165,8 +165,8 @@ async def _shutdown_tasks(ha_task):
         ha_task.cancel()
         try:
             await ha_task
-        except asyncio.CancelledError:  # pylint: disable=try-except-raise
-            raise
+        except asyncio.CancelledError:
+            pass
 
     for task in _app_state.mqtt_tasks:
         task.cancel()
@@ -179,8 +179,8 @@ async def _shutdown_mqtt_client():
     if _app_state.mqtt_client:
         try:
             await _app_state.mqtt_client.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-        except asyncio.CancelledError:  # pylint: disable=try-except-raise
-            raise
+        except asyncio.CancelledError:
+            pass
         except Exception as e:  # pylint: disable=broad-except
             logger.exception("Error closing MQTT client: %s", e)
         finally:
@@ -192,9 +192,9 @@ async def lifespan(_app: FastAPI):
     """Application lifespan handler"""
     # Startup
     ha_client.load_config()
-    await _start_mqtt_client()
-    ha_task = await _start_ha_polling()
-    await _start_version_check()
+    _start_mqtt_client()
+    ha_task = _start_ha_polling()
+    _start_version_check()
 
     yield
 
