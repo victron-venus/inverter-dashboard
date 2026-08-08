@@ -107,12 +107,8 @@ def _verify_secret(request: Request, token: str | None = None) -> None:
     raise HTTPException(status_code=403, detail="invalid secret")
 
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    """Application lifespan handler"""
-
-    # Startup
-    ha_client.load_config()
+async def _start_mqtt_client():
+    """Start MQTT client connection and message loop."""
     _app_state.mqtt_state = MqttState()
     _app_state.mqtt_client = Client(
         hostname=config.MQTT_HOST,
@@ -125,7 +121,6 @@ async def lifespan(_app: FastAPI):
     _app_state.mqtt_state.set_state_callback(websocket_handler.broadcast_state)
     websocket_handler.set_mqtt_state(_app_state.mqtt_state)
 
-    # Start MQTT connection and message loop
     async def mqtt_connect_and_loop():
         await _app_state.mqtt_client.__aenter__()  # pylint: disable=unnecessary-dunder-call
         logger.info("Connected to MQTT broker")
@@ -146,42 +141,66 @@ async def lifespan(_app: FastAPI):
     mqtt_task = asyncio.create_task(mqtt_connect_and_loop())
     _app_state.mqtt_tasks.append(mqtt_task)
 
-    ha_task = None
-    if ha_client.is_direct_mode():
-        ha_task = asyncio.create_task(ha_client.ha_poll_loop())
 
-    # Check for updates in background (non-blocking)
+async def _start_ha_polling():
+    """Start HA polling task if direct mode enabled."""
+    if ha_client.is_direct_mode():
+        return asyncio.create_task(ha_client.ha_poll_loop())
+    return None
+
+
+async def _start_version_check():
+    """Start background version check task."""
     async def _bg_version_check():
         latest = await check_latest_version()
         if latest:
             websocket_handler.set_latest_version(latest)
 
-    _bg_task = asyncio.create_task(_bg_version_check())
+    return asyncio.create_task(_bg_version_check())
 
-    yield
 
-    # Shutdown
+async def _shutdown_tasks(ha_task):
+    """Cancel and await all background tasks."""
     if ha_task:
         ha_task.cancel()
         try:
             await ha_task
-        except asyncio.CancelledError:
-            pass
+        except asyncio.CancelledError:  # pylint: disable=try-except-raise
+            raise
 
     for task in _app_state.mqtt_tasks:
         task.cancel()
     if _app_state.mqtt_tasks:
         await asyncio.gather(*_app_state.mqtt_tasks, return_exceptions=True)
 
+
+async def _shutdown_mqtt_client():
+    """Close MQTT client connection."""
     if _app_state.mqtt_client:
         try:
             await _app_state.mqtt_client.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-        except asyncio.CancelledError:
-            pass
+        except asyncio.CancelledError:  # pylint: disable=try-except-raise
+            raise
         except Exception as e:  # pylint: disable=broad-except
             logger.exception("Error closing MQTT client: %s", e)
         finally:
             _app_state.mqtt_client = None
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Application lifespan handler"""
+    # Startup
+    ha_client.load_config()
+    await _start_mqtt_client()
+    ha_task = await _start_ha_polling()
+    await _start_version_check()
+
+    yield
+
+    # Shutdown
+    await _shutdown_tasks(ha_task)
+    await _shutdown_mqtt_client()
 
 
 app = FastAPI(title="Inverter Dashboard", lifespan=lifespan)
