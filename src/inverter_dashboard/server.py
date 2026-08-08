@@ -173,6 +173,10 @@ async def _shutdown_tasks(ha_task):
     if _app_state.mqtt_tasks:
         await asyncio.gather(*_app_state.mqtt_tasks, return_exceptions=True)
 
+    # Re-raise if cancelled during task cleanup
+    if ha_task and ha_task.cancelled():
+        raise asyncio.CancelledError
+
 
 async def _shutdown_mqtt_client():
     """Close MQTT client connection."""
@@ -180,11 +184,14 @@ async def _shutdown_mqtt_client():
         try:
             await _app_state.mqtt_client.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
         except asyncio.CancelledError:
-            pass
+            # Cleanup already done in finally, re-raise to propagate cancellation
+            _app_state.mqtt_client = None
+            raise
         except Exception as e:  # pylint: disable=broad-except
             logger.exception("Error closing MQTT client: %s", e)
         finally:
-            _app_state.mqtt_client = None
+            if _app_state.mqtt_client:
+                _app_state.mqtt_client = None
 
 
 @asynccontextmanager
