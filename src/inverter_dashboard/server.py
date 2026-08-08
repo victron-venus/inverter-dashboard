@@ -10,6 +10,7 @@ import logging
 import argparse
 from pathlib import Path
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 
 from fastapi import FastAPI, WebSocket, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -22,13 +23,20 @@ from .version import VERSION, check_latest_version, download_and_update, SelfUpd
 from . import mqtt_handler
 from . import websocket_handler
 from . import ha_client
-from .html_template import get_dashboard_html
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# Mutable module-level state (avoids global statements)
-_mqtt: dict = {"client": None, "state": None}
+
+@dataclass
+class AppState:
+    """Application state container."""
+    mqtt_state: mqtt_handler.MqttState | None = None
+    mqtt_client: mqtt_handler.AsyncMqttClient | None = None
+
+
+# Module-level app state
+_app_state = AppState()
 
 
 def _verify_secret(request: Request, token: str | None = None) -> None:
@@ -58,11 +66,11 @@ async def lifespan(_app: FastAPI):
 
     # Startup
     ha_client.load_config()
-    _mqtt["state"] = mqtt_handler.MqttState()
-    _mqtt["client"] = mqtt_handler.create_client(_mqtt["state"])
-    _mqtt["state"].set_state_callback(websocket_handler.broadcast_state)
-    websocket_handler.set_mqtt_state(_mqtt["state"])
-    await mqtt_handler.start_client(_mqtt["client"])
+    _app_state.mqtt_state = mqtt_handler.MqttState()
+    _app_state.mqtt_client = mqtt_handler.AsyncMqttClient(_app_state.mqtt_state)
+    _app_state.mqtt_state.set_state_callback(websocket_handler.broadcast_state)
+    websocket_handler.set_mqtt_state(_app_state.mqtt_state)
+    await _app_state.mqtt_client.start()
     ha_task = None
     if ha_client.is_direct_mode():
         ha_task = asyncio.create_task(ha_client.ha_poll_loop())
@@ -86,7 +94,7 @@ async def lifespan(_app: FastAPI):
             # Expected: we just cancelled ha_task ourselves above.
             if not ha_task.cancelled():
                 raise
-    await mqtt_handler.stop_client(_mqtt["client"])
+    await _app_state.mqtt_client.stop()
 
 
 app = FastAPI(title="Inverter Dashboard", lifespan=lifespan)
@@ -108,12 +116,15 @@ _mount_vue_dist()
 # Routes
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """Serve Vue SPA if available, fallback to embedded template"""
+    """Serve Vue SPA from static/dist or 404 if not built"""
     static_dir = Path(__file__).parent / "static"
     index_path = static_dir / "dist" / "index.html"
     if index_path.is_file():
         return index_path.read_text()
-    return get_dashboard_html()
+    return HTMLResponse(
+        "<h1>Inverter Dashboard</h1><p>Vue SPA not built. Run <code>npm run build</code> in inverter-dashboard-vue and copy dist/ to static/.</p>",
+        status_code=404,
+    )
 
 
 @app.websocket("/ws")
@@ -123,13 +134,13 @@ async def websocket_endpoint(websocket: WebSocket):
     if DASHBOARD_SECRET and token != DASHBOARD_SECRET:
         await websocket.close(code=4401, reason="unauthorized")
         return
-    await websocket_handler.handle_websocket(websocket, _mqtt["client"])
+    await websocket_handler.handle_websocket(websocket, _app_state.mqtt_client)
 
 
 @app.get("/api/state")
 async def api_state():
     """Minimal JSON for Docker HEALTHCHECK and monitoring (not full inverter payload)."""
-    raw = _mqtt["state"].get_state()
+    raw = _app_state.mqtt_state.get_state()
     return {
         "ok": True,
         "dashboard_version": VERSION,

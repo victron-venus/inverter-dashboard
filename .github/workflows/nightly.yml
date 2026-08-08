@@ -69,7 +69,6 @@ jobs:
             --hidden-import=inverter_dashboard.version \
             --hidden-import=inverter_dashboard.mqtt_handler \
             --hidden-import=inverter_dashboard.websocket_handler \
-            --hidden-import=inverter_dashboard.html_template \
             --hidden-import=inverter_dashboard.ha_client \
             --hidden-import=inverter_dashboard.scripts.docker_healthcheck \
             --add-data 'VERSION:.' \

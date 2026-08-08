@@ -7,8 +7,8 @@ import logging
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, ConfigDict
 
-from . import mqtt_handler
 from . import ha_client
 from .version import VERSION
 from .config import DEFAULT_POWER_MIN, DEFAULT_POWER_MAX, DEFAULT_LOOP_INTERVAL, CONSOLE_SEND_LINES
@@ -18,55 +18,85 @@ logger = logging.getLogger(__name__)
 # Connected WebSocket clients
 ws_clients: set[WebSocket] = set()
 
-# Keys from inverter/state that are safe to forward to WebSocket clients.
-# Defense-in-depth: prevents accidental inclusion of sensitive fields.
-_STATE_ALLOWLIST: set[str] = {
-    "gt",
-    "g1",
-    "g2",
-    "tt",
-    "t1",
-    "t2",
-    "solar_total",
-    "mppt_total",
-    "tasmota_total",
-    "battery_soc",
-    "battery_power",
-    "battery_voltage",
-    "battery_current",
-    "setpoint",
-    "inverter_state",
-    "version",
-    "dashboard_version",
-    "latest_version",
-    "uptime",
-    "ha_connected",
-    "ha_direct_connected",
-    "dry_run",
-    "ess_mode",
-    "booleans",
-    "features",
-    "mppt_individual",
-    "tasmota_individual",
-    "mppt_chargers",
-    "batteries",
-    "loads",
-    "ui_config",
-    "daily_stats",
-    "ev_charging_kw",
-    "ev_power",
-    "car_soc",
-    "water_level",
-    "water_valve",
-    "pump_switch",
-    "dishwasher_running",
-    "dishwasher_duration",
-    "washer_time",
-    "washer_power",
-    "dryer_time",
-    "dryer_power",
-    "console",
-}
+
+# Pydantic model for allowed state fields - replaces _STATE_ALLOWLIST
+# All fields optional since MQTT may not send all at once
+class InverterState(BaseModel):
+    """Validated inverter state payload sent to WebSocket clients."""
+
+    model_config = ConfigDict(extra="ignore")  # silently drop unknown fields
+
+    # Grid
+    gt: float | int | None = None
+    g1: float | int | None = None
+    g2: float | int | None = None
+
+    # Consumption
+    tt: float | int | None = None
+    t1: float | int | None = None
+    t2: float | int | None = None
+
+    # Solar
+    solar_total: float | int | None = None
+    mppt_total: float | int | None = None
+    tasmota_total: float | int | None = None
+
+    # Battery
+    battery_soc: float | int | None = None
+    battery_power: float | int | None = None
+    battery_voltage: float | int | None = None
+    battery_current: float | int | None = None
+
+    # Inverter
+    setpoint: float | int | None = None
+    inverter_state: str | None = None
+    version: str | None = None
+
+    # Dashboard
+    dashboard_version: str | None = None
+    latest_version: str | None = None
+    uptime: float | int | None = None
+
+    # HA
+    ha_connected: bool | None = None
+    ha_direct_connected: bool | None = None
+
+    # Control
+    dry_run: bool | str | None = None
+    ess_mode: dict[str, Any] | None = None
+
+    # Feature flags / derived
+    booleans: dict[str, bool] | None = None
+    features: dict[str, bool] | None = None
+    mppt_individual: list[float | int] | None = None
+    tasmota_individual: list[float | int] | None = None
+    mppt_chargers: list[dict[str, Any]] | None = None
+    batteries: list[dict[str, Any]] | None = None
+    loads: dict[str, float | int] | None = None
+    ui_config: dict[str, Any] | None = None
+    daily_stats: dict[str, Any] | None = None
+
+    # EV
+    ev_charging_kw: float | int | None = None
+    ev_power: float | int | None = None
+    car_soc: float | int | None = None
+
+    # Water
+    water_level: float | int | None = None
+    water_valve: bool | str | None = None
+    pump_switch: bool | str | None = None
+
+    # Appliances
+    dishwasher_running: bool | None = None
+    dishwasher_duration: float | int | None = None
+    washer_time: float | int | None = None
+    washer_power: float | int | bool | None = None
+    dryer_time: float | int | None = None
+    dryer_power: float | int | bool | None = None
+
+    # Console
+    console: list[str] | None = None
+
 
 # Mutable module-level state (avoids global statements)
 _state: dict[str, Any] = {"latest_version": None, "mqtt_state": None}
@@ -85,8 +115,14 @@ def set_mqtt_state(mqtt_state):
 def build_payload() -> dict[str, Any]:
     """Build the canonical state payload sent to all WebSocket clients."""
     mqtt = _state["mqtt_state"]
-    state = ha_client.merge_overlay(mqtt.get_state())
-    filtered = {k: v for k, v in state.items() if k in _STATE_ALLOWLIST}
+    raw_state = ha_client.merge_overlay(mqtt.get_state())
+
+    # Use Pydantic model to filter/validate - extra="ignore" drops unknown keys
+    validated = InverterState(**raw_state)
+
+    # Convert to dict, excluding None values for cleaner JSON
+    filtered = validated.model_dump(exclude_none=True)
+
     return _with_ui_config(
         {
             **filtered,
@@ -141,16 +177,15 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client):
                 ha_client.replace_overlay(fresh)
             await broadcast_state()
             return
-        await mqtt_handler.publish_command(mqtt_client, "toggle", {"entity": entity})
+        await mqtt_client.publish("toggle", {"entity": entity})
     elif action == "press":
-        await mqtt_handler.publish_command(mqtt_client, "press", {"entity": data.get("entity")})
+        await mqtt_client.publish("press", {"entity": data.get("entity")})
     elif action == "setpoint":
-        await mqtt_handler.publish_command(mqtt_client, "setpoint", {"value": data.get("value")})
+        await mqtt_client.publish("setpoint", {"value": data.get("value")})
     elif action == "dry_run":
-        await mqtt_handler.publish_command(mqtt_client, "dry_run", {})
+        await mqtt_client.publish("dry_run", {})
     elif action == "limits":
-        await mqtt_handler.publish_command(
-            mqtt_client,
+        await mqtt_client.publish(
             "limits",
             {
                 "min": data.get("min", DEFAULT_POWER_MIN),
@@ -158,10 +193,9 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client):
             },
         )
     elif action == "ess_mode":
-        await mqtt_handler.publish_command(mqtt_client, "ess_mode", {})
+        await mqtt_client.publish("ess_mode", {})
     elif action == "loop_interval":
-        await mqtt_handler.publish_command(
-            mqtt_client,
+        await mqtt_client.publish(
             "loop_interval",
             {"interval": data.get("interval", DEFAULT_LOOP_INTERVAL)},
         )

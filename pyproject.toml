@@ -16,6 +16,7 @@ dependencies = [
     "msgpack>=1.2.1",
     "httpx>=0.28.1",
     "aiofiles>=25.1.0",
+    "pydantic-settings>=2.0",
 ]
 
 [project.scripts]

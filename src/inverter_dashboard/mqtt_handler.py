@@ -103,7 +103,7 @@ class AsyncMqttClient:
             tls_insecure=tls_insecure,
         )
 
-        await self._client.__aenter__()
+        await self._client.__aenter__()  # pylint: disable=unnecessary-dunder-call
         logger.info("Connected to MQTT broker")
 
         # Subscribe to topics
@@ -201,38 +201,10 @@ class AsyncMqttClient:
         # Close client
         if self._client:
             try:
-                await self._client.__aexit__(None, None, None)
-            except asyncio.CancelledError:
-                raise
+                await self._client.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
             except Exception as e:  # pylint: disable=broad-except
                 logger.exception("Error closing MQTT client: %s", e)
             finally:
                 self._client = None
 
         logger.info("MQTT client stopped")
-
-
-# Global client reference (for backward compatibility with publish_command)
-_async_client: AsyncMqttClient | None = None
-
-
-def create_client(state: MqttState) -> AsyncMqttClient:
-    """Create async MQTT client - backward compatible interface"""
-    global _async_client  # pylint: disable=global-statement
-    _async_client = AsyncMqttClient(state)
-    return _async_client
-
-
-async def start_client(client: AsyncMqttClient) -> None:
-    """Start async MQTT client - backward compatible interface"""
-    await client.start()
-
-
-async def stop_client(client: AsyncMqttClient) -> None:
-    """Stop async MQTT client - backward compatible interface"""
-    await client.stop()
-
-
-async def publish_command(client: AsyncMqttClient, action: str, payload: dict[str, Any] | None = None) -> None:
-    """Publish command - backward compatible interface (now async)"""
-    await client.publish(action, payload)
