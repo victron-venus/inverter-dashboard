@@ -16,6 +16,19 @@ Real-time web dashboard for monitoring Victron inverter systems via MQTT. Design
 
 > **Dashboard options:** For Cerbo GX deployments, [**inverter-dashboard-go**](https://github.com/victron-venus/inverter-dashboard-go) is the recommended primary (single binary, low footprint). **This repo** targets Docker/NAS installs (`alvit/inverter-dashboard`). For a native app, see [**inverter-desktop**](https://github.com/victron-venus/inverter-desktop).
 
+---
+
+## Project Role
+
+⚠️ **This is the original prototype dashboard.** For production use, see:
+
+| Use Case | Recommended |
+|----------|-------------|
+| Cerbo GX / embedded | [inverter-dashboard-go](https://github.com/victron-venus/inverter-dashboard-go) — single binary, minimal footprint |
+| Docker / NAS | [inverter-dashboard](https://github.com/victron-venus/inverter-dashboard) — this repo (`alvit/inverter-dashboard` on Docker Hub) |
+| Native desktop/mobile | [inverter-desktop](https://github.com/victron-venus/inverter-desktop) — Rust/Tauri app with offline support |
+| Building custom dashboards | [inverter-dashboard-vue](https://github.com/victron-venus/inverter-dashboard-vue) — shared Vue 3 component library |
+
 ![Inverter Dashboard](images/Screenshot.png)
 
 ## Architecture
