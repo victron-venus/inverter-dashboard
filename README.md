@@ -76,17 +76,16 @@ Home Assistant runs in the cloud (outside the home network). Direct API polling 
 
 ### Our Approach: Local MQTT Bridging
 
-```
-Home Assistant (cloud)
-    │
-    ▼
-inverter-control (on Cerbo GX)
-    │  ← polls HA locally (when configured)
-    ▼
-MQTT (local broker)
-    │
-    ▼
-Dashboard ← receives all entity states via MQTT payload
+```mermaid
+flowchart TD
+    HA["Home Assistant\n(cloud)"]
+    INV["inverter-control\n(on Cerbo GX)"]
+    MQTT["MQTT\n(local broker)"]
+    DASH["Dashboard"]
+
+    HA -.->|polls locally\n(when configured)| INV
+    INV -->|bridges entity states| MQTT
+    MQTT -->|pushes inverter/state| DASH
 ```
 
 **inverter-control** bridges entity states into MQTT `inverter/state` every 2–5 seconds. Dashboard receives everything from one source.
