@@ -22,9 +22,7 @@ updates:
       - "docker"
     ignore:
       - dependency-name: "python"
-        # Pinned to Alpine-based digest for apk availability in runtime stage
-        # (Debian-based python:3.14 lacks apk, breaks multi-platform build)
-        versions: ["3.14*"]
+        versions: ["3.14-alpine", "3.14-alpine3.24", "3.14-alpine3.23"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
