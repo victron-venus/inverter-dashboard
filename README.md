@@ -83,9 +83,9 @@ flowchart TD
     MQTT["MQTT<br/>(local broker)"]
     DASH["Dashboard"]
 
-    HA -.->|polls locally [when configured]| INV
-    INV -->|bridges entity states| MQTT
-    MQTT -->|pushes inverter/state| DASH
+    HA -.->|"polls locally [when configured]"| INV
+    INV -->|"bridges entity states"| MQTT
+    MQTT -->|"pushes inverter/state"| DASH
 ```
 
 **inverter-control** bridges entity states into MQTT `inverter/state` every 2–5 seconds. Dashboard receives everything from one source.
