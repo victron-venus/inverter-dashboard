@@ -20,6 +20,11 @@ updates:
       prefix: "docker"
     labels:
       - "docker"
+    ignore:
+      - dependency-name: "python"
+        # Pinned to Alpine-based digest for apk availability in runtime stage
+        # (Debian-based python:3.14 lacks apk, breaks multi-platform build)
+        versions: ["3.14*"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
