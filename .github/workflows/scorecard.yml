@@ -3,6 +3,9 @@ name: Scorecard security audit
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
   schedule:
     - cron: '30 2 * * 3'  # Weekly on Wednesdays at 2:30 AM UTC
 

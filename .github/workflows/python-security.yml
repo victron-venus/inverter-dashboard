@@ -3,8 +3,14 @@ name: Python Security Scan
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
   schedule:
     - cron: '0 5 * * 2'
 

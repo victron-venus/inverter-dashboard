@@ -3,8 +3,14 @@ name: Trivy Filesystem Scan
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
   schedule:
     - cron: '0 5 * * 2'  # Weekly on Tuesdays at 5:00 AM UTC
 
