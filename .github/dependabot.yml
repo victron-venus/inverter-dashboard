@@ -20,6 +20,9 @@ updates:
       prefix: "docker"
     labels:
       - "docker"
+    ignore:
+      - dependency-name: "python"
+        versions: ["3.14-alpine", "3.14-alpine3.24", "3.14-alpine3.23"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
