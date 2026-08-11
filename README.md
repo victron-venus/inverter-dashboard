@@ -83,7 +83,7 @@ flowchart TD
     MQTT["MQTT<br/>(local broker)"]
     DASH["Dashboard"]
 
-    HA -.->|polls locally<br/>(when configured)| INV
+    HA -.->|polls locally [when configured]| INV
     INV -->|bridges entity states| MQTT
     MQTT -->|pushes inverter/state| DASH
 ```
