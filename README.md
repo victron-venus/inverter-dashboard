@@ -34,7 +34,7 @@ Real-time web dashboard for monitoring Victron inverter systems via MQTT. Design
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph Venus["Venus OS (Cerbo GX)"]
         INV["inverter-control"]
         MQTT["MQTT Broker"]
@@ -50,9 +50,9 @@ flowchart LR
         MOBILE["Mobile"]
     end
 
-    INV -->|"inverter/state"| MQTT
-    MQTT -->|"subscribe"| WS
-    WS -->|"push state"| UI
+    INV -->|inverter/state| MQTT
+    MQTT -.->|subscribe| WS
+    WS -->|push state| UI
     UI --> BROWSER & MOBILE
 ```
 
@@ -78,12 +78,12 @@ Home Assistant runs in the cloud (outside the home network). Direct API polling 
 
 ```mermaid
 flowchart TD
-    HA["Home Assistant\n(cloud)"]
-    INV["inverter-control\n(on Cerbo GX)"]
-    MQTT["MQTT\n(local broker)"]
+    HA["Home Assistant<br/>(cloud)"]
+    INV["inverter-control<br/>(on Cerbo GX)"]
+    MQTT["MQTT<br/>(local broker)"]
     DASH["Dashboard"]
 
-    HA -.->|polls locally\n(when configured)| INV
+    HA -.->|polls locally<br/>(when configured)| INV
     INV -->|bridges entity states| MQTT
     MQTT -->|pushes inverter/state| DASH
 ```
