@@ -76,3 +76,29 @@ HA_APPLIANCE_ENTITIES = {
 # Water card (optional — leave empty strings to skip)
 HA_WATER_VALVE_ENTITY = "switch.shutoff_valve"
 HA_PUMP_SWITCH_ENTITY = "switch.pump_switch"
+
+# ---------------------------------------------------------------------------
+# Sensor entities — keys are WebSocket/MQTT state field names (numeric).
+# These are fetched from HA REST and override the corresponding MQTT values when HA is connected.
+# Example:
+# HA_SENSOR_ENTITIES = {
+#     "gt": "sensor.grid_power",
+#     "g1": "sensor.grid_power_phase1",
+#     "g2": "sensor.grid_power_phase2",
+#     "tt": "sensor.total_consumption_power",
+#     "t1": "sensor.consumption_phase1_power",
+#     "t2": "sensor.consumption_phase2_power",
+#     "solar_total": "sensor.solar_power",
+#     "mppt_total": "sensor.mppt_power",
+#     "tasmota_total": "sensor.tasmota_power",
+#     "battery_soc": "sensor.battery_state_of_charge",
+#     "battery_power": "sensor.battery_power",
+#     "battery_voltage": "sensor.battery_voltage",
+#     "battery_current": "sensor.battery_current",
+#     "setpoint": "sensor.inverter_setpoint",
+#     "ev_charging_kw": "sensor.ev_charging_power",
+#     "ev_power": "sensor.ev_power",
+#     "car_soc": "sensor.car_state_of_charge",
+#     "water_level": "sensor.water_tank_level",
+# }
+HA_SENSOR_ENTITIES = {}
