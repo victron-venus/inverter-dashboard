@@ -143,6 +143,14 @@ def _boolish(raw: str | None) -> bool:
     return str(raw).lower() in ("on", "true", "yes", "1")
 
 
+def _parse_numeric_state(raw: str | None) -> float | None:
+    """Parse HA state string to a float, returns None if unavailable/unknown."""
+    if raw in (None, "unavailable", "unknown", "None", ""):
+        return None
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        return None
 def _appliance_field_value(state_key: str, entity_id: str, raw: str | None) -> Any:
     """Map HA state string to dashboard type (bool vs seconds)."""
     domain = entity_id.split(".")[0]
@@ -169,6 +177,7 @@ def load_config():
     global _configured, _url, _token, _direct, _poll_interval
     global _boolean_entities, _switch_entities, _water_valve, _water_pump, _switch_labels
     global _appliance_entities
+    global _sensor_entities
 
     _prepend_local_config_import_path()
 
@@ -197,6 +206,7 @@ def load_config():
     _water_valve = getattr(sc, "HA_WATER_VALVE_ENTITY", "") or ""
     _water_pump = getattr(sc, "HA_PUMP_SWITCH_ENTITY", "") or ""
     _appliance_entities = dict(getattr(sc, "HA_APPLIANCE_ENTITIES", {}) or {})
+    _sensor_entities = dict(getattr(sc, "HA_SENSOR_ENTITIES", {}) or {})
 
     _configured = bool(_url and _token and _token != "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN")
     if _direct and not _configured:
@@ -344,6 +354,17 @@ async def fetch_states_once() -> dict[str, Any]:
                 out[key] = _appliance_field_value(key, eid, st)
 
             out["ha_direct_connected"] = True
+            
+            for key, eid in _sensor_entities.items():
+                st = await _get_state(client, headers, eid)
+                if st is not None:
+                    val = _parse_numeric_state(st)
+                    if val is not None:
+                        out[key] = val
+                    else:
+                        out[key] = None
+                else:
+                    out[key] = None
             return out
 
     except httpx.HTTPError as e:
@@ -359,11 +380,13 @@ def _apply_connected_overlay(merged: dict[str, Any], o: dict[str, Any]) -> None:
     if _water_valve:
         merged["water_valve"] = bool(o.get("water_valve"))
     if _water_pump:
-        merged["pump_switch"] = bool(o.get("pump_switch"))
+        merged["pump_switch"] = bool(o.get("water_pump"))
     for k in _appliance_entities:
         if k in o:
             merged[k] = o[k]
-
+    for k in _sensor_entities:
+        if k in o:
+            merged[k] = o[k]
 
 def _apply_disconnected_overlay(merged: dict[str, Any]) -> None:
     """Fill merged dashboard state with safe defaults when HA is unreachable."""
