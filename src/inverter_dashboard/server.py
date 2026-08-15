@@ -37,6 +37,8 @@ class MqttState:
     def __init__(self) -> None:
         self.current_state: dict[str, Any] = {}
         self.console_lines: list[str] = []
+        self._acload_names: dict[str, str] = {}
+        self._acload_powers: dict[str, float] = {}
         self._on_state_update: Callable | None = None
 
     def set_state_callback(self, callback: Callable) -> None:
@@ -56,10 +58,44 @@ class MqttState:
                 self.console_lines.append(line)
                 if len(self.console_lines) > config.CONSOLE_MAX_LINES:
                     self.console_lines.pop(0)
+
+            elif "/acload/" in topic:
+                parts = topic.split("/")
+                # Topic structure: N/<portal_id>/acload/<instance>/<path...>
+                if len(parts) >= 5 and parts[2] == "acload":
+                    instance = parts[3]
+                    path = "/".join(parts[4:])
+                    try:
+                        data = json.loads(payload.decode())
+                        val = data.get("value")
+                        if path in ("Ac/Power", "Ac/L1/Power") and isinstance(val, (int, float)):
+                            self._acload_powers[instance] = float(val)
+                            self._sync_acload_to_state()
+                        elif path == "CustomName" and isinstance(val, str) and val.strip():
+                            self._acload_names[instance] = val.strip()
+                            self._sync_acload_to_state()
+                    except (json.JSONDecodeError, ValueError, AttributeError):
+                        pass
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.exception("MQTT message parse error: %s", e)
         except Exception as e:
             logger.exception("MQTT message error: %s", e)
+
+    def _sync_acload_to_state(self) -> None:
+        """Merge decoded acload topics into current_state['loads'] if loads is empty or missing."""
+        if not self._acload_powers:
+            return
+        current_loads = dict(self.current_state.get("loads") or {})
+        changed = False
+        for instance, power in self._acload_powers.items():
+            name = self._acload_names.get(instance) or f"AC Load {instance}"
+            # Standardize key format (lowercase with underscores or display name)
+            key = name.lower().replace(" ", "_")
+            if key not in current_loads:
+                current_loads[key] = power
+                changed = True
+        if changed:
+            self.current_state["loads"] = current_loads
 
     def get_state(self) -> dict[str, Any]:
         """Get current state"""
@@ -126,6 +162,11 @@ def _start_mqtt_client():
         logger.info("Connected to MQTT broker")
         await _app_state.mqtt_client.subscribe("inverter/state")
         await _app_state.mqtt_client.subscribe("inverter/console")
+        try:
+            await _app_state.mqtt_client.subscribe("N/+/acload/+/Ac/Power")
+            await _app_state.mqtt_client.subscribe("N/+/acload/+/CustomName")
+        except Exception as e:
+            logger.warning("Could not subscribe to N/+/acload topics: %s", e)
         logger.info("Subscribed to MQTT topics")
 
         try:
