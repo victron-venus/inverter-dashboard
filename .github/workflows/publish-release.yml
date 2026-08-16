@@ -227,5 +227,3 @@ jobs:
           generate-notes: false
           prerelease: ${{ steps.detect_prerelease.outputs.is_prerelease == 'true' }}
           files: release/*
-        secrets:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
