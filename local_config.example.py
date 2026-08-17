@@ -80,22 +80,18 @@ HA_PUMP_SWITCH_ENTITY = "switch.pump_switch"
 # ---------------------------------------------------------------------------
 # Sensor entities — keys are WebSocket/MQTT state field names (numeric).
 # These are fetched from HA REST and override the corresponding MQTT values when HA is connected.
+# NOTE: Most fields now come from inverter-control MQTT (D-Bus sourced):
+#   gt, g1, g2, tt, t1, t2, solar_total, mppt_total, tasmota_total
+#   battery_soc, battery_power, battery_voltage, battery_current
+#   setpoint, daily_stats, mppt_chargers, batteries, mppt_individual, tasmota_individual
+#   loads (Vue circuits via D-Bus acload)
+# Only configure fields NOT available from inverter-control:
+#   - ev_charging_kw, ev_power, car_soc (EV - no D-Bus standard)
+#   - water_level (water tank - no D-Bus standard)
+#   - water_valve, pump_switch (control only)
+#   - appliance timers (dishwasher, washer, dryer)
 # Example:
 # HA_SENSOR_ENTITIES = {
-#     "gt": "sensor.grid_power",
-#     "g1": "sensor.grid_power_phase1",
-#     "g2": "sensor.grid_power_phase2",
-#     "tt": "sensor.total_consumption_power",
-#     "t1": "sensor.consumption_phase1_power",
-#     "t2": "sensor.consumption_phase2_power",
-#     "solar_total": "sensor.solar_power",
-#     "mppt_total": "sensor.mppt_power",
-#     "tasmota_total": "sensor.tasmota_power",
-#     "battery_soc": "sensor.battery_state_of_charge",
-#     "battery_power": "sensor.battery_power",
-#     "battery_voltage": "sensor.battery_voltage",
-#     "battery_current": "sensor.battery_current",
-#     "setpoint": "sensor.inverter_setpoint",
 #     "ev_charging_kw": "sensor.ev_charging_power",
 #     "ev_power": "sensor.ev_power",
 #     "car_soc": "sensor.car_state_of_charge",
