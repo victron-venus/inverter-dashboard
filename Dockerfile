@@ -4,7 +4,7 @@
 # =============================================================================
 # Stage 1: Builder - install dependencies with uv into a virtual environment
 # =============================================================================
-FROM python@sha256:0ad7f98a97b1b8fcc226f5cbe49f0b95cd6f624582cdc6fbf7e41312075cb401 AS builder
+FROM python@sha256:4fad23465a06cc5149a541fbec6f87e234a64dc0550f6bfdd2d290d8f03240df AS builder
 
 WORKDIR /app
 
@@ -27,7 +27,7 @@ RUN uv sync --frozen --no-dev --no-editable --python python
 # =============================================================================
 # Stage 2: Runtime - minimal image with only the venv and app code
 # =============================================================================
-FROM python@sha256:0ad7f98a97b1b8fcc226f5cbe49f0b95cd6f624582cdc6fbf7e41312075cb401 AS runtime
+FROM python@sha256:4fad23465a06cc5149a541fbec6f87e234a64dc0550f6bfdd2d290d8f03240df AS runtime
 
 WORKDIR /app
 
