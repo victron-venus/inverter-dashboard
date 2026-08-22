@@ -58,7 +58,7 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Build and push Docker image
-        uses: victron-venus/venus-os-ci-toolkit/.github/workflows/docker-build.yml@c817fbf
+        uses: victron-venus/venus-os-ci-toolkit/.github/workflows/docker-build.yml@2f679e8adc653a0d599fde5f627d387c6207a219
         with:
           skip-checkout: true
           skip-setup-buildx: true
