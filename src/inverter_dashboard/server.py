@@ -60,26 +60,33 @@ class MqttState:
                     self.console_lines.pop(0)
 
             elif "/acload/" in topic:
-                parts = topic.split("/")
-                # Topic structure: N/<portal_id>/acload/<instance>/<path...>
-                if len(parts) >= 5 and parts[2] == "acload":
-                    instance = parts[3]
-                    path = "/".join(parts[4:])
-                    try:
-                        data = json.loads(payload.decode())
-                        val = data.get("value")
-                        if path in ("Ac/Power", "Ac/L1/Power") and isinstance(val, (int, float)):
-                            self._acload_powers[instance] = float(val)
-                            self._sync_acload_to_state()
-                        elif path == "CustomName" and isinstance(val, str) and val.strip():
-                            self._acload_names[instance] = val.strip()
-                            self._sync_acload_to_state()
-                    except (json.JSONDecodeError, ValueError, AttributeError):
-                        pass
+                self._handle_acload(topic, payload)
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.exception("MQTT message parse error: %s", e)
         except Exception as e:
             logger.exception("MQTT message error: %s", e)
+
+    def _handle_acload(self, topic: str, payload: bytes) -> None:
+        """Decode acload topic messages into power/name maps.
+
+        Topic structure: N/<portal_id>/acload/<instance>/<path...>
+        """
+        parts = topic.split("/")
+        if len(parts) < 5 or parts[2] != "acload":
+            return
+        instance = parts[3]
+        path = "/".join(parts[4:])
+        try:
+            data = json.loads(payload.decode())
+            val = data.get("value")
+            if path in ("Ac/Power", "Ac/L1/Power") and isinstance(val, (int, float)):
+                self._acload_powers[instance] = float(val)
+                self._sync_acload_to_state()
+            elif path == "CustomName" and isinstance(val, str) and val.strip():
+                self._acload_names[instance] = val.strip()
+                self._sync_acload_to_state()
+        except (ValueError, AttributeError):
+            pass
 
     def _sync_acload_to_state(self) -> None:
         """Merge decoded acload topics into current_state['loads'] if loads is empty or missing."""
@@ -326,7 +333,7 @@ async def api_update(request: Request):
     logger.info("Update requested...")
 
     try:
-        success, result = await download_and_update()
+        success, result = download_and_update()
     except SelfUpdateDisabled:
         return JSONResponse(
             {"error": "self-update is disabled (set SELF_UPDATE_ENABLED=true)"}, status_code=403

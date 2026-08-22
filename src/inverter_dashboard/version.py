@@ -59,7 +59,7 @@ async def check_latest_version() -> str | None:
     return None
 
 
-async def download_and_update() -> tuple[bool, str]:
+def download_and_update() -> tuple[bool, str]:
     """Self-update disabled by default. Enable with SELF_UPDATE_ENABLED=true."""
     if not SELF_UPDATE_ENABLED:
         raise SelfUpdateDisabled("self-update is disabled (set SELF_UPDATE_ENABLED=true)")
