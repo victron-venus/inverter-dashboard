@@ -21,10 +21,9 @@ updates:
     labels:
       - "docker"
     # Lock python base image updates: bare-digest bumps floated from Alpine to
-    # Debian and broke apk (PRs #92, #104). The Dockerfile pins
-    # python:3.14-alpine@sha256:<digest>, so bump the digest by hand when a new
-    # Alpine build is wanted. Remove this ignore to resume Dependabot bumps —
-    # they stay inside the -alpine family thanks to the tag.
+    # Debian and broke apk (PRs #92, #104). The Dockerfile pins an Alpine
+    # digest (see its header comment); bump it manually from the
+    # `python:3.14-alpine` tag only.
     ignore:
       - dependency-name: "python"
 

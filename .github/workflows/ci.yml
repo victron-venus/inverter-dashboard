@@ -14,4 +14,4 @@ jobs:
     name: CI
     uses: victron-venus/venus-os-ci-toolkit/.github/workflows/python-ci.yml@2f679e8adc653a0d599fde5f627d387c6207a219
     with:
-      python-version: '3.11'
+      python-version: '3.12'
