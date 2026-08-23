@@ -4,7 +4,12 @@
 # =============================================================================
 # Stage 1: Builder - install dependencies with uv into a virtual environment
 # =============================================================================
-FROM python@sha256:4fad23465a06cc5149a541fbec6f87e234a64dc0550f6bfdd2d290d8f03240df AS builder
+# Digest pin of python:3.14-alpine — MUST stay an Alpine variant: this image
+# uses apk and musl. A Debian (trixie/bookworm) digest breaks the build with
+# "apk: not found" (PRs #92, #104). Dependabot updates for this image are
+# locked in .github/dependabot.yml; to bump, resolve a fresh digest of the
+# `python:3.14-alpine` tag only and verify /etc/os-release says alpine.
+FROM python@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc AS builder
 
 WORKDIR /app
 
@@ -27,7 +32,7 @@ RUN uv sync --frozen --no-dev --no-editable --python python
 # =============================================================================
 # Stage 2: Runtime - minimal image with only the venv and app code
 # =============================================================================
-FROM python@sha256:4fad23465a06cc5149a541fbec6f87e234a64dc0550f6bfdd2d290d8f03240df AS runtime
+FROM python@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc AS runtime
 
 WORKDIR /app
 

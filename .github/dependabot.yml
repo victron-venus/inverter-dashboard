@@ -20,9 +20,12 @@ updates:
       prefix: "docker"
     labels:
       - "docker"
+    # Lock python base image updates: bare-digest bumps floated from Alpine to
+    # Debian and broke apk (PRs #92, #104). The Dockerfile pins an Alpine
+    # digest (see its header comment); bump it manually from the
+    # `python:3.14-alpine` tag only.
     ignore:
       - dependency-name: "python"
-        versions: ["3.14-alpine", "3.14-alpine3.24", "3.14-alpine3.23"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

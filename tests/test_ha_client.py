@@ -1,12 +1,12 @@
 """Tests for ha_client pure functions (no network, no HA required)."""
 
 from src.inverter_dashboard.ha_client import (
-    _sensor_state_to_seconds,
-    _boolish,
-    _parse_ha_switch_entities,
-    _appliance_field_value,
     _appliance_fallback,
+    _appliance_field_value,
+    _boolish,
     _default_switch_label,
+    _parse_ha_switch_entities,
+    _sensor_state_to_seconds,
 )
 
 
@@ -14,6 +14,8 @@ from src.inverter_dashboard.ha_client import (
 # _sensor_state_to_seconds
 # ---------------------------------------------------------------------------
 class TestSensorStateToSeconds:
+    """Tests for _sensor_state_to_seconds."""
+
     def test_none_returns_zero(self):
         assert _sensor_state_to_seconds(None) == 0
 
@@ -55,6 +57,8 @@ class TestSensorStateToSeconds:
 # _boolish
 # ---------------------------------------------------------------------------
 class TestBoolish:
+    """Tests for _boolish."""
+
     def test_none_is_false(self):
         assert _boolish(None) is False
 
@@ -91,21 +95,23 @@ class TestBoolish:
 # _parse_ha_switch_entities
 # ---------------------------------------------------------------------------
 class TestParseSwitchEntities:
+    """Tests for _parse_ha_switch_entities."""
+
     def test_none_input(self):
         entities, labels = _parse_ha_switch_entities(None)
-        assert entities == {}
-        assert labels == {}
+        assert not entities
+        assert not labels
 
     def test_empty_dict(self):
         entities, labels = _parse_ha_switch_entities({})
-        assert entities == {}
-        assert labels == {}
+        assert not entities
+        assert not labels
 
     def test_string_value(self):
         raw = {"recliner": "switch.recliner_recliner"}
         entities, labels = _parse_ha_switch_entities(raw)
         assert entities == {"recliner": "switch.recliner_recliner"}
-        assert labels == {}
+        assert not labels
 
     def test_tuple_value(self):
         raw = {"recliner": ("switch.recliner_recliner", "Recliner")}
@@ -128,8 +134,8 @@ class TestParseSwitchEntities:
     def test_empty_key_skipped(self):
         raw = {"": "switch.foo"}
         entities, labels = _parse_ha_switch_entities(raw)
-        assert entities == {}
-        assert labels == {}
+        assert not entities
+        assert not labels
 
     def test_whitespace_stripped(self):
         raw = {"key": "  switch.foo  "}
@@ -149,14 +155,16 @@ class TestParseSwitchEntities:
 
     def test_non_dict_input(self):
         entities, labels = _parse_ha_switch_entities("not a dict")
-        assert entities == {}
-        assert labels == {}
+        assert not entities
+        assert not labels
 
 
 # ---------------------------------------------------------------------------
 # _appliance_field_value
 # ---------------------------------------------------------------------------
 class TestApplianceFieldValue:
+    """Tests for _appliance_field_value."""
+
     def test_binary_sensor_on(self):
         assert (
             _appliance_field_value("dishwasher_running", "binary_sensor.dishwasher_running", "on")
@@ -200,6 +208,8 @@ class TestApplianceFieldValue:
 # _appliance_fallback
 # ---------------------------------------------------------------------------
 class TestApplianceFallback:
+    """Tests for _appliance_fallback."""
+
     def test_time_key(self):
         assert _appliance_fallback("washer_time") == 0
 
@@ -214,6 +224,8 @@ class TestApplianceFallback:
 # _default_switch_label
 # ---------------------------------------------------------------------------
 class TestDefaultSwitchLabel:
+    """Tests for _default_switch_label."""
+
     def test_plain_key(self):
         assert _default_switch_label("recliner") == "RECLINER"
 

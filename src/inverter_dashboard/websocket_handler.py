@@ -6,13 +6,13 @@ import json
 import logging
 from typing import Any
 
+from aiomqtt import Client
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict
-from aiomqtt import Client
 
 from . import ha_client
+from .config import CONSOLE_SEND_LINES, DEFAULT_LOOP_INTERVAL, DEFAULT_POWER_MAX, DEFAULT_POWER_MIN
 from .version import VERSION
-from .config import DEFAULT_POWER_MIN, DEFAULT_POWER_MAX, DEFAULT_LOOP_INTERVAL, CONSOLE_SEND_LINES
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +29,8 @@ async def mqtt_publish(client: Client, action: str, payload: dict[str, Any] | No
     try:
         await client.publish(topic, message, qos=0)
         logger.debug("Published command to %s", topic)
-    except Exception as e:
-        logger.exception("Failed to publish to %s: %s", topic, e)
+    except Exception:
+        logger.exception("Failed to publish to %s", topic)
 
 
 # Connected WebSocket clients
@@ -238,8 +238,8 @@ async def handle_websocket(websocket: WebSocket, mqtt_client):
 
     except WebSocketDisconnect:
         pass
-    except Exception as e:
-        logger.exception("WebSocket error: %s", e)
+    except Exception:
+        logger.exception("WebSocket error")
     finally:
         ws_clients.discard(websocket)
         logger.info("WebSocket client disconnected (%d remaining)", len(ws_clients))
