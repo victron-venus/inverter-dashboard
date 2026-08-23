@@ -52,6 +52,8 @@ disable = [
     "C0413",  # Wrong import position
     "W0718",  # Catching general Exception
     "W0613",  # Unused argument
+    "W0603",  # global-statement: load_config() deliberately populates module-level config caches
+    "C0415",  # import-outside-toplevel: local_config is imported lazily at runtime
 ]
 
 [tool.ruff]
@@ -60,8 +62,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 ignore = [
-    "E722",  # Do not use bare except
-    "F841",  # Local variable assigned but never used
+    "E722",   # Do not use bare except
+    "F841",   # Local variable assigned but never used
+    "BLE001", # Blind `except Exception` — deliberate log-and-continue on network paths
 ]
 
 [tool.ruff.lint.per-file-ignores]

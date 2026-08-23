@@ -38,6 +38,7 @@ _water_pump = ""
 _switch_labels: dict[str, str] = {}
 # Dashboard keys -> HA entity IDs (washer/dishwasher telemetry omitted from MQTT when inverter-control uses MQTT_SLIM_STATE)
 _appliance_entities: dict[str, str] = {}
+_sensor_entities: dict[str, Any] = {}
 
 # Latest overlay merged into WebSocket payloads (replaced wholesale on each HA poll)
 _overlay: dict[str, Any] = {
@@ -151,6 +152,8 @@ def _parse_numeric_state(raw: str | None) -> float | None:
         return float(raw)
     except (ValueError, TypeError):
         return None
+
+
 def _appliance_field_value(state_key: str, entity_id: str, raw: str | None) -> Any:
     """Map HA state string to dashboard type (bool vs seconds)."""
     domain = entity_id.split(".")[0]
@@ -222,8 +225,7 @@ def is_direct_mode() -> bool:
 def _default_switch_label(state_key: str) -> str:
     """Human-readable label from state_key when HA_SWITCH_LABELS has no override."""
     s = state_key
-    if s.startswith("home_"):
-        s = s[5:]
+    s = s.removeprefix("home_")
     return s.replace("_", " ").upper()
 
 
@@ -304,8 +306,8 @@ async def _ha_request(
                 json=json_body,
             )
         return resp
-    except (httpx.HTTPError, TimeoutError) as e:
-        logger.exception("HA request %s %s failed: %s", method, path, e)
+    except (httpx.HTTPError, TimeoutError):
+        logger.exception("HA request %s %s failed", method, path)
         return None
 
 
@@ -354,7 +356,7 @@ async def fetch_states_once() -> dict[str, Any]:
                 out[key] = _appliance_field_value(key, eid, st)
 
             out["ha_direct_connected"] = True
-            
+
             for key, eid in _sensor_entities.items():
                 st = await _get_state(client, headers, eid)
                 if st is not None:
@@ -387,6 +389,7 @@ def _apply_connected_overlay(merged: dict[str, Any], o: dict[str, Any]) -> None:
     for k in _sensor_entities:
         if k in o:
             merged[k] = o[k]
+
 
 def _apply_disconnected_overlay(merged: dict[str, Any]) -> None:
     """Fill merged dashboard state with safe defaults when HA is unreachable."""

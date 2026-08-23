@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import os
 import ssl
-import urllib.request
 import urllib.error
+import urllib.request
 
 
 def main() -> int:
@@ -29,9 +29,11 @@ def main() -> int:
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             ctx.load_verify_locations(cafile=crt)
             url = f"https://{host}/api/state"
-            urllib.request.urlopen(url, context=ctx, timeout=timeout)
+            with urllib.request.urlopen(url, context=ctx, timeout=timeout):
+                pass
         else:
-            urllib.request.urlopen(url, timeout=timeout)
+            with urllib.request.urlopen(url, timeout=timeout):
+                pass
         return 0
     except urllib.error.HTTPError as e:
         # 401/403 means server is up but auth failed - health is OK

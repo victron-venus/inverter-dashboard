@@ -2,12 +2,11 @@
 Version management and self-update functionality
 """
 
+import logging
 import os
 import sys
-import logging
 
 import httpx
-
 
 from .config import GITHUB_RAW_URL, SELF_UPDATE_ENABLED, UPDATE_PIN
 
@@ -31,7 +30,7 @@ def get_version() -> str:
                 version_path = os.path.join(os.path.dirname(__file__), "VERSION")
         with open(version_path, "r", encoding="utf-8") as f:
             return f.read().strip()
-    except (OSError, IOError):
+    except OSError:
         return "dev"
 
 

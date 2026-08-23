@@ -2,10 +2,11 @@
 
 import pytest
 
-from inverter_dashboard.version import get_version, SelfUpdateDisabled
+from inverter_dashboard.version import SelfUpdateDisabled, get_version
 
 
 class TestGetVersion:
+    """Tests for get_version."""
     def test_returns_string(self):
         result = get_version()
         assert isinstance(result, str)
@@ -27,6 +28,7 @@ class TestGetVersion:
 
 
 class TestSelfUpdateDisabled:
+    """Tests for SelfUpdateDisabled behavior."""
     def test_is_exception(self):
         with pytest.raises(SelfUpdateDisabled):
             raise SelfUpdateDisabled("test")

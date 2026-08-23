@@ -4,28 +4,26 @@ Remote Web Dashboard for Inverter Control
 Connects to Cerbo GX via MQTT, serves dashboard via WebSocket
 """
 
+import argparse
 import asyncio
 import json
 import logging
-import argparse
 import os
-from pathlib import Path
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Callable, Any
+from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI, WebSocket, HTTPException, Request
+import uvicorn
+from aiomqtt import Client, MqttError
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-import uvicorn
 
-from aiomqtt import Client, MqttError
-
-from . import config
-from .config import MQTT_HOST, MQTT_PORT, WEB_PORT, DASHBOARD_SECRET
-from .version import VERSION, check_latest_version, download_and_update, SelfUpdateDisabled
-from . import websocket_handler
-from . import ha_client
+from . import config, ha_client, websocket_handler
+from .config import DASHBOARD_SECRET, MQTT_HOST, MQTT_PORT, WEB_PORT
+from .version import VERSION, SelfUpdateDisabled, check_latest_version, download_and_update
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -61,10 +59,10 @@ class MqttState:
 
             elif "/acload/" in topic:
                 self._handle_acload(topic, payload)
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.exception("MQTT message parse error: %s", e)
-        except Exception as e:
-            logger.exception("MQTT message error: %s", e)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logger.exception("MQTT message parse error")
+        except Exception:
+            logger.exception("MQTT message error")
 
     def _handle_acload(self, topic: str, payload: bytes) -> None:
         """Decode acload topic messages into power/name maps.
@@ -116,6 +114,7 @@ class MqttState:
 @dataclass
 class AppState:
     """Application state container."""
+
     mqtt_state: MqttState | None = None
     mqtt_client: Client | None = None
     mqtt_tasks: list[asyncio.Task] = None
@@ -184,7 +183,7 @@ def _start_mqtt_client():
         except Exception as e:  # pylint: disable=broad-except
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.exception("Unexpected error in message loop: %s", e)
+            logger.exception("Unexpected error in message loop")
 
     mqtt_task = asyncio.create_task(mqtt_connect_and_loop())
     _app_state.mqtt_tasks.append(mqtt_task)
@@ -199,6 +198,7 @@ def _start_ha_polling():
 
 def _start_version_check():
     """Start background version check task."""
+
     async def _bg_version_check():
         latest = await check_latest_version()
         if latest:
@@ -235,8 +235,8 @@ async def _shutdown_mqtt_client():
             # Cleanup already done in finally, re-raise to propagate cancellation
             _app_state.mqtt_client = None
             raise
-        except Exception as e:  # pylint: disable=broad-except
-            logger.exception("Error closing MQTT client: %s", e)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Error closing MQTT client")
         finally:
             if _app_state.mqtt_client:
                 _app_state.mqtt_client = None
