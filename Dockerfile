@@ -4,7 +4,10 @@
 # =============================================================================
 # Stage 1: Builder - install dependencies with uv into a virtual environment
 # =============================================================================
-FROM python@sha256:4fad23465a06cc5149a541fbec6f87e234a64dc0550f6bfdd2d290d8f03240df AS builder
+# Tag+digest pin: the -alpine tag keeps digest bumps inside the Alpine family.
+# A bare python@sha256:<digest> floats across variants and has silently
+# switched to Debian before, breaking apk (see PRs #92, #104).
+FROM python:3.14-alpine@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc AS builder
 
 WORKDIR /app
 
@@ -27,7 +30,7 @@ RUN uv sync --frozen --no-dev --no-editable --python python
 # =============================================================================
 # Stage 2: Runtime - minimal image with only the venv and app code
 # =============================================================================
-FROM python@sha256:4fad23465a06cc5149a541fbec6f87e234a64dc0550f6bfdd2d290d8f03240df AS runtime
+FROM python:3.14-alpine@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc AS runtime
 
 WORKDIR /app
 
