@@ -3,6 +3,7 @@
 
 class TestConfig:
     """Tests for config module defaults."""
+
     def test_defaults(self):
         from inverter_dashboard import config
 

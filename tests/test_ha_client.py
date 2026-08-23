@@ -15,6 +15,7 @@ from src.inverter_dashboard.ha_client import (
 # ---------------------------------------------------------------------------
 class TestSensorStateToSeconds:
     """Tests for _sensor_state_to_seconds."""
+
     def test_none_returns_zero(self):
         assert _sensor_state_to_seconds(None) == 0
 
@@ -57,6 +58,7 @@ class TestSensorStateToSeconds:
 # ---------------------------------------------------------------------------
 class TestBoolish:
     """Tests for _boolish."""
+
     def test_none_is_false(self):
         assert _boolish(None) is False
 
@@ -94,6 +96,7 @@ class TestBoolish:
 # ---------------------------------------------------------------------------
 class TestParseSwitchEntities:
     """Tests for _parse_ha_switch_entities."""
+
     def test_none_input(self):
         entities, labels = _parse_ha_switch_entities(None)
         assert not entities
@@ -161,6 +164,7 @@ class TestParseSwitchEntities:
 # ---------------------------------------------------------------------------
 class TestApplianceFieldValue:
     """Tests for _appliance_field_value."""
+
     def test_binary_sensor_on(self):
         assert (
             _appliance_field_value("dishwasher_running", "binary_sensor.dishwasher_running", "on")
@@ -205,6 +209,7 @@ class TestApplianceFieldValue:
 # ---------------------------------------------------------------------------
 class TestApplianceFallback:
     """Tests for _appliance_fallback."""
+
     def test_time_key(self):
         assert _appliance_fallback("washer_time") == 0
 
@@ -220,6 +225,7 @@ class TestApplianceFallback:
 # ---------------------------------------------------------------------------
 class TestDefaultSwitchLabel:
     """Tests for _default_switch_label."""
+
     def test_plain_key(self):
         assert _default_switch_label("recliner") == "RECLINER"
 
