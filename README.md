@@ -6,8 +6,6 @@
 [![CodeQL](https://github.com/victron-venus/inverter-dashboard/actions/workflows/codeql.yml/badge.svg)](https://github.com/victron-venus/inverter-dashboard/actions/workflows/codeql.yml)
 [![Trivy](https://github.com/victron-venus/inverter-dashboard/actions/workflows/trivy-fs.yml/badge.svg)](https://github.com/victron-venus/inverter-dashboard/actions/workflows/trivy-fs.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub stars](https://img.shields.io/github/stars/victron-venus/inverter-dashboard)](https://github.com/victron-venus/inverter-dashboard/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/victron-venus/inverter-dashboard)](https://github.com/victron-venus/inverter-dashboard/network/members)
 [![GitHub last commit](https://img.shields.io/github/last-commit/victron-venus/inverter-dashboard)](https://github.com/victron-venus/inverter-dashboard/commits/main)
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/victron-venus/inverter-dashboard/graphs/commit-activity)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
