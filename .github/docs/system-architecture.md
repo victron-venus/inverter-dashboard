@@ -25,7 +25,7 @@ flowchart LR
 
     INV -->|"inverter/state"| MQTT
     MQTT -->|"subscribe"| WS
-    DP -->|"N/&lt;portal&gt;/tank/21/Level<br/>N/&lt;portal&gt;/pump/startstop*/State<br/>(CERBO_PORTAL_ID)"| MQTT
+    DP -->|"N/&lt;portal&gt;/tank/21/Level<br/>N/&lt;portal&gt;/pump/*/State<br/>(CERBO_PORTAL_ID)"| MQTT
     WS -->|"push state"| UI
     HA -->|"booleans / appliance sensors"| API
     API -->|"merge"| WS
@@ -160,7 +160,7 @@ flowchart LR
     DP --> PUMP["pump.startstop1/2"]
     TANK --> BRK["MQTT broker<br/>(bridged with Cerbo)"]
     PUMP --> BRK
-    BRK -->|"N/&lt;portal&gt;/tank/21/Level<br/>N/&lt;portal&gt;/pump/startstop*/State"| MS["MqttState._handle_water"]
+    BRK -->|"N/&lt;portal&gt;/tank/21/Level<br/>N/&lt;portal&gt;/pump/*/State"| MS["MqttState._handle_water"]
     MS --> WS["WebSocket → browser water card"]
 ```
 

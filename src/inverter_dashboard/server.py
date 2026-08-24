@@ -109,7 +109,7 @@ class MqttState:
         """Decode dbus-pump water topics into state keys.
 
         Topic structure: N/<portal_id>/tank/<instance>/Level and
-        N/<portal_id>/pump/startstop<instance>/State (Venus MQTT-GUI format,
+        N/<portal_id>/pump/<instance>/State (Venus MQTT-GUI format,
         payload {"value": ...}). Requires CERBO_PORTAL_ID to be configured.
         """
         if not config.CERBO_PORTAL_ID:
@@ -124,13 +124,14 @@ class MqttState:
         except (ValueError, AttributeError):
             return
 
+        # Venus bridges pump.startstop services as N/<portal>/pump/<instance>/State
         if service_type == "tank" and device == str(config.WATER_TANK_INSTANCE):
             if path == "Level" and isinstance(val, (int, float)):
                 self.current_state["water_level"] = float(val)
         elif service_type == "pump" and path == "State" and isinstance(val, (int, float)):
-            if device == f"startstop{config.WATER_VALVE_INSTANCE}":
+            if device == str(config.WATER_VALVE_INSTANCE):
                 self.current_state["water_valve"] = bool(val)
-            elif device == f"startstop{config.WATER_PUMP_INSTANCE}":
+            elif device == str(config.WATER_PUMP_INSTANCE):
                 self.current_state["pump_switch"] = bool(val)
 
     def get_state(self) -> dict[str, Any]:

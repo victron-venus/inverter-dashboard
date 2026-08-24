@@ -29,15 +29,15 @@ def test_tank_level_sets_water_level(portal_cfg):
 
 
 def test_valve_and_pump_states(portal_cfg):
-    portal_cfg.handle_water(f"N/{PORTAL}/pump/startstop2/State", _msg(1))
-    portal_cfg.handle_water(f"N/{PORTAL}/pump/startstop1/State", _msg(0))
+    portal_cfg.handle_water(f"N/{PORTAL}/pump/2/State", _msg(1))
+    portal_cfg.handle_water(f"N/{PORTAL}/pump/1/State", _msg(0))
     assert portal_cfg.current_state["water_valve"] is True
     assert portal_cfg.current_state["pump_switch"] is False
 
 
 def test_other_portal_ignored(portal_cfg):
     portal_cfg.handle_water("N/other/tank/21/Level", _msg(10))
-    portal_cfg.handle_water("N/other/pump/startstop2/State", _msg(1))
+    portal_cfg.handle_water("N/other/pump/2/State", _msg(1))
     assert portal_cfg.current_state == {}
 
 
