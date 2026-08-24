@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from aiomqtt import Client, MqttError
+from aiomqtt import Client, MqttError, TLSParameters
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -184,14 +184,19 @@ def _verify_secret(request: Request, token: str | None = None) -> None:
 def _start_mqtt_client():
     """Start MQTT client connection and message loop."""
     _app_state.mqtt_state = MqttState()
-    _app_state.mqtt_client = Client(
-        hostname=config.MQTT_HOST,
-        port=config.MQTT_PORT,
-        username=config.MQTT_USERNAME,
-        password=config.MQTT_PASSWORD,
-        tls_params=None,
-        tls_insecure=False,
-    )
+    # NB: tls_insecure must not be passed without an SSL context - paho raises
+    # ValueError and the message-loop task would die silently at startup.
+    client_kwargs: dict[str, Any] = {
+        "hostname": config.MQTT_HOST,
+        "port": config.MQTT_PORT,
+        "username": config.MQTT_USERNAME,
+        "password": config.MQTT_PASSWORD,
+    }
+    if config.MQTT_TLS:
+        client_kwargs["tls_params"] = TLSParameters(
+            ca_certs=config.MQTT_CA_CERT or None
+        )
+    _app_state.mqtt_client = Client(**client_kwargs)
     _app_state.mqtt_state.set_state_callback(websocket_handler.broadcast_state)
     websocket_handler.set_mqtt_state(_app_state.mqtt_state)
 

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- MQTT message loop never connected: passing `tls_insecure` without an SSL
+  context made paho raise `ValueError`, killing the loop task silently at
+  startup. TLS params are now only passed when `MQTT_TLS` is enabled.
+
 ### Changed
 - **Water system migrated from Home Assistant to dbus-pump via Cerbo MQTT** (no HA):
   - New `CERBO_PORTAL_ID` config (+ `WATER_TANK_INSTANCE` / `WATER_PUMP_INSTANCE` /
