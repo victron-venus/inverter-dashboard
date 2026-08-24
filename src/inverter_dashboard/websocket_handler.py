@@ -167,15 +167,31 @@ def build_payload() -> dict[str, Any]:
     )
 
 
+# Runtime-editable UI settings (dashboard_settings.json via /api/settings)
+_ui_settings: dict[str, Any] = {}
+
+
+def set_ui_settings(settings: dict[str, Any]) -> None:
+    """Hot-apply saved settings to the broadcast pipeline."""
+    global _ui_settings
+    _ui_settings = dict(settings)
+
+
+def get_ui_settings() -> dict[str, Any]:
+    """Currently applied settings (defaults + persisted overrides)."""
+    return dict(_ui_settings)
+
+
 def _with_ui_config(payload: dict[str, Any]) -> dict[str, Any]:
     """Merge local_config-derived ui_config (e.g. home_buttons) into payload."""
     patch = ha_client.ui_config_patch()
-    if not patch:
-        return payload
     out = dict(payload)
     uc = dict(out.get("ui_config") or {})
+    if _ui_settings:
+        uc["settings"] = {k: v for k, v in _ui_settings.items() if k.startswith("show_")}
     uc.update(patch)
-    out["ui_config"] = uc
+    if uc:
+        out["ui_config"] = uc
     return out
 
 
