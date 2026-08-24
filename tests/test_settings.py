@@ -27,7 +27,31 @@ class TestSettingsStore:
 
     def test_unknown_key_rejected(self):
         with pytest.raises(ValueError, match="unknown setting"):
-            settings_store.save_settings({"mqtt_password": "hunter2"})
+            settings_store.save_settings({"not_a_setting": "x"})
+
+    def test_connection_secrets_masked_on_load(self):
+        settings_store.save_settings({"ha_token": "tok123", "mqtt_password": "pw"})
+        masked = settings_store.load_settings(mask_secrets=True)
+        assert masked["ha_token"] == "***"
+        assert masked["mqtt_password"] == "***"
+        raw = settings_store.load_settings()
+        assert raw["ha_token"] == "tok123"
+
+    def test_wrong_type_port_rejected(self):
+        with pytest.raises(ValueError, match="must be int"):
+            settings_store.save_settings({"mqtt_port": "1883"})
+
+    def test_apply_connection_overrides(self):
+        from inverter_dashboard import config as cfgmod
+
+        settings_store.save_settings(
+            {"mqtt_host": "broker.local", "mqtt_port": 8883, "ha_url": "http://ha:8123"}
+        )
+        # ha_client not configured → override_credentials just records url/token
+        applied = settings_store.apply_connection_overrides()
+        assert applied >= 1
+        assert cfgmod.MQTT_HOST == "broker.local"
+        assert cfgmod.MQTT_PORT == 8883
 
     def test_wrong_type_rejected(self):
         with pytest.raises(ValueError, match="must be bool"):
@@ -79,6 +103,7 @@ async def test_ws_set_settings_action_persists_and_applies():
 
     class FakeMqttClient:  # pylint: disable=too-few-public-methods
         """No-op MQTT client stub."""
+
         async def publish(self, topic, payload):  # unused for this action
             saved["published"] = (topic, payload)
 

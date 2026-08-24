@@ -1,12 +1,11 @@
 """
 Dashboard settings persistence (JSON file next to local_config).
 
-Covers runtime-editable settings: UI section visibility + camera topic.
-Secrets (MQTT/HA credentials) intentionally stay in env/local_config —
-they are not exposed or writable through this API.
-
-Hot-applied keys take effect on the next broadcast; camera_topic needs
-a process restart to re-subscribe.
+Covers runtime-editable UI settings (section visibility + camera topic)
+and connection overrides (MQTT host/port/credentials, HA URL/token) that
+take effect at next startup — env < dashboard_settings.json < CLI flag.
+Secrets are stored plaintext in the settings file (same trust level as
+local_config.py); GET /api/settings masks them.
 """
 
 import json
@@ -14,6 +13,7 @@ import logging
 import os
 from typing import Any
 
+from . import config
 from .config import CAMERA_TOPIC
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,17 @@ ALLOWED_KEYS = {
     "show_ha_media": bool,
     "show_ha_scenes": bool,
     "show_ha_weather": bool,
+    # Connection overrides (applied at startup; restart required)
+    "mqtt_host": str,
+    "mqtt_port": int,
+    "mqtt_username": str,
+    "mqtt_password": str,
+    "ha_url": str,
+    "ha_token": str,
 }
+
+# Settings that must be masked in API responses.
+SECRET_KEYS = ("mqtt_password", "ha_token")
 
 DEFAULTS: dict[str, Any] = {
     "camera_topic": CAMERA_TOPIC,
@@ -43,6 +53,20 @@ DEFAULTS: dict[str, Any] = {
     "show_ha_media": True,
     "show_ha_scenes": True,
     "show_ha_weather": True,
+    "mqtt_host": config.MQTT_HOST,
+    "mqtt_port": config.MQTT_PORT,
+    "mqtt_username": config.MQTT_USERNAME,
+    "mqtt_password": "",
+    "ha_url": "",
+    "ha_token": "",
+}
+
+# Connection keys → config module attribute (mqtt_*) or ha_client override (ha_*)
+_CONFIG_ATTRS = {
+    "mqtt_host": "MQTT_HOST",
+    "mqtt_port": "MQTT_PORT",
+    "mqtt_username": "MQTT_USERNAME",
+    "mqtt_password": "MQTT_PASSWORD",
 }
 
 
@@ -55,8 +79,11 @@ def settings_path() -> str:
     return os.path.join(repo_root, "dashboard_settings.json")
 
 
-def load_settings() -> dict[str, Any]:
-    """Defaults overlaid with the persisted file (unknown/invalid entries ignored)."""
+def load_settings(mask_secrets: bool = False) -> dict[str, Any]:
+    """Defaults overlaid with the persisted file (unknown/invalid entries ignored).
+
+    mask_secrets=True replaces secret values with "***" (set vs empty only).
+    """
     out = dict(DEFAULTS)
     try:
         with open(settings_path(), encoding="utf-8") as f:
@@ -67,7 +94,33 @@ def load_settings() -> dict[str, Any]:
                     out[k] = stored[k]
     except (OSError, json.JSONDecodeError):
         pass
+    if mask_secrets:
+        for k in SECRET_KEYS:
+            out[k] = "***" if out.get(k) else ""
     return out
+
+
+def apply_connection_overrides() -> int:
+    """Apply persisted connection overrides to config + ha_client at startup.
+
+    Only non-empty stored values win over env defaults. Returns count applied.
+    """
+    from . import ha_client
+
+    applied = 0
+    for key, attr in _CONFIG_ATTRS.items():
+        val = load_settings().get(key)
+        if val not in (None, "") and val != DEFAULTS.get(key):
+            setattr(config, attr, val)
+            applied += 1
+    ha_url = load_settings().get("ha_url")
+    ha_token = load_settings().get("ha_token")
+    if ha_url or ha_token:
+        ha_client.override_credentials(url=ha_url or None, token=ha_token or None)
+        applied += 1
+    if applied:
+        logger.info("Applied %d connection override(s) from settings file", applied)
+    return applied
 
 
 def save_settings(patch: dict[str, Any]) -> dict[str, Any]:
