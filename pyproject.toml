@@ -53,6 +53,7 @@ disable = [
     "W0718",  # Catching general Exception
     "W0613",  # Unused argument
     "W0603",  # global-statement: load_config() deliberately populates module-level config caches
+    "R0912",  # Too many branches (MqttState.on_message topic dispatch)
     "C0415",  # import-outside-toplevel: local_config is imported lazily at runtime
     "W0621",  # redefined-outer-name: pytest fixtures are injected as same-named args
     "W0212",  # protected-access: unit tests exercise internal helpers

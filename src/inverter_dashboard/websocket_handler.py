@@ -126,6 +126,9 @@ class InverterState(BaseModel):
     # Notifications (inverter-control pushes + Victron alarm transitions)
     notifications: list[dict[str, Any]] | None = None
 
+    # Latest camera event (Frigate): {camera, url, ts}
+    camera_event: dict[str, Any] | None = None
+
 
 # Mutable module-level state (avoids global statements)
 _state: dict[str, Any] = {"latest_version": None, "mqtt_state": None}
@@ -157,6 +160,7 @@ def build_payload() -> dict[str, Any]:
             **filtered,
             "console": mqtt.get_console()[-CONSOLE_SEND_LINES:],
             "notifications": mqtt.get_notifications(),
+            "camera_event": mqtt.camera_event,
             "dashboard_version": VERSION,
             "latest_version": _state["latest_version"],
         }
