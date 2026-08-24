@@ -40,15 +40,11 @@ class TestDownloadAndUpdate:
     """Tests for download_and_update."""
 
     def _enable(self, monkeypatch, pin=""):
-        import inverter_dashboard.version as vmod
-
-        monkeypatch.setattr(vmod, "SELF_UPDATE_ENABLED", True)
-        monkeypatch.setattr(vmod, "UPDATE_PIN", pin)
+        monkeypatch.setattr("inverter_dashboard.version.SELF_UPDATE_ENABLED", True)
+        monkeypatch.setattr("inverter_dashboard.version.UPDATE_PIN", pin)
 
     def test_raises_when_disabled(self, monkeypatch):
-        import inverter_dashboard.version as vmod
-
-        monkeypatch.setattr(vmod, "SELF_UPDATE_ENABLED", False)
+        monkeypatch.setattr("inverter_dashboard.version.SELF_UPDATE_ENABLED", False)
         with pytest.raises(SelfUpdateDisabled):
             download_and_update()
 
