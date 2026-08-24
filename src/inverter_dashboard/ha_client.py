@@ -38,6 +38,9 @@ _switch_labels: dict[str, str] = {}
 _appliance_entities: dict[str, str] = {}
 _sensor_entities: dict[str, Any] = {}
 
+# Rich display entities (local_config.HA_FILTERED_ENTITIES): covers/media_players/scenes/numbers/sensors lists + weather entity
+_filtered_entities: dict[str, Any] = {}
+
 # Latest overlay merged into WebSocket payloads (replaced wholesale on each HA poll)
 _overlay: dict[str, Any] = {
     "booleans": {},
@@ -179,6 +182,7 @@ def load_config():
     global _boolean_entities, _switch_entities, _switch_labels
     global _appliance_entities
     global _sensor_entities
+    global _filtered_entities
 
     _prepend_local_config_import_path()
 
@@ -190,6 +194,7 @@ def load_config():
         _switch_entities = {}
         _switch_labels = {}
         _appliance_entities = {}
+        _filtered_entities = {}
         logger.info("local_config.py not found — switch state from MQTT only")
         return
 
@@ -206,6 +211,7 @@ def load_config():
     _switch_labels = {**_embedded_lab, **_manual_lab}
     _appliance_entities = dict(getattr(sc, "HA_APPLIANCE_ENTITIES", {}) or {})
     _sensor_entities = dict(getattr(sc, "HA_SENSOR_ENTITIES", {}) or {})
+    _filtered_entities = dict(getattr(sc, "HA_FILTERED_ENTITIES", {}) or {})
 
     _configured = bool(_url and _token and _token != "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN")
     if _direct and not _configured:
@@ -316,6 +322,135 @@ async def _get_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -
         return None
 
 
+async def _get_full_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -> dict | None:
+    """GET /api/states/{entity_id} → full state doc (state + attributes) or None."""
+    safe = quote(entity_id, safe="")
+    try:
+        r = await client.get(f"{_url}/api/states/{safe}", headers=headers)
+        if r.status_code != 200:
+            return None
+        doc = r.json()
+        return doc if isinstance(doc, dict) and "entity_id" in doc else None
+    except (httpx.HTTPError, json.JSONDecodeError):
+        return None
+
+
+def _friendly_name(doc: dict) -> str:
+    attrs = doc.get("attributes") or {}
+    name = attrs.get("friendly_name") or doc.get("entity_id") or ""
+    return str(name)
+
+
+def _cover_display(doc: dict) -> dict[str, Any]:
+    attrs = doc.get("attributes") or {}
+    pos = attrs.get("current_position")
+    if not isinstance(pos, (int, float)):
+        pos = 100 if doc.get("state") == "open" else 0
+    return {"entity_id": doc["entity_id"], "name": _friendly_name(doc), "position": int(pos)}
+
+
+def _number_display(doc: dict) -> dict[str, Any] | None:
+    value = _parse_numeric_state(doc.get("state"))
+    if value is None:
+        return None
+    attrs = doc.get("attributes") or {}
+    return {
+        "entity_id": doc["entity_id"],
+        "name": _friendly_name(doc),
+        "value": value,
+        "min": attrs.get("min", 0),
+        "max": attrs.get("max", 100),
+        "step": attrs.get("step", 1),
+        "unit": attrs.get("unit_of_measurement") or "",
+    }
+
+
+def _sensor_display(doc: dict) -> dict[str, Any]:
+    attrs = doc.get("attributes") or {}
+    return {
+        "entity_id": doc["entity_id"],
+        "name": _friendly_name(doc),
+        "state": str(doc.get("state") or ""),
+        "unit": attrs.get("unit_of_measurement") or "",
+    }
+
+
+def _weather_display(doc: dict) -> dict[str, Any]:
+    attrs = doc.get("attributes") or {}
+    return {
+        "entity_id": doc["entity_id"],
+        "name": _friendly_name(doc),
+        "state": str(doc.get("state") or ""),
+        "temperature": attrs.get("temperature"),
+        "unit": attrs.get("temperature_unit") or "",
+        "forecast": attrs.get("forecast") or [],
+    }
+
+
+def _filtered_skeleton() -> dict[str, Any]:
+    return {
+        "sensors": [],
+        "numbers": [],
+        "covers": [],
+        "media_players": [],
+        "scenes": [],
+        "weather": None,
+    }
+
+
+def build_filtered_displays(docs: dict[str, dict | None], cfg: dict[str, Any]) -> dict[str, Any]:
+    """Map fetched HA state docs to the HaFilteredData display shape (pure; testable)."""
+    out = _filtered_skeleton()
+    for eid in cfg.get("sensors") or []:
+        doc = docs.get(eid)
+        if doc:
+            out["sensors"].append(_sensor_display(doc))
+    for eid in cfg.get("numbers") or []:
+        doc = docs.get(eid)
+        if doc:
+            disp = _number_display(doc)
+            if disp:
+                out["numbers"].append(disp)
+    for eid in cfg.get("covers") or []:
+        doc = docs.get(eid)
+        if doc:
+            out["covers"].append(_cover_display(doc))
+    for eid in cfg.get("media_players") or []:
+        doc = docs.get(eid)
+        if doc:
+            out["media_players"].append(
+                {
+                    "entity_id": doc["entity_id"],
+                    "name": _friendly_name(doc),
+                    "state": str(doc.get("state") or ""),
+                }
+            )
+    for eid in cfg.get("scenes") or []:
+        doc = docs.get(eid)
+        if doc:
+            out["scenes"].append({"entity_id": doc["entity_id"], "name": _friendly_name(doc)})
+    weather_eid = cfg.get("weather")
+    wdoc = docs.get(weather_eid) if weather_eid else None
+    if wdoc:
+        out["weather"] = _weather_display(wdoc)
+    return out
+
+
+async def _fetch_filtered(client: httpx.AsyncClient, headers: dict) -> dict[str, Any]:
+    """Fetch every configured rich-entity state doc and map it for the UI."""
+    wanted: list[str] = []
+    for key in ("sensors", "numbers", "covers", "media_players", "scenes"):
+        wanted.extend(e for e in (_filtered_entities.get(key) or []) if e not in wanted)
+    weather_eid = _filtered_entities.get("weather")
+    if weather_eid and weather_eid not in wanted:
+        wanted.append(weather_eid)
+
+    docs: dict[str, dict | None] = {}
+    for eid in wanted:
+        docs[eid] = await _get_full_state(client, headers, eid)
+    return build_filtered_displays(docs, _filtered_entities)
+
+
 async def fetch_states_once() -> dict[str, Any]:
     """Fetch all configured entities; returns overlay dict for merging into MQTT state."""
     if not is_direct_mode():
@@ -352,6 +487,9 @@ async def fetch_states_once() -> dict[str, Any]:
                         out[key] = None
                 else:
                     out[key] = None
+
+            if _filtered_entities:
+                out["ha_filtered"] = await _fetch_filtered(client, headers)
             return out
 
     except httpx.HTTPError as e:
@@ -370,6 +508,8 @@ def _apply_connected_overlay(merged: dict[str, Any], o: dict[str, Any]) -> None:
     for k in _sensor_entities:
         if k in o:
             merged[k] = o[k]
+    if o.get("ha_filtered"):
+        merged["ha_filtered"] = o["ha_filtered"]
 
 
 def _apply_disconnected_overlay(merged: dict[str, Any]) -> None:
