@@ -66,3 +66,31 @@ def test_set_ui_settings_filters_visibility_into_payload():
     vis = payload["ui_config"]["settings"]
     assert vis["show_ev"] is False
     assert "camera_topic" not in vis  # visibility keys only
+
+
+async def test_ws_set_settings_action_persists_and_applies():
+    """WS 'set_settings' validates, persists, hot-applies."""
+    import asyncio
+    import json
+
+    from inverter_dashboard import server
+
+    saved = {}
+
+    class FakeMqttClient:  # pylint: disable=too-few-public-methods
+        """No-op MQTT client stub."""
+        async def publish(self, topic, payload):  # unused for this action
+            saved["published"] = (topic, payload)
+
+    server.websocket_handler._ui_settings = {}
+    from inverter_dashboard.websocket_handler import _dispatch_action
+
+    await _dispatch_action("set_settings", {"show_ev": False}, FakeMqttClient())
+    await asyncio.sleep(0)
+    assert websocket_handler.get_ui_settings()["show_ev"] is False
+    assert settings_store.load_settings()["show_ev"] is False
+
+    # invalid patch ignored
+    await _dispatch_action("set_settings", {"nope": True}, FakeMqttClient())
+    assert "nope" not in websocket_handler.get_ui_settings()
+    assert json.dumps(saved) is not None  # silence unused

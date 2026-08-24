@@ -10,7 +10,7 @@ from aiomqtt import Client
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict
 
-from . import ha_client
+from . import ha_client, settings_store
 from .config import CONSOLE_SEND_LINES, DEFAULT_LOOP_INTERVAL, DEFAULT_POWER_MAX, DEFAULT_POWER_MIN
 from .version import VERSION
 
@@ -251,6 +251,14 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Clien
             "loop_interval",
             {"interval": data.get("interval", DEFAULT_LOOP_INTERVAL)},
         )
+    elif action == "set_settings":
+        try:
+            saved = settings_store.save_settings(data)
+        except ValueError:
+            logger.warning("Rejected invalid settings patch: %s", list(data))
+            return
+        set_ui_settings(saved)
+        await broadcast_state()
 
 
 async def handle_websocket(websocket: WebSocket, app_state):
