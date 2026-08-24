@@ -33,8 +33,6 @@ _poll_interval = 12.0
 
 _boolean_entities: dict[str, str] = {}
 _switch_entities: dict[str, str] = {}
-_water_valve = ""
-_water_pump = ""
 _switch_labels: dict[str, str] = {}
 # Dashboard keys -> HA entity IDs (washer/dishwasher telemetry omitted from MQTT when inverter-control uses MQTT_SLIM_STATE)
 _appliance_entities: dict[str, str] = {}
@@ -178,7 +176,7 @@ def _appliance_fallback(state_key: str) -> Any:
 def load_config():
     """Import local_config if present (see local_config.example.py)."""
     global _configured, _url, _token, _direct, _poll_interval
-    global _boolean_entities, _switch_entities, _water_valve, _water_pump, _switch_labels
+    global _boolean_entities, _switch_entities, _switch_labels
     global _appliance_entities
     global _sensor_entities
 
@@ -206,8 +204,6 @@ def load_config():
     _switch_entities = _parsed_ent
     _manual_lab = dict(getattr(sc, "HA_SWITCH_LABELS", {}) or {})
     _switch_labels = {**_embedded_lab, **_manual_lab}
-    _water_valve = getattr(sc, "HA_WATER_VALVE_ENTITY", "") or ""
-    _water_pump = getattr(sc, "HA_PUMP_SWITCH_ENTITY", "") or ""
     _appliance_entities = dict(getattr(sc, "HA_APPLIANCE_ENTITIES", {}) or {})
     _sensor_entities = dict(getattr(sc, "HA_SENSOR_ENTITIES", {}) or {})
 
@@ -258,10 +254,6 @@ def is_toggle_allowed(entity_id: str) -> bool:
     if not entity_id or not _configured:
         return False
     allowed = set(_boolean_entities.values()) | set(_switch_entities.values())
-    if _water_valve:
-        allowed.add(_water_valve)
-    if _water_pump:
-        allowed.add(_water_pump)
     return entity_id in allowed
 
 
@@ -344,13 +336,6 @@ async def fetch_states_once() -> dict[str, Any]:
                 st = await _get_state(client, headers, eid)
                 out[key] = st == "on"
 
-            if _water_valve:
-                st = await _get_state(client, headers, _water_valve)
-                out["water_valve"] = st == "on"
-            if _water_pump:
-                st = await _get_state(client, headers, _water_pump)
-                out["pump_switch"] = st == "on"
-
             for key, eid in _appliance_entities.items():
                 st = await _get_state(client, headers, eid)
                 out[key] = _appliance_field_value(key, eid, st)
@@ -379,10 +364,6 @@ def _apply_connected_overlay(merged: dict[str, Any], o: dict[str, Any]) -> None:
     merged["booleans"] = dict(o.get("booleans") or {})
     for k in _switch_entities:
         merged[k] = bool(o.get(k))
-    if _water_valve:
-        merged["water_valve"] = bool(o.get("water_valve"))
-    if _water_pump:
-        merged["pump_switch"] = bool(o.get("water_pump"))
     for k in _appliance_entities:
         if k in o:
             merged[k] = o[k]
@@ -396,10 +377,6 @@ def _apply_disconnected_overlay(merged: dict[str, Any]) -> None:
     merged["booleans"] = dict.fromkeys(_boolean_entities, False)
     for k in _switch_entities:
         merged[k] = False
-    if _water_valve:
-        merged["water_valve"] = False
-    if _water_pump:
-        merged["pump_switch"] = False
     for k in _appliance_entities:
         merged[k] = _appliance_fallback(k)
 

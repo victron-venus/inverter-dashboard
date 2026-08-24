@@ -45,6 +45,13 @@ class Config(BaseSettings):
     HA_POLL_TIMEOUT: float = 20.0
     HA_REQUEST_TIMEOUT: float = 15.0
 
+    # Water system — dbus-pump via Cerbo MQTT (empty portal ID disables water).
+    # Instances must match dbus-pump's local_config.py.
+    CERBO_PORTAL_ID: str = ""
+    WATER_TANK_INSTANCE: int = 21
+    WATER_PUMP_INSTANCE: int = 1
+    WATER_VALVE_INSTANCE: int = 2
+
     # GitHub repository for updates
     GITHUB_REPO: str = "victron-venus/inverter-dashboard"
 
@@ -83,3 +90,7 @@ HA_POLL_TIMEOUT = config.HA_POLL_TIMEOUT
 HA_REQUEST_TIMEOUT = config.HA_REQUEST_TIMEOUT
 GITHUB_REPO = config.GITHUB_REPO
 GITHUB_RAW_URL = config.GITHUB_RAW_URL
+CERBO_PORTAL_ID = config.CERBO_PORTAL_ID
+WATER_TANK_INSTANCE = config.WATER_TANK_INSTANCE
+WATER_PUMP_INSTANCE = config.WATER_PUMP_INSTANCE
+WATER_VALVE_INSTANCE = config.WATER_VALVE_INSTANCE

@@ -9,10 +9,14 @@ flowchart LR
         INV["inverter-control"]
     end
 
+    subgraph GX["Cerbo GX"]
+        DP["dbus-pump<br/>(water)"]
+    end
+
     subgraph Dashboard["inverter-dashboard"]
         WS["WebSocket"]
         API["API Server"]
-        HA["Home Assistant<br/>(optional)"]
+        HA["Home Assistant<br/>(optional, non-water)"]
     end
 
     subgraph Client["Browser Clients"]
@@ -21,8 +25,9 @@ flowchart LR
 
     INV -->|"inverter/state"| MQTT
     MQTT -->|"subscribe"| WS
+    DP -->|"N/&lt;portal&gt;/tank/21/Level<br/>N/&lt;portal&gt;/pump/startstop*/State<br/>(CERBO_PORTAL_ID)"| MQTT
     WS -->|"push state"| UI
-    HA -->|"sensor data"| API
+    HA -->|"booleans / appliance sensors"| API
     API -->|"merge"| WS
 
     style WS fill:#4ecdc4,color:#fff
@@ -116,7 +121,6 @@ docker restart inverter-dashboard
 
 **Symptoms:**
 - Appliance status not showing
-- Water level N/A
 
 **Actions:**
 ```bash
@@ -126,6 +130,38 @@ curl -s -H "Authorization: Bearer $HA_TOKEN" \
 
 # Check site_config.py has correct entity IDs
 docker exec inverter-dashboard cat /app/config/site_config.py
+```
+
+### Water Level / Valve / Pump Missing
+
+**Symptoms:**
+- Water card not showing values
+
+**Actions:**
+```bash
+# Water comes from dbus-pump via Cerbo MQTT (not HA).
+# Verify dbus-pump publishes on the broker the dashboard connects to:
+mosquitto_sub -v -t 'N/+/tank/+/Level' -t 'N/+/pump/+/State' -C 5
+
+# Check CERBO_PORTAL_ID is set and matches `dbus-send --system --print-reply
+# --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames` output on the GX,
+# and WATER_TANK/PUMP/VALVE_INSTANCE match dbus-pump local_config.py.
+docker exec inverter-dashboard env | grep -E 'CERBO|WATER'
+```
+
+### Water Data Flow
+
+Water is sourced exclusively from [dbus-pump](https://github.com/victron-venus/dbus-pump)
+on the Cerbo GX — no Home Assistant involved:
+
+```mermaid
+flowchart LR
+    DP["dbus-pump"] --> TANK["tank.ha_tank21"]
+    DP --> PUMP["pump.startstop1/2"]
+    TANK --> BRK["MQTT broker<br/>(bridged with Cerbo)"]
+    PUMP --> BRK
+    BRK -->|"N/&lt;portal&gt;/tank/21/Level<br/>N/&lt;portal&gt;/pump/startstop*/State"| MS["MqttState._handle_water"]
+    MS --> WS["WebSocket → browser water card"]
 ```
 
 ---

@@ -35,6 +35,7 @@ Real-time web dashboard for monitoring Victron inverter systems via MQTT. Design
 flowchart TD
     subgraph Venus["Venus OS (Cerbo GX)"]
         INV["inverter-control"]
+        DP["dbus-pump (water)"]
         MQTT["MQTT Broker"]
     end
 
@@ -49,10 +50,19 @@ flowchart TD
     end
 
     INV -->|inverter/state| MQTT
+    DP -.->|"N/&lt;portal&gt;/tank/21/Level<br/>N/&lt;portal&gt;/pump/startstop*/State"| MQTT
     MQTT -.->|subscribe| WS
     WS -->|push state| UI
     UI --> BROWSER & MOBILE
 ```
+
+### Water system
+
+Water data comes **exclusively** from [dbus-pump](https://github.com/victron-venus/dbus-pump)
+via Cerbo MQTT — no Home Assistant involved. Enable it by setting `CERBO_PORTAL_ID`
+(plus optional `WATER_TANK_INSTANCE` / `WATER_PUMP_INSTANCE` / `WATER_VALVE_INSTANCE`,
+defaults 21/1/2, matching dbus-pump's `local_config.py`). Valve/pump automation lives in
+dbus-pump; the dashboard is read-only.
 
 ---
 
@@ -175,7 +185,7 @@ This repository follows a multi-channel release strategy managed by GitHub Actio
 - Interactive controls via WebSocket
 - Live power charts with uPlot
 - EV charging status
-- Water system monitoring
+- Water system monitoring (dbus-pump via Cerbo MQTT)
 - Home automation controls
 - Mobile-friendly responsive UI
 
@@ -218,6 +228,8 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 | `MQTT_PORT` | `1883` | MQTT broker port |
 | `WEB_PORT` | `8080` | Web server port (inside the container) |
 | `INVERTER_DASHBOARD_CONFIG` | `/app/config` | Host folder mounted read-only: `local_config.py` and optional TLS files |
+| `CERBO_PORTAL_ID` | *(empty)* | Cerbo GX VRM portal ID — enables dbus-pump water subscription when set |
+| `WATER_TANK_INSTANCE` / `WATER_PUMP_INSTANCE` / `WATER_VALVE_INSTANCE` | `21` / `1` / `2` | D-Bus device instances on the GX (must match dbus-pump) |
 
 ### Secrets (`local_config.py`) + optional HTTPS
 
