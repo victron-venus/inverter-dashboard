@@ -43,3 +43,4 @@ build/
 
 .scannerwork
 local_config.py
+.coverage
