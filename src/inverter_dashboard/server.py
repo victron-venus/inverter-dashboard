@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config, ha_client, settings_store, websocket_handler
-from .config import DASHBOARD_SECRET, MQTT_HOST, MQTT_PORT, WEB_PORT
+from .config import DASHBOARD_SECRET, WEB_PORT
 from .version import VERSION, SelfUpdateDisabled, check_latest_version, download_and_update
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -460,6 +460,7 @@ async def lifespan(_app: FastAPI):
     """Application lifespan handler"""
     # Startup
     ha_client.load_config()
+    settings_store.apply_connection_overrides()  # file wins over env; CLI applied later wins over file
     websocket_handler.set_ui_settings(settings_store.load_settings())
     _start_mqtt_client()
     ha_task = _start_ha_polling()
@@ -528,7 +529,7 @@ async def websocket_endpoint(websocket: WebSocket):
 async def api_settings_get(request: Request):
     """Current dashboard settings (section visibility, camera topic)."""
     _verify_secret(request)
-    return {"ok": True, "settings": settings_store.load_settings()}
+    return {"ok": True, "settings": settings_store.load_settings(mask_secrets=True)}
 
 
 @app.post(
@@ -613,16 +614,19 @@ async def api_update(request: Request):
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Remote Web Dashboard for Inverter Control")
-    parser.add_argument("--mqtt-host", default=MQTT_HOST, help="MQTT broker host")
-    parser.add_argument("--mqtt-port", type=int, default=MQTT_PORT, help="MQTT broker port")
+    parser.add_argument("--mqtt-host", default=None, help="MQTT broker host")
+    parser.add_argument("--mqtt-port", type=int, default=None, help="MQTT broker port")
     parser.add_argument("--port", type=int, default=WEB_PORT, help="Web server port")
     parser.add_argument("--ssl-cert", help="SSL certificate file")
     parser.add_argument("--ssl-key", help="SSL key file")
     args = parser.parse_args()
 
-    # Update config
-    config.MQTT_HOST = args.mqtt_host
-    config.MQTT_PORT = args.mqtt_port
+    # Update config: settings-file overrides already applied via lifespan;
+    # explicit CLI flags win over both.
+    if args.mqtt_host is not None:
+        config.MQTT_HOST = args.mqtt_host
+    if args.mqtt_port is not None:
+        config.MQTT_PORT = args.mqtt_port
 
     proto = "https" if args.ssl_cert else "http"
     if not DASHBOARD_SECRET:

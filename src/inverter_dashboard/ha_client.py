@@ -220,6 +220,16 @@ def load_config():
         )
 
 
+def override_credentials(url: str | None = None, token: str | None = None) -> None:
+    """Startup connection overrides from the settings file (win over local_config)."""
+    global _url, _token, _configured
+    if url:
+        _url = url.rstrip("/")
+    if token:
+        _token = token
+    _configured = bool(_url and _token and _token != "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN")
+
+
 def is_direct_mode() -> bool:
     return _configured and _direct
 
