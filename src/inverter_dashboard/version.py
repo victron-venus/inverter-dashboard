@@ -58,8 +58,45 @@ async def check_latest_version() -> str | None:
     return None
 
 
+def _repo_root() -> str:
+    """App checkout root (works for the src-layout and flat installs)."""
+    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
 def download_and_update() -> tuple[bool, str]:
-    """Self-update disabled by default. Enable with SELF_UPDATE_ENABLED=true."""
+    """Fast-forward the app checkout to origin/main (or UPDATE_PIN) via git.
+
+    Mirrors entrypoint.sh's startup update: after the caller exits the
+    process, the container supervisor restarts into the new code.
+    Self-update disabled by default. Enable with SELF_UPDATE_ENABLED=true.
+    """
     if not SELF_UPDATE_ENABLED:
         raise SelfUpdateDisabled("self-update is disabled (set SELF_UPDATE_ENABLED=true)")
-    return False, "not implemented"
+
+    import subprocess
+
+    ref = UPDATE_PIN or "main"
+    root = _repo_root()
+    try:
+        subprocess.run(
+            ["git", "fetch", "origin", ref],
+            cwd=root,
+            timeout=60,
+            check=True,
+            capture_output=True,
+        )
+        target = "FETCH_HEAD" if UPDATE_PIN else "origin/main"
+        subprocess.run(
+            ["git", "reset", "--hard", target],
+            cwd=root,
+            timeout=30,
+            check=True,
+            capture_output=True,
+        )
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.warning("Self-update failed: %s", e)
+        return False, f"git update failed: {e}"
+
+    new_version = get_version()
+    logger.info("Self-updated to %s — restarting", new_version)
+    return True, new_version
