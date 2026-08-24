@@ -98,6 +98,10 @@ class InverterState(BaseModel):
     # {date, generated_at, today_kwh, tomorrow_kwh}
     solar_forecast: dict[str, Any] | None = None
 
+    # Rich HA entity displays from ha_client (HaFilteredData shape):
+    # {sensors[], numbers[], covers[], media_players[], scenes[], weather}
+    ha_filtered: dict[str, Any] | None = None
+
     # EV
     ev_charging_kw: float | int | None = None
     ev_power: float | int | None = None

@@ -97,3 +97,16 @@ HA_APPLIANCE_ENTITIES = {
 #     "water_level": "sensor.water_tank_level",
 # }
 HA_SENSOR_ENTITIES = {}
+
+# Rich display entities for the HA entity cards (covers/media/scenes/weather/numbers/sensors).
+# Labels come from HA friendly_name. All keys optional.
+# Example:
+# HA_FILTERED_ENTITIES = {
+#     "covers": ["cover.living_room_blinds"],
+#     "media_players": ["media_player.kitchen_speaker"],
+#     "scenes": ["scene.movie_night"],
+#     "numbers": ["number.ev_charger_current"],
+#     "sensors": ["sensor.outdoor_temperature"],
+#     "weather": "weather.home",
+# }
+HA_FILTERED_ENTITIES = {}
