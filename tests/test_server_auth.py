@@ -51,3 +51,15 @@ def test_next_backoff_doubles_and_caps(monkeypatch):
     assert server._next_backoff(1.0) == 2.0
     assert server._next_backoff(5.0) == 10.0
     assert server._next_backoff(50.0) == 10.0
+
+
+def test_solar_forecast_passthrough():
+    from inverter_dashboard import websocket_handler as wsh
+
+    wsh._state["mqtt_state"] = server.MqttState()
+    wsh._state["mqtt_state"].current_state = {
+        "solar_forecast": {"date": "2026-08-23", "today_kwh": 12.5, "tomorrow_kwh": 9.1}
+    }
+    payload = wsh.build_payload()
+    assert payload["solar_forecast"]["today_kwh"] == 12.5
+    wsh._state["mqtt_state"] = None

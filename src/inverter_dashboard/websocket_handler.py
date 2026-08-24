@@ -94,6 +94,10 @@ class InverterState(BaseModel):
     ui_config: dict[str, Any] | None = None
     daily_stats: dict[str, Any] | None = None
 
+    # Solar forecast computed upstream by inverter-control:
+    # {date, generated_at, today_kwh, tomorrow_kwh}
+    solar_forecast: dict[str, Any] | None = None
+
     # EV
     ev_charging_kw: float | int | None = None
     ev_power: float | int | None = None
