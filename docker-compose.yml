@@ -13,6 +13,7 @@ services:
       - MQTT_HOST=192.168.x.x # Cerbo / broker IP
       - MQTT_PORT=1883
       - INVERTER_DASHBOARD_CONFIG=/app/config
+      - CERBO_PORTAL_ID= # VRM portal ID of your Cerbo GX - enables dbus-pump water topics
     volumes:
       # Synology NAS (primary deployment path). On dev machines without this path, comment out or override.
       - /volume1/docker/inverter-dashboard/config:/app/config:ro

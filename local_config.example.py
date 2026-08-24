@@ -74,8 +74,7 @@ HA_APPLIANCE_ENTITIES = {
 }
 
 # Water card (optional — leave empty strings to skip)
-HA_WATER_VALVE_ENTITY = "switch.shutoff_valve"
-HA_PUMP_SWITCH_ENTITY = "switch.pump_switch"
+# Water card — dbus-pump via Cerbo MQTT; no HA entities.
 
 # ---------------------------------------------------------------------------
 # Sensor entities — keys are WebSocket/MQTT state field names (numeric).

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from aiomqtt import Client, MqttError
+from aiomqtt import Client, MqttError, TLSParameters
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -59,6 +59,9 @@ class MqttState:
 
             elif "/acload/" in topic:
                 self._handle_acload(topic, payload)
+
+            elif "/tank/" in topic or "/pump/" in topic:
+                self.handle_water(topic, payload)
         except (json.JSONDecodeError, UnicodeDecodeError):
             logger.exception("MQTT message parse error")
         except Exception:
@@ -101,6 +104,35 @@ class MqttState:
                 changed = True
         if changed:
             self.current_state["loads"] = current_loads
+
+    def handle_water(self, topic: str, payload: bytes) -> None:
+        """Decode dbus-pump water topics into state keys.
+
+        Topic structure: N/<portal_id>/tank/<instance>/Level and
+        N/<portal_id>/pump/<instance>/State (Venus MQTT-GUI format,
+        payload {"value": ...}). Requires CERBO_PORTAL_ID to be configured.
+        """
+        if not config.CERBO_PORTAL_ID:
+            return
+        parts = topic.split("/")
+        if len(parts) < 5 or parts[1] != config.CERBO_PORTAL_ID:
+            return
+        service_type, device, path = parts[2], parts[3], "/".join(parts[4:])
+        try:
+            data = json.loads(payload.decode())
+            val = data.get("value")
+        except (ValueError, AttributeError):
+            return
+
+        # Venus bridges pump.startstop services as N/<portal>/pump/<instance>/State
+        if service_type == "tank" and device == str(config.WATER_TANK_INSTANCE):
+            if path == "Level" and isinstance(val, (int, float)):
+                self.current_state["water_level"] = float(val)
+        elif service_type == "pump" and path == "State" and isinstance(val, (int, float)):
+            if device == str(config.WATER_VALVE_INSTANCE):
+                self.current_state["water_valve"] = bool(val)
+            elif device == str(config.WATER_PUMP_INSTANCE):
+                self.current_state["pump_switch"] = bool(val)
 
     def get_state(self) -> dict[str, Any]:
         """Get current state"""
@@ -152,14 +184,19 @@ def _verify_secret(request: Request, token: str | None = None) -> None:
 def _start_mqtt_client():
     """Start MQTT client connection and message loop."""
     _app_state.mqtt_state = MqttState()
-    _app_state.mqtt_client = Client(
-        hostname=config.MQTT_HOST,
-        port=config.MQTT_PORT,
-        username=config.MQTT_USERNAME,
-        password=config.MQTT_PASSWORD,
-        tls_params=None,
-        tls_insecure=False,
-    )
+    # NB: tls_insecure must not be passed without an SSL context - paho raises
+    # ValueError and the message-loop task would die silently at startup.
+    client_kwargs: dict[str, Any] = {
+        "hostname": config.MQTT_HOST,
+        "port": config.MQTT_PORT,
+        "username": config.MQTT_USERNAME,
+        "password": config.MQTT_PASSWORD,
+    }
+    if config.MQTT_TLS:
+        client_kwargs["tls_params"] = TLSParameters(
+            ca_certs=config.MQTT_CA_CERT or None
+        )
+    _app_state.mqtt_client = Client(**client_kwargs)
     _app_state.mqtt_state.set_state_callback(websocket_handler.broadcast_state)
     websocket_handler.set_mqtt_state(_app_state.mqtt_state)
 
@@ -173,6 +210,13 @@ def _start_mqtt_client():
             await _app_state.mqtt_client.subscribe("N/+/acload/+/CustomName")
         except Exception as e:
             logger.warning("Could not subscribe to N/+/acload topics: %s", e)
+        if config.CERBO_PORTAL_ID:
+            try:
+                portal = config.CERBO_PORTAL_ID
+                await _app_state.mqtt_client.subscribe(f"N/{portal}/tank/+/Level")
+                await _app_state.mqtt_client.subscribe(f"N/{portal}/pump/+/State")
+            except Exception as e:
+                logger.warning("Could not subscribe to water topics: %s", e)
         logger.info("Subscribed to MQTT topics")
 
         try:
