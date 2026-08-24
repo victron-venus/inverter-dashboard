@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, ha_client, websocket_handler
+from . import config, ha_client, settings_store, websocket_handler
 from .config import DASHBOARD_SECRET, MQTT_HOST, MQTT_PORT, WEB_PORT
 from .version import VERSION, SelfUpdateDisabled, check_latest_version, download_and_update
 
@@ -460,6 +460,7 @@ async def lifespan(_app: FastAPI):
     """Application lifespan handler"""
     # Startup
     ha_client.load_config()
+    websocket_handler.set_ui_settings(settings_store.load_settings())
     _start_mqtt_client()
     ha_task = _start_ha_polling()
     _start_version_check()
@@ -518,6 +519,41 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=4401, reason="unauthorized")
         return
     await websocket_handler.handle_websocket(websocket, _app_state)
+
+
+@app.get(
+    "/api/settings",
+    responses={401: {"description": "Missing secret"}, 403: {"description": "Invalid secret"}},
+)
+async def api_settings_get(request: Request):
+    """Current dashboard settings (section visibility, camera topic)."""
+    _verify_secret(request)
+    return {"ok": True, "settings": settings_store.load_settings()}
+
+
+@app.post(
+    "/api/settings",
+    responses={
+        400: {"description": "Invalid settings"},
+        401: {"description": "Missing secret"},
+        403: {"description": "Invalid secret"},
+    },
+)
+async def api_settings_post(request: Request):
+    """Persist settings; section-visibility keys apply on next broadcast."""
+    _verify_secret(request)
+    try:
+        patch = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="body must be JSON") from None
+    if not isinstance(patch, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+    try:
+        saved = settings_store.save_settings(patch)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    websocket_handler.set_ui_settings(saved)
+    return {"ok": True, "settings": saved}
 
 
 @app.get("/api/state")
