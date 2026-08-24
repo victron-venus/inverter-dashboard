@@ -63,3 +63,72 @@ def test_solar_forecast_passthrough():
     payload = wsh.build_payload()
     assert payload["solar_forecast"]["today_kwh"] == 12.5
     wsh._state["mqtt_state"] = None
+
+
+async def test_shutdown_mqtt_client_clears_state():
+    server._app_state.mqtt_connected = True
+    server._app_state.mqtt_client = object()
+    await server._shutdown_mqtt_client()
+    assert server._app_state.mqtt_client is None
+    assert server._app_state.mqtt_connected is False
+
+
+async def test_mqtt_loop_reconnects_after_broker_error(monkeypatch):
+    """Broker death mid-session must not kill the loop: next attempt connects."""
+    import asyncio
+
+    from aiomqtt import MqttError
+
+    attempts = {"n": 0}
+
+    class FakeClient:
+        """Minimal aiomqtt.Client stand-in: first session dies, second idles."""
+
+        def __init__(self):
+            attempts["n"] += 1
+            self._n = attempts["n"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def subscribe(self, *args, **kwargs):
+            return None
+
+        @property
+        def messages(self):
+            async def gen():
+                if self._n == 1:
+                    raise MqttError("broker died")
+                await asyncio.sleep(30)
+                yield b""
+
+            return gen()
+
+    monkeypatch.setattr(cfg, "MQTT_RECONNECT_MIN", 0.01)
+    monkeypatch.setattr(cfg, "MQTT_RECONNECT_MAX", 0.02)
+    monkeypatch.setattr(server, "_make_mqtt_client", FakeClient)
+
+    old_tasks = list(server._app_state.mqtt_tasks)
+    server._app_state.mqtt_tasks.clear()
+    task = None
+    try:
+        server._start_mqtt_client()
+        task = server._app_state.mqtt_tasks[0]
+        for _ in range(200):
+            if server._app_state.mqtt_reconnects >= 1 and server._app_state.mqtt_connected:
+                break
+            await asyncio.sleep(0.02)
+        assert server._app_state.mqtt_reconnects == 1
+        assert server._app_state.mqtt_connected is True
+        assert attempts["n"] == 2  # fresh client object per attempt
+    finally:
+        if task:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        server._app_state.mqtt_tasks.clear()
+        server._app_state.mqtt_tasks.extend(old_tasks)
+        server._app_state.mqtt_connected = False
+        server._app_state.mqtt_client = None
