@@ -56,6 +56,9 @@ class Config(BaseSettings):
     WATER_PUMP_INSTANCE: int = 1
     WATER_VALVE_INSTANCE: int = 2
 
+    # Camera events — Frigate MQTT topic (empty disables camera monitoring).
+    CAMERA_TOPIC: str = ""
+
     # GitHub repository for updates
     GITHUB_REPO: str = "victron-venus/inverter-dashboard"
 
@@ -100,3 +103,4 @@ CERBO_PORTAL_ID = config.CERBO_PORTAL_ID
 WATER_TANK_INSTANCE = config.WATER_TANK_INSTANCE
 WATER_PUMP_INSTANCE = config.WATER_PUMP_INSTANCE
 WATER_VALVE_INSTANCE = config.WATER_VALVE_INSTANCE
+CAMERA_TOPIC = config.CAMERA_TOPIC

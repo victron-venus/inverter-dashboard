@@ -6,6 +6,7 @@ Connects to Cerbo GX via MQTT, serves dashboard via WebSocket
 
 import argparse
 import asyncio
+import fnmatch
 import json
 import logging
 import os
@@ -76,6 +77,7 @@ class MqttState:
         self._acload_names: dict[str, str] = {}
         self._acload_powers: dict[str, float] = {}
         self._alarm_values: dict[str, int] = {}
+        self.camera_event: dict[str, Any] | None = None
         self._on_state_update: Callable | None = None
 
     def set_state_callback(self, callback: Callable) -> None:
@@ -104,6 +106,13 @@ class MqttState:
             elif "/Alarms/" in topic:
                 changed = self.handle_alarm(topic, payload)
                 if changed and self._on_state_update:
+                    await self._on_state_update()
+
+            elif config.CAMERA_TOPIC and fnmatch.fnmatch(
+                topic, config.CAMERA_TOPIC.replace("+", "*")
+            ):
+                self.handle_camera_event(payload)
+                if self.camera_event and self._on_state_update:
                     await self._on_state_update()
 
             elif "/acload/" in topic:
@@ -249,6 +258,22 @@ class MqttState:
         """Get notification list (inverter-control pushes + alarm transitions)."""
         return self.notifications
 
+    def handle_camera_event(self, payload: bytes) -> None:
+        """Store the latest camera event (desktop CameraEvent shape: {agent_name, video_url, timestamp})."""
+        try:
+            data = json.loads(payload.decode())
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            data = payload.decode(errors="replace")
+        if isinstance(data, dict):
+            self.camera_event = {
+                "camera": str(data.get("agent_name") or "Camera"),
+                "url": str(data.get("video_url") or ""),
+                "ts": str(data.get("timestamp") or ""),
+            }
+        else:
+            # Raw string payload treated as a direct stream/snapshot URL
+            self.camera_event = {"camera": "Camera", "url": str(data), "ts": ""}
+
 
 @dataclass
 class AppState:
@@ -309,6 +334,11 @@ async def _subscribe_topics(client: Client) -> None:
     """Subscribe to all dashboard topics after connecting."""
     await client.subscribe("inverter/state")
     await client.subscribe("inverter/console")
+    if config.CAMERA_TOPIC:
+        try:
+            await client.subscribe(config.CAMERA_TOPIC)
+        except Exception as e:
+            logger.warning("Could not subscribe to %s: %s", config.CAMERA_TOPIC, e)
     try:
         await client.subscribe("inverter/notifications")
     except Exception as e:
