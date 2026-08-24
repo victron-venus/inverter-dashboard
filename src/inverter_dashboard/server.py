@@ -150,6 +150,8 @@ class AppState:
     mqtt_state: MqttState | None = None
     mqtt_client: Client | None = None
     mqtt_tasks: list[asyncio.Task] = None
+    mqtt_connected: bool = False
+    mqtt_reconnects: int = 0
 
     def __post_init__(self):
         if self.mqtt_tasks is None:
@@ -181,9 +183,8 @@ def _verify_secret(request: Request, token: str | None = None) -> None:
     raise HTTPException(status_code=403, detail="invalid secret")
 
 
-def _start_mqtt_client():
-    """Start MQTT client connection and message loop."""
-    _app_state.mqtt_state = MqttState()
+def _make_mqtt_client() -> Client:
+    """Create a fresh MQTT client from config (a closed client cannot be reused)."""
     # NB: tls_insecure must not be passed without an SSL context - paho raises
     # ValueError and the message-loop task would die silently at startup.
     client_kwargs: dict[str, Any] = {
@@ -193,41 +194,69 @@ def _start_mqtt_client():
         "password": config.MQTT_PASSWORD,
     }
     if config.MQTT_TLS:
-        client_kwargs["tls_params"] = TLSParameters(
-            ca_certs=config.MQTT_CA_CERT or None
-        )
-    _app_state.mqtt_client = Client(**client_kwargs)
+        client_kwargs["tls_params"] = TLSParameters(ca_certs=config.MQTT_CA_CERT or None)
+    return Client(**client_kwargs)
+
+
+async def _subscribe_topics(client: Client) -> None:
+    """Subscribe to all dashboard topics after connecting."""
+    await client.subscribe("inverter/state")
+    await client.subscribe("inverter/console")
+    try:
+        await client.subscribe("N/+/acload/+/Ac/Power")
+        await client.subscribe("N/+/acload/+/CustomName")
+    except Exception as e:
+        logger.warning("Could not subscribe to N/+/acload topics: %s", e)
+    if config.CERBO_PORTAL_ID:
+        try:
+            portal = config.CERBO_PORTAL_ID
+            await client.subscribe(f"N/{portal}/tank/+/Level")
+            await client.subscribe(f"N/{portal}/pump/+/State")
+        except Exception as e:
+            logger.warning("Could not subscribe to water topics: %s", e)
+
+
+def _next_backoff(delay: float) -> float:
+    """Double the reconnect delay, capped at MQTT_RECONNECT_MAX."""
+    return min(delay * 2, config.MQTT_RECONNECT_MAX)
+
+
+def _start_mqtt_client():
+    """Start MQTT client connection and message loop with auto-reconnect."""
+    _app_state.mqtt_state = MqttState()
+    _app_state.mqtt_client = _make_mqtt_client()
     _app_state.mqtt_state.set_state_callback(websocket_handler.broadcast_state)
     websocket_handler.set_mqtt_state(_app_state.mqtt_state)
 
     async def mqtt_connect_and_loop():
-        await _app_state.mqtt_client.__aenter__()  # pylint: disable=unnecessary-dunder-call
-        logger.info("Connected to MQTT broker")
-        await _app_state.mqtt_client.subscribe("inverter/state")
-        await _app_state.mqtt_client.subscribe("inverter/console")
-        try:
-            await _app_state.mqtt_client.subscribe("N/+/acload/+/Ac/Power")
-            await _app_state.mqtt_client.subscribe("N/+/acload/+/CustomName")
-        except Exception as e:
-            logger.warning("Could not subscribe to N/+/acload topics: %s", e)
-        if config.CERBO_PORTAL_ID:
+        delay = max(config.MQTT_RECONNECT_MIN, 0.1)
+        while True:
             try:
-                portal = config.CERBO_PORTAL_ID
-                await _app_state.mqtt_client.subscribe(f"N/{portal}/tank/+/Level")
-                await _app_state.mqtt_client.subscribe(f"N/{portal}/pump/+/State")
-            except Exception as e:
-                logger.warning("Could not subscribe to water topics: %s", e)
-        logger.info("Subscribed to MQTT topics")
-
-        try:
-            async for message in _app_state.mqtt_client.messages:
-                await _app_state.mqtt_state.on_message(message.topic.value, message.payload)
-        except MqttError:
-            logger.exception("MQTT message loop error")
-        except Exception as e:  # pylint: disable=broad-except
-            if isinstance(e, asyncio.CancelledError):
+                async with _app_state.mqtt_client:
+                    _app_state.mqtt_connected = True
+                    logger.info("Connected to MQTT broker")
+                    await _subscribe_topics(_app_state.mqtt_client)
+                    logger.info("Subscribed to MQTT topics")
+                    delay = max(config.MQTT_RECONNECT_MIN, 0.1)
+                    async for message in _app_state.mqtt_client.messages:
+                        await _app_state.mqtt_state.on_message(message.topic.value, message.payload)
+            except asyncio.CancelledError:
                 raise
-            logger.exception("Unexpected error in message loop")
+            except MqttError:
+                _app_state.mqtt_reconnects += 1
+                logger.warning(
+                    "MQTT connection lost — reconnecting in %.1fs (reconnect #%d)",
+                    delay,
+                    _app_state.mqtt_reconnects,
+                )
+            except Exception:  # pylint: disable=broad-except
+                _app_state.mqtt_reconnects += 1
+                logger.exception("Unexpected error in MQTT loop — retrying in %.1fs", delay)
+            finally:
+                _app_state.mqtt_connected = False
+            await asyncio.sleep(delay)
+            delay = _next_backoff(delay)
+            _app_state.mqtt_client = _make_mqtt_client()
 
     mqtt_task = asyncio.create_task(mqtt_connect_and_loop())
     _app_state.mqtt_tasks.append(mqtt_task)
@@ -271,19 +300,13 @@ async def _shutdown_tasks(ha_task):
 
 
 async def _shutdown_mqtt_client():
-    """Close MQTT client connection."""
-    if _app_state.mqtt_client:
-        try:
-            await _app_state.mqtt_client.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-        except asyncio.CancelledError:
-            # Cleanup already done in finally, re-raise to propagate cancellation
-            _app_state.mqtt_client = None
-            raise
-        except Exception:  # pylint: disable=broad-except
-            logger.exception("Error closing MQTT client")
-        finally:
-            if _app_state.mqtt_client:
-                _app_state.mqtt_client = None
+    """Clear MQTT client reference.
+
+    The connection itself is closed by the message-loop task's ``async with``
+    block when the task is cancelled (see ``_shutdown_tasks``).
+    """
+    _app_state.mqtt_connected = False
+    _app_state.mqtt_client = None
 
 
 @asynccontextmanager
@@ -320,8 +343,17 @@ _mount_vue_dist()
 
 # Routes
 @app.get("/", response_class=HTMLResponse)
-async def index():
+async def index(request: Request, token: str | None = None):
     """Serve Vue SPA from static/dist or 404 if not built"""
+    try:
+        _verify_secret(request, token)
+    except HTTPException as exc:
+        return HTMLResponse(
+            "<h1>Inverter Dashboard</h1>"
+            f"<p>{exc.detail}. Append <code>?token=YOUR_SECRET</code> to the URL or send "
+            "an <code>Authorization: Bearer</code> header.</p>",
+            status_code=exc.status_code,
+        )
     static_dir = Path(__file__).parent / "static"
     index_path = static_dir / "dist" / "index.html"
     if index_path.is_file():
@@ -339,18 +371,20 @@ async def websocket_endpoint(websocket: WebSocket):
     if DASHBOARD_SECRET and token != DASHBOARD_SECRET:
         await websocket.close(code=4401, reason="unauthorized")
         return
-    await websocket_handler.handle_websocket(websocket, _app_state.mqtt_client)
+    await websocket_handler.handle_websocket(websocket, _app_state)
 
 
 @app.get("/api/state")
 async def api_state():
     """Minimal JSON for Docker HEALTHCHECK and monitoring (not full inverter payload)."""
-    raw = _app_state.mqtt_state.get_state()
+    raw = _app_state.mqtt_state.get_state() if _app_state.mqtt_state else {}
     return {
         "ok": True,
         "dashboard_version": VERSION,
         "control_version": raw.get("version"),
         "has_mqtt_state": bool(raw),
+        "mqtt_connected": _app_state.mqtt_connected,
+        "mqtt_reconnects": _app_state.mqtt_reconnects,
     }
 
 

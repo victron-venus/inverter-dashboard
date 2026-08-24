@@ -221,8 +221,13 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Clien
         )
 
 
-async def handle_websocket(websocket: WebSocket, mqtt_client):
-    """Handle WebSocket connection"""
+async def handle_websocket(websocket: WebSocket, app_state):
+    """Handle WebSocket connection.
+
+    ``app_state`` is the server's AppState container; the MQTT client is read
+    fresh for each action so commands survive reconnects (the aiomqtt client
+    object is replaced on every reconnection).
+    """
     await websocket.accept()
     ws_clients.add(websocket)
     logger.info("WebSocket client connected (%d total)", len(ws_clients))
@@ -234,7 +239,7 @@ async def handle_websocket(websocket: WebSocket, mqtt_client):
             data = await websocket.receive_json()
             action = data.get("action")
             if action:
-                await _dispatch_action(action, data, mqtt_client)
+                await _dispatch_action(action, data, app_state.mqtt_client)
 
     except WebSocketDisconnect:
         pass

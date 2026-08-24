@@ -19,6 +19,10 @@ class Config(BaseSettings):
     MQTT_TLS: bool = False
     MQTT_CA_CERT: str = ""
 
+    # MQTT auto-reconnect backoff (seconds)
+    MQTT_RECONNECT_MIN: float = 1.0
+    MQTT_RECONNECT_MAX: float = 60.0
+
     # Web server settings
     HOST: str = "127.0.0.1"
     WEB_PORT: int = 8080
@@ -76,6 +80,8 @@ MQTT_USERNAME = config.MQTT_USERNAME
 MQTT_PASSWORD = config.MQTT_PASSWORD
 MQTT_TLS = config.MQTT_TLS
 MQTT_CA_CERT = config.MQTT_CA_CERT
+MQTT_RECONNECT_MIN = config.MQTT_RECONNECT_MIN
+MQTT_RECONNECT_MAX = config.MQTT_RECONNECT_MAX
 HOST = config.HOST
 WEB_PORT = config.WEB_PORT
 DASHBOARD_SECRET = config.DASHBOARD_SECRET
