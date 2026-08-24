@@ -29,14 +29,53 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+def _capitalize(s: str) -> str:
+    return s[:1].upper() + s[1:] if s else ""
+
+
+def _split_camel(s: str) -> list[str]:
+    words: list[str] = []
+    current = ""
+    for ch in s:
+        if ch.isupper() and current and current[-1].islower():
+            words.append(current)
+            current = ch
+        elif ch in ("_", "-", " "):
+            if current:
+                words.append(current)
+            current = ""
+        else:
+            current += ch
+    if current:
+        words.append(current)
+    return words
+
+
+def pretty_alarm_name(name: str) -> str:
+    """'HighCellVoltage' / 'high_cell_voltage' -> 'High Cell Voltage'"""
+    return " ".join(_capitalize(w) for w in _split_camel(name))
+
+
+def pretty_service_name(service: str) -> str:
+    """'battery_512' -> 'Battery 512', 'vebus' -> 'Vebus'"""
+    name, _, inst = service.rpartition("_")
+    if name and inst.isdigit():
+        return f"{_capitalize(name)} {inst}"
+    return _capitalize(service)
+
+
 class MqttState:
     """Encapsulated MQTT state."""
+
+    NOTIFICATIONS_MAX = 100
 
     def __init__(self) -> None:
         self.current_state: dict[str, Any] = {}
         self.console_lines: list[str] = []
+        self.notifications: list[dict[str, Any]] = []
         self._acload_names: dict[str, str] = {}
         self._acload_powers: dict[str, float] = {}
+        self._alarm_values: dict[str, int] = {}
         self._on_state_update: Callable | None = None
 
     def set_state_callback(self, callback: Callable) -> None:
@@ -57,6 +96,16 @@ class MqttState:
                 if len(self.console_lines) > config.CONSOLE_MAX_LINES:
                     self.console_lines.pop(0)
 
+            elif topic == "inverter/notifications":
+                self.push_notification(json.loads(payload.decode()))
+                if self._on_state_update:
+                    await self._on_state_update()
+
+            elif "/Alarms/" in topic:
+                changed = self.handle_alarm(topic, payload)
+                if changed and self._on_state_update:
+                    await self._on_state_update()
+
             elif "/acload/" in topic:
                 self._handle_acload(topic, payload)
 
@@ -66,6 +115,60 @@ class MqttState:
             logger.exception("MQTT message parse error")
         except Exception:
             logger.exception("MQTT message error")
+
+    def push_notification(self, data: Any) -> None:
+        """Append a notification from inverter-control (MqttNotification shape)."""
+        if not isinstance(data, dict):
+            return
+        notif = {
+            "id": str(data.get("id") or ""),
+            "level": str(data.get("level") or "info"),
+            "title": str(data.get("title") or ""),
+            "body": str(data.get("body") or ""),
+            "source": str(data.get("source") or "inverter-control"),
+            "ts": str(data.get("ts") or ""),
+        }
+        self.notifications.append(notif)
+        if len(self.notifications) > self.NOTIFICATIONS_MAX:
+            self.notifications = self.notifications[-self.NOTIFICATIONS_MAX :]
+
+    def handle_alarm(self, topic: str, payload: bytes) -> bool:
+        """Track a Victron alarm topic (value 0/1/2); emit/clear on transition.
+
+        Returns True when the notification list changed.
+        """
+        try:
+            val = json.loads(payload.decode()).get("value")
+        except (ValueError, AttributeError):
+            return False
+        value = int(val) if isinstance(val, (int, float)) else 0
+        prev = self._alarm_values.get(topic, 0)
+        if prev == value:
+            return False
+        self._alarm_values[topic] = value
+
+        nid = f"victron-{topic}"
+        if value not in (1, 2):
+            # 0 = cleared: drop matching banner notifications
+            before = len(self.notifications)
+            self.notifications = [n for n in self.notifications if n["id"] != nid]
+            return len(self.notifications) != before
+
+        parts = topic.split("/")
+        service = parts[2] if len(parts) > 4 else "device"
+        alarm_name = parts[4] if len(parts) > 4 else topic
+        level = "alarm" if value == 2 else "warning"
+        state_txt = "Alarm" if value == 2 else "Warning"
+        self.push_notification(
+            {
+                "id": nid,
+                "level": level,
+                "title": pretty_service_name(service),
+                "body": f"{pretty_alarm_name(alarm_name)}: {state_txt}",
+                "source": "victron",
+            }
+        )
+        return True
 
     def _handle_acload(self, topic: str, payload: bytes) -> None:
         """Decode acload topic messages into power/name maps.
@@ -142,6 +245,10 @@ class MqttState:
         """Get console lines"""
         return self.console_lines
 
+    def get_notifications(self) -> list[dict[str, Any]]:
+        """Get notification list (inverter-control pushes + alarm transitions)."""
+        return self.notifications
+
 
 @dataclass
 class AppState:
@@ -202,6 +309,15 @@ async def _subscribe_topics(client: Client) -> None:
     """Subscribe to all dashboard topics after connecting."""
     await client.subscribe("inverter/state")
     await client.subscribe("inverter/console")
+    try:
+        await client.subscribe("inverter/notifications")
+    except Exception as e:
+        logger.warning("Could not subscribe to inverter/notifications: %s", e)
+    if config.CERBO_PORTAL_ID:
+        try:
+            await client.subscribe(f"N/{config.CERBO_PORTAL_ID}/+/Alarms/#")
+        except Exception as e:
+            logger.warning("Could not subscribe to Victron alarm topics: %s", e)
     try:
         await client.subscribe("N/+/acload/+/Ac/Power")
         await client.subscribe("N/+/acload/+/CustomName")
