@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub last commit](https://img.shields.io/github/last-commit/victron-venus/inverter-dashboard)](https://github.com/victron-venus/inverter-dashboard/commits/main)
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/victron-venus/inverter-dashboard/graphs/commit-activity)
-[![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
 Real-time web dashboard for monitoring Victron inverter systems via MQTT. Designed to work with [inverter-control](https://github.com/victron-venus/inverter-control) on Cerbo GX.
 
@@ -183,7 +183,7 @@ This repository follows a multi-channel release strategy managed by GitHub Actio
 
 - Real-time power monitoring (Grid, Solar, Battery, Consumption)
 - Interactive controls via WebSocket
-- Live power charts with uPlot
+- Live power charts with ECharts
 - EV charging status
 - Water system monitoring (dbus-pump via Cerbo MQTT)
 - Home automation controls
