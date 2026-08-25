@@ -322,6 +322,9 @@ def _make_mqtt_client() -> Client:
     client_kwargs: dict[str, Any] = {
         "hostname": config.MQTT_HOST,
         "port": config.MQTT_PORT,
+        # Random suffix keeps the client ID unique so a second instance or a
+        # stale broker session cannot kick this client off the broker.
+        "identifier": f"inverter-dashboard-{os.urandom(3).hex()}",
         "username": config.MQTT_USERNAME,
         "password": config.MQTT_PASSWORD,
     }
