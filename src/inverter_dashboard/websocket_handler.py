@@ -57,7 +57,6 @@ class InverterState(BaseModel):
     # Solar
     solar_total: float | int | None = None
     mppt_total: float | int | None = None
-    tasmota_total: float | int | None = None
 
     # Battery
     battery_soc: float | int | None = None
@@ -87,7 +86,6 @@ class InverterState(BaseModel):
     booleans: dict[str, bool] | None = None
     features: dict[str, bool] | None = None
     mppt_individual: list[float | int] | None = None
-    tasmota_individual: list[float | int] | None = None
     mppt_chargers: list[dict[str, Any]] | None = None
     # AC PV inverters of any vendor: [{name?, power, voltage?, current?}]
     pv_inverters: list[dict[str, Any]] | None = None
