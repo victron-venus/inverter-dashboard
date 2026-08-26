@@ -80,9 +80,10 @@ HA_APPLIANCE_ENTITIES = {
 # Sensor entities — keys are WebSocket/MQTT state field names (numeric).
 # These are fetched from HA REST and override the corresponding MQTT values when HA is connected.
 # NOTE: Most fields now come from inverter-control MQTT (D-Bus sourced):
-#   gt, g1, g2, tt, t1, t2, solar_total, mppt_total, tasmota_total
+#   gt, g1, g2, tt, t1, t2, solar_total, mppt_total
 #   battery_soc, battery_power, battery_voltage, battery_current
-#   setpoint, daily_stats, mppt_chargers, batteries, mppt_individual, tasmota_individual
+#   setpoint, daily_stats, mppt_chargers, batteries, mppt_individual,
+#   pv_inverters (AC PV inverters of any vendor)
 #   loads (Vue circuits via D-Bus acload)
 # Only configure fields NOT available from inverter-control:
 #   - ev_charging_kw, ev_power, car_soc (EV - no D-Bus standard)
