@@ -89,6 +89,8 @@ class InverterState(BaseModel):
     mppt_individual: list[float | int] | None = None
     tasmota_individual: list[float | int] | None = None
     mppt_chargers: list[dict[str, Any]] | None = None
+    # AC PV inverters of any vendor: [{name?, power, voltage?, current?}]
+    pv_inverters: list[dict[str, Any]] | None = None
     batteries: list[dict[str, Any]] | None = None
     loads: dict[str, float | int] | None = None
     ui_config: dict[str, Any] | None = None

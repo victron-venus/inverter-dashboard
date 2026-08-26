@@ -76,6 +76,8 @@ class MqttState:
         self.notifications: list[dict[str, Any]] = []
         self._acload_names: dict[str, str] = {}
         self._acload_powers: dict[str, float] = {}
+        # Discovered PV inverters keyed by GX instance: {power, voltage, current, name}
+        self._pv_inverters: dict[str, dict[str, Any]] = {}
         self._alarm_values: dict[str, int] = {}
         self.camera_event: dict[str, Any] | None = None
         self._on_state_update: Callable | None = None
@@ -117,6 +119,10 @@ class MqttState:
 
             elif "/acload/" in topic:
                 self._handle_acload(topic, payload)
+
+            elif "/pvinverter/" in topic:
+                if self._handle_pvinverter(topic, payload) and self._on_state_update:
+                    await self._on_state_update()
 
             elif "/tank/" in topic or "/pump/" in topic:
                 self.handle_water(topic, payload)
@@ -216,6 +222,45 @@ class MqttState:
                 changed = True
         if changed:
             self.current_state["loads"] = current_loads
+
+    def _handle_pvinverter(self, topic: str, payload: bytes) -> bool:
+        """Decode GX PV-inverter topics into state['pv_inverters'].
+
+        Topic structure: N/<portal_id>/pvinverter/<instance>/<path...>
+        (payload {"value": ...}). Works with any vendor's dbus publisher
+        (dbus-tasmota-pv, dbus-esphome, ...) and without inverter-control.
+
+        Returns True when the state changed.
+        """
+        parts = topic.split("/")
+        if len(parts) < 5 or parts[2] != "pvinverter":
+            return False
+        instance = parts[3]
+        path = "/".join(parts[4:])
+        try:
+            data = json.loads(payload.decode())
+            val = data.get("value")
+        except (ValueError, AttributeError):
+            return False
+
+        entry = self._pv_inverters.setdefault(instance, {})
+        if path in ("Ac/Power", "Ac/L1/Power") and isinstance(val, (int, float)):
+            entry["power"] = float(val)
+        elif path == "Ac/L1/Voltage" and isinstance(val, (int, float)):
+            entry["voltage"] = float(val)
+        elif path == "Ac/L1/Current" and isinstance(val, (int, float)):
+            entry["current"] = float(val)
+        elif path == "ProductName" and isinstance(val, str) and val.strip():
+            entry["name"] = val.strip()
+        else:
+            return False
+
+        ordered = [
+            self._pv_inverters[k]
+            for k in sorted(self._pv_inverters, key=lambda x: x.isdigit() and int(x) or 0)
+        ]
+        self.current_state["pv_inverters"] = ordered
+        return True
 
     def handle_water(self, topic: str, payload: bytes) -> None:
         """Decode dbus-pump water topics into state keys.
@@ -356,6 +401,12 @@ async def _subscribe_topics(client: Client) -> None:
         await client.subscribe("N/+/acload/+/CustomName")
     except Exception as e:
         logger.warning("Could not subscribe to N/+/acload topics: %s", e)
+    # AC PV inverters of any vendor (Tasmota, ESPHome, ...) published on the
+    # GX broker — tiles stay alive even when inverter-control is down.
+    try:
+        await client.subscribe("N/+/pvinverter/+/#")
+    except Exception as e:
+        logger.warning("Could not subscribe to N/+/pvinverter topics: %s", e)
     if config.CERBO_PORTAL_ID:
         try:
             portal = config.CERBO_PORTAL_ID
