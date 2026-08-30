@@ -57,6 +57,9 @@ disable = [
     "C0415",  # import-outside-toplevel: local_config is imported lazily at runtime
     "W0621",  # redefined-outer-name: pytest fixtures are injected as same-named args
     "W0212",  # protected-access: unit tests exercise internal helpers
+    "W0404",  # Reimport: tests re-import TestClient per method (convention)
+    "C1803",  # Simplifiable comparison to literal (already handled in test code)
+    "R0801",  # Duplicate code: test fixtures mirror production shape
 ]
 
 [tool.ruff]
