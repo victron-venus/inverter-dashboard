@@ -76,6 +76,17 @@ HA_APPLIANCE_ENTITIES = {
 # Water card (optional — leave empty strings to skip)
 # Water card — dbus-pump via Cerbo MQTT; no HA entities.
 
+# EV card (optional — leave CERBO_PORTAL_ID empty to disable)
+# EV data comes from dbus-ev (vehicle) and dbus-evcharger (wallbox) via
+# Cerbo MQTT — no Home Assistant involved.
+#
+# Requires CERBO_PORTAL_ID to be set (see Water card above).
+# EV_INSTANCE (vehicle, dbus-ev) and EVCHARGER_INSTANCE (wallbox, dbus-evcharger)
+# must match the respective local_config.py DEVICE_INSTANCE values.
+#   EV_INSTANCE = 22       # vehicle Soc + Ac/Power
+#   EVCHARGER_INSTANCE = 40  # wallbox Ac/Power -> ev_charging_kw
+
+
 # ---------------------------------------------------------------------------
 # Sensor entities — keys are WebSocket/MQTT state field names (numeric).
 # These are fetched from HA REST and override the corresponding MQTT values when HA is connected.
@@ -85,17 +96,13 @@ HA_APPLIANCE_ENTITIES = {
 #   setpoint, daily_stats, mppt_chargers, batteries, mppt_individual,
 #   pv_inverters (AC PV inverters of any vendor)
 #   loads (Vue circuits via D-Bus acload)
-# Only configure fields NOT available from inverter-control:
-#   - ev_charging_kw, ev_power, car_soc (EV - no D-Bus standard)
-#   - water_level (water tank - no D-Bus standard)
-#   - water_valve, pump_switch (control only)
-#   - appliance timers (dishwasher, washer, dryer)
+#   ev_charging_kw, ev_power, car_soc (EV — dbus-ev / dbus-evcharger via Cerbo MQTT)
+#   water_level, water_valve, pump_switch (water — dbus-pump via Cerbo MQTT)
+# Only configure fields NOT available from the above sources:
+#   - appliance timers (dishwasher, washer, dryer) when inverter-control uses MQTT_SLIM_STATE
 # Example:
 # HA_SENSOR_ENTITIES = {
-#     "ev_charging_kw": "sensor.ev_charging_power",
-#     "ev_power": "sensor.ev_power",
-#     "car_soc": "sensor.car_state_of_charge",
-#     "water_level": "sensor.water_tank_level",
+#     "water_level": "sensor.water_tank_level",  # only if you also use HA instead of dbus-pump
 # }
 HA_SENSOR_ENTITIES = {}
 

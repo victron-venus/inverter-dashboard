@@ -56,6 +56,12 @@ class Config(BaseSettings):
     WATER_PUMP_INSTANCE: int = 1
     WATER_VALVE_INSTANCE: int = 2
 
+    # EV system — dbus-ev / dbus-evcharger via Cerbo MQTT (empty portal ID disables EV).
+    # Instances must match dbus-ev's local_config.py (vehicle) and
+    # dbus-evcharger's local_config.py (wallbox, instance 40).
+    EV_INSTANCE: int = 22
+    EVCHARGER_INSTANCE: int = 40
+
     # Camera events — Frigate MQTT topic (empty disables camera monitoring).
     CAMERA_TOPIC: str = ""
 
@@ -103,4 +109,6 @@ CERBO_PORTAL_ID = config.CERBO_PORTAL_ID
 WATER_TANK_INSTANCE = config.WATER_TANK_INSTANCE
 WATER_PUMP_INSTANCE = config.WATER_PUMP_INSTANCE
 WATER_VALVE_INSTANCE = config.WATER_VALVE_INSTANCE
+EV_INSTANCE = config.EV_INSTANCE
+EVCHARGER_INSTANCE = config.EVCHARGER_INSTANCE
 CAMERA_TOPIC = config.CAMERA_TOPIC

@@ -126,6 +126,8 @@ class MqttState:
 
             elif "/tank/" in topic or "/pump/" in topic:
                 self.handle_water(topic, payload)
+            elif "/evcharger/" in topic or "/ev/" in topic:
+                self.handle_ev(topic, payload)
         except (json.JSONDecodeError, UnicodeDecodeError):
             logger.exception("MQTT message parse error")
         except Exception:
@@ -291,6 +293,42 @@ class MqttState:
             elif device == str(config.WATER_PUMP_INSTANCE):
                 self.current_state["pump_switch"] = bool(val)
 
+    def handle_ev(self, topic: str, payload: bytes) -> None:
+        """Decode dbus-ev / dbus-evcharger EV topics into state keys.
+
+        Topic shapes (Venus MQTT-GUI format, payload {"value": ...}):
+          N/<portal>/ev/<EV_INSTANCE>/Soc           -> car_soc (%)
+          N/<portal>/ev/<EV_INSTANCE>/Ac/Power      -> ev_power (W)
+          N/<portal>/evcharger/<EVCHARGER_INSTANCE>/Ac/Power -> ev_charging_kw (kW)
+        Requires CERBO_PORTAL_ID to be configured.
+        """
+        if not config.CERBO_PORTAL_ID:
+            return
+        parts = topic.split("/")
+        if len(parts) < 5 or parts[1] != config.CERBO_PORTAL_ID:
+            return
+        service_type, device, path = parts[2], parts[3], "/".join(parts[4:])
+        try:
+            data = json.loads(payload.decode())
+            val = data.get("value")
+        except (ValueError, AttributeError):
+            return
+        if not isinstance(val, (int, float)):
+            return
+
+        if service_type == "ev" and device == str(config.EV_INSTANCE):
+            if path == "Soc":
+                self.current_state["car_soc"] = float(val)
+            elif path == "Ac/Power":
+                self.current_state["ev_power"] = float(val)
+        elif (
+            service_type == "evcharger"
+            and device == str(config.EVCHARGER_INSTANCE)
+            and path == "Ac/Power"
+        ):
+            # W -> kW (dashboard field name keeps the kw suffix)
+            self.current_state["ev_charging_kw"] = float(val) / 1000.0
+
     def get_state(self) -> dict[str, Any]:
         """Get current state"""
         return self.current_state
@@ -412,8 +450,12 @@ async def _subscribe_topics(client: Client) -> None:
             portal = config.CERBO_PORTAL_ID
             await client.subscribe(f"N/{portal}/tank/+/Level")
             await client.subscribe(f"N/{portal}/pump/+/State")
+            # EV (dbus-ev / dbus-evcharger)
+            await client.subscribe(f"N/{portal}/ev/{config.EV_INSTANCE}/Soc")
+            await client.subscribe(f"N/{portal}/ev/{config.EV_INSTANCE}/Ac/Power")
+            await client.subscribe(f"N/{portal}/evcharger/{config.EVCHARGER_INSTANCE}/Ac/Power")
         except Exception as e:
-            logger.warning("Could not subscribe to water topics: %s", e)
+            logger.warning("Could not subscribe to water/EV topics: %s", e)
 
 
 def _next_backoff(delay: float) -> float:
