@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: inverter-dashboard
+  labels:
+    app: inverter-dashboard
+spec:
+  type: ClusterIP
+  selector:
+    app: inverter-dashboard
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

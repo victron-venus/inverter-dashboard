@@ -1,0 +1,28 @@
+# Optional Ingress stub for Traefik + cert-manager.
+# Replace placeholder host before enabling TLS.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: inverter-dashboard
+  labels:
+    app: inverter-dashboard
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  # tls:
+  #   - hosts:
+  #       - inverter.k3s.example.invalid
+  #     secretName: inverter-dashboard-tls
+  rules:
+    - host: inverter.k3s.example.invalid
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: inverter-dashboard
+                port:
+                  number: 8080
