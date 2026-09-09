@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inverter-dashboard
+  labels:
+    app: inverter-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inverter-dashboard
+  template:
+    metadata:
+      labels:
+        app: inverter-dashboard
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: mp
+      containers:
+        - name: dashboard
+          image: alvit/inverter-dashboard:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: inverter-dashboard
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: config
+          secret:
+            secretName: inverter-dashboard-config

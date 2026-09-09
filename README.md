@@ -135,7 +135,24 @@ async def fetch_states_once():
 4. **Fail-safe defaults**: Disconnected direct mode → all switches show `False`
 5. **Zero API rate limit risk**: No direct HA REST calls from dashboard
 
-### Configuration Reference
+#
+## Deploy to k3s (node `mp`)
+
+Python / multi-arch image for NAS and k3s (prefer this over `inverter-dashboard-go` for cluster workers).
+
+Manifests: [`deploy/k3s/`](deploy/k3s/) — Namespace `inverter-dashboard`, Deployment with `nodeSelector: kubernetes.io/hostname: mp`, Service, optional Ingress stub, ConfigMap + example Secret mounting `local_config.py` (placeholder only).
+
+```bash
+# Edit/replace the example Secret with a real local_config.py before production
+kubectl apply -k deploy/k3s
+kubectl -n inverter-dashboard get pods -o wide   # expect NODE=mp
+```
+
+- Image: `alvit/inverter-dashboard:latest` (Docker Hub; `.github/workflows/docker-publish.yml` already publishes)
+- Default MQTT: `mosquitto.homeassistant.svc.cluster.local:1883`
+- Ingress stub host is a placeholder — edit before enabling Traefik TLS / cert-manager
+
+## Configuration Reference
 
 In `local_config.py` (created via [`scripts/init-config.sh`](scripts/init-config.sh)):
 

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inverter-dashboard
+  labels:
+    app: inverter-dashboard
+data:
+  MQTT_HOST: "mosquitto.homeassistant.svc.cluster.local"
+  MQTT_PORT: "1883"
+  WEB_PORT: "8080"
+  INVERTER_DASHBOARD_CONFIG: "/app/config"
+  # Optional — set Cerbo VRM portal ID only if water/EV topics are needed
+  CERBO_PORTAL_ID: ""
