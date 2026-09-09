@@ -20,25 +20,36 @@ spec:
         - name: dashboard
           image: alvit/inverter-dashboard:latest
           imagePullPolicy: Always
+          args:
+            - --mqtt-host
+            - mosquitto.homeassistant.svc.cluster.local
+            - --mqtt-port
+            - "1883"
+            - --port
+            - "8080"
           ports:
             - name: http
               containerPort: 8080
           envFrom:
             - configMapRef:
                 name: inverter-dashboard
+          env:
+            # Explicit override — config default is 127.0.0.1
+            - name: HOST
+              value: "0.0.0.0"
           volumeMounts:
             - name: config
               mountPath: /app/config
               readOnly: true
           readinessProbe:
             httpGet:
-              path: /
+              path: /api/state
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /
+              path: /api/state
               port: http
             initialDelaySeconds: 20
             periodSeconds: 20
