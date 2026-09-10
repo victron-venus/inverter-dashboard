@@ -1,0 +1,24 @@
+# CI override for nested checkout of victron-venus/integration-tests
+# (path: integration-tests/) inside this repo.
+#
+# Base compose files assume a sibling layout:
+#   ../inverter-dashboard + Dockerfile.test
+# which does not exist on this repo's Integration Tests job.
+services:
+  test-runner:
+    image: test-runner
+    pull_policy: never
+
+  dashboard-python:
+    image: dashboard-python
+    pull_policy: never
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      HOST: "0.0.0.0"
+      MQTT_HOST: mqtt-broker
+      MQTT_PORT: "1883"
+    # Production Dockerfile CMD hardcodes --mqtt-host Cerbo; override for the
+    # in-compose broker so CLI flags do not win over MQTT_HOST.
+    command: ["--mqtt-host", "mqtt-broker", "--port", "8080"]
