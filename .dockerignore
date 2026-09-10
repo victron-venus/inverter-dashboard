@@ -7,6 +7,10 @@ docker-compose.yml
 portainer-stack.yml
 .env
 *.log
+# Keep unit tests out of the production image build context.
+# Integration Tests builds Dockerfile.test-runner with context
+# integration-tests/ (see .github/workflows/ci.yml), so this exclusion
+# must not be removed just to unbreak that job.
 tests/
 .pytest_cache/
 .ruff_cache/
