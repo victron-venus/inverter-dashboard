@@ -48,6 +48,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: victron-venus/integration-tests
+          # Includes fix for test_websocket_connection infinite-recv timeout
+          # (victron-venus/integration-tests#90).
+          ref: 9c4f97e3229c0b0db50939d3a2301db9260c9036
           path: integration-tests
 
       - name: Set up Docker Buildx
