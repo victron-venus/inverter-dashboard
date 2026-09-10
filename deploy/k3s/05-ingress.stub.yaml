@@ -1,5 +1,5 @@
-# Optional Ingress stub for Traefik + cert-manager.
-# Replace placeholder host before enabling TLS.
+# Ingress for Traefik-mp (LAN HTTP on *.mp.2560801.xyz).
+# OpenWRT: address=/mp.2560801.xyz/192.168.151.107 covers this host.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -10,13 +10,13 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
     # cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
-  ingressClassName: traefik
+  ingressClassName: traefik-mp
   # tls:
   #   - hosts:
-  #       - inverter.k3s.example.invalid
+  #       - inverter-dashboard.mp.2560801.xyz
   #     secretName: inverter-dashboard-tls
   rules:
-    - host: inverter.k3s.example.invalid
+    - host: inverter-dashboard.mp.2560801.xyz
       http:
         paths:
           - path: /

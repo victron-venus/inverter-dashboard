@@ -25,13 +25,15 @@ def test_index_rejects_wrong_credentials(client):
 
 
 def test_index_accepts_valid_credentials(client):
-    # static/dist is absent from the repo, so authorized requests reach the 404
-    # fallback page — anything except 401/403 proves the auth layer passed.
+    # Repo ships flat static/index.html (docker-publish layout); authorized
+    # requests must pass auth and serve the SPA (or a non-auth error).
     for resp in (
         client.get("/", params={"token": "s3cret"}),
         client.get("/", headers={"Authorization": "Bearer s3cret"}),
     ):
         assert resp.status_code not in (401, 403)
+        if resp.status_code == 200:
+            assert 'id="app"' in resp.text
 
 
 def test_index_open_when_no_secret_configured(monkeypatch):

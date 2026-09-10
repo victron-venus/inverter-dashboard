@@ -572,14 +572,30 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Inverter Dashboard", lifespan=lifespan)
 
 
-# Mount Vue SPA dist assets if available (higher priority than fallback routes)
-def _mount_vue_dist():
-    """Mount Vue SPA dist/ directory if it exists."""
+def _resolve_spa_root() -> Path | None:
+    """Prefer static/dist (export_dist.sh), else static/ (docker-publish image layout)."""
     static_dir = Path(__file__).parent / "static"
     dist_dir = static_dir / "dist"
-    if dist_dir.is_dir():
-        app.mount("/static", StaticFiles(directory=str(dist_dir)), name="vue_dist")
-        logger.info("Mounted Vue SPA from %s", dist_dir)
+    if (dist_dir / "index.html").is_file():
+        return dist_dir
+    if (static_dir / "index.html").is_file():
+        return static_dir
+    return None
+
+
+# Mount Vue SPA assets if available (higher priority than fallback routes)
+def _mount_vue_dist():
+    """Mount SPA static files for both dist/ and flat static/ layouts."""
+    spa_root = _resolve_spa_root()
+    if spa_root is None:
+        return
+    # Legacy mount: some tooling expects assets under /static/...
+    app.mount("/static", StaticFiles(directory=str(spa_root)), name="vue_dist")
+    # Vite builds reference absolute /assets/... paths in index.html
+    assets_dir = spa_root / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="vue_assets")
+    logger.info("Mounted Vue SPA from %s", spa_root)
 
 
 _mount_vue_dist()
@@ -588,7 +604,7 @@ _mount_vue_dist()
 # Routes
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, token: str | None = None):
-    """Serve Vue SPA from static/dist or 404 if not built"""
+    """Serve Vue SPA from static/dist or static/, or 404 if not built"""
     try:
         _verify_secret(request, token)
     except HTTPException as exc:
@@ -598,10 +614,9 @@ async def index(request: Request, token: str | None = None):
             "an <code>Authorization: Bearer</code> header.</p>",
             status_code=exc.status_code,
         )
-    static_dir = Path(__file__).parent / "static"
-    index_path = static_dir / "dist" / "index.html"
-    if index_path.is_file():
-        return index_path.read_text()
+    spa_root = _resolve_spa_root()
+    if spa_root is not None:
+        return (spa_root / "index.html").read_text()
     return HTMLResponse(
         "<h1>Inverter Dashboard</h1><p>Vue SPA not built. Run <code>npm run build</code> in inverter-dashboard-vue and copy dist/ to static/.</p>",
         status_code=404,
