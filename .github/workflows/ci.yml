@@ -93,7 +93,7 @@ jobs:
             -f integration-tests/docker-compose.yml \
             -f integration-tests/docker-compose.test.yml \
             -f "$GITHUB_WORKSPACE/.github/compose.integration.override.yml" \
-            run --no-build --rm \
+            run --rm \
             -e DASHBOARD_URL=ws://dashboard-python:8080/ws \
             -e MQTT_HOST=mqtt-broker \
             -e MQTT_PORT=1883 \
