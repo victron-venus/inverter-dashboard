@@ -7,7 +7,7 @@ resources:
   - 02-secret.example.yaml
   - 03-deployment.yaml
   - 04-service.yaml
-  - 05-ingress.stub.yaml
+  - 05-ingress.yaml
 images:
   - name: alvit/inverter-dashboard
     newTag: latest

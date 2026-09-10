@@ -7,12 +7,21 @@ Image: `alvit/inverter-dashboard:latest` (Docker Hub; existing `docker-publish.y
 Default MQTT broker: cluster Mosquitto
 `mosquitto.homeassistant.svc.cluster.local:1883`.
 
+## Ingress / DNS
+
+Uses **Traefik on mp** (`ingressClassName: traefik-mp`, externalIP
+`192.168.151.107`). See `4alvit/k3s-self-healing` → `deployments/00-traefik-mp/`.
+
+- Host: `http://inverter-dashboard.mp.2560801.xyz` (full project name)
+- OpenWRT (one line): `address=/mp.2560801.xyz/192.168.151.107`
+
 ## Apply
 
 ```bash
 # Replace placeholder Secret with a real local_config.py (HA_TOKEN etc.) before prod use
-kubectl apply -k deploy/k3s
-kubectl -n inverter-dashboard get pods -o wide   # expect NODE=mp
+kubectl --context k3s-heaven apply -k deploy/k3s
+kubectl --context k3s-heaven -n inverter-dashboard get pods,ingress -o wide
+# expect NODE=mp, class traefik-mp, host inverter-dashboard.mp.2560801.xyz
 ```
 
 Do **not** confuse with `inverter-dashboard-go` (Cerbo-oriented). This Python image is the multi-arch NAS/k3s path.
