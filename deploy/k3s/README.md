@@ -5,7 +5,7 @@ Pinned to Mac Pro worker via `nodeSelector: kubernetes.io/hostname: mp`.
 Image: `alvit/inverter-dashboard:latest` (Docker Hub; existing `docker-publish.yml`).
 
 Default MQTT broker: cluster Mosquitto
-`mosquitto.homeassistant.svc.cluster.local:1883`.
+`192.168.160.150:1883` (Cerbo Venus MQTT).
 
 ## Ingress / DNS
 
