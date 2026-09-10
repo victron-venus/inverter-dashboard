@@ -5,6 +5,17 @@ import pytest
 from inverter_dashboard.version import SelfUpdateDisabled, download_and_update, get_version
 
 
+def _deny_app_version_open(_tmp_path):
+    real_open = open
+
+    def _open(path, *args, **kwargs):
+        if str(path) == "/app/VERSION":
+            raise OSError("blocked")
+        return real_open(path, *args, **kwargs)
+
+    return _open
+
+
 class TestGetVersion:
     """Tests for get_version."""
 
@@ -16,15 +27,32 @@ class TestGetVersion:
         result = get_version()
         assert len(result) > 0
 
-    def test_falls_back_to_dev(self, tmp_path, monkeypatch):
-        """When VERSION file is missing, returns 'dev'."""
-        # Point __file__ to a non-existent directory
+
+    def test_reads_package_adjacent_version(self, tmp_path, monkeypatch):
+        """Packaged install: VERSION next to version.py wins."""
+        ver = tmp_path / "VERSION"
+        ver.write_text("9.9.9\n", encoding="utf-8")
         monkeypatch.setattr(
             "inverter_dashboard.version.__file__",
-            str(tmp_path / "nonexistent_version.py"),
+            str(tmp_path / "version.py"),
         )
-        # Also patch sys.frozen if present
         monkeypatch.delattr("sys.frozen", raising=False)
+        monkeypatch.delenv("INVERTER_DASHBOARD_VERSION", raising=False)
+        assert get_version() == "9.9.9"
+
+    def test_env_override(self, monkeypatch):
+        monkeypatch.setenv("INVERTER_DASHBOARD_VERSION", "7.7.7")
+        assert get_version() == "7.7.7"
+
+    def test_falls_back_to_dev(self, tmp_path, monkeypatch):
+        """When VERSION file is missing, returns 'dev'."""
+        monkeypatch.setattr(
+            "inverter_dashboard.version.__file__",
+            str(tmp_path / "nested" / "version.py"),
+        )
+        monkeypatch.delattr("sys.frozen", raising=False)
+        monkeypatch.delenv("INVERTER_DASHBOARD_VERSION", raising=False)
+        monkeypatch.setattr("builtins.open", _deny_app_version_open(tmp_path))
         assert get_version() == "dev"
 
 

@@ -86,9 +86,10 @@ class TestBuildPayloadContract:
         ha_client.replace_overlay({"ha_direct_connected": False})
         wsh._state["mqtt_state"] = None
 
-    def test_console_lines_included(self):
+    def test_console_not_in_payload(self):
+        """Console log was removed from the panel — do not broadcast it."""
         ms = MqttState()
-        ms.console_lines = ["line1", "line2", "line3"]
+        ms.current_state = {"battery_soc": 10, "console": ["should-not-pass"]}
         wsh = websocket_handler
         wsh._state["mqtt_state"] = ms
         wsh._state["latest_version"] = None
@@ -96,9 +97,9 @@ class TestBuildPayloadContract:
 
         payload = wsh.build_payload()
 
-        assert "console" in payload
-        assert payload["console"] == ["line1", "line2", "line3"]
+        assert "console" not in payload
         wsh._state["mqtt_state"] = None
+
 
     def test_notifications_included(self):
         ms = MqttState()
@@ -231,7 +232,6 @@ class TestBuildPayloadContract:
             "dryer_time": 20.0,
             "dryer_power": 2000.0,
             # Console / notifications / camera
-            "console": ["[info] started"],
             "notifications": [{"id": "n1", "level": "info", "title": "OK", "body": ""}],
             "camera_event": {"camera": "cam1", "url": "rtsp://x", "ts": "1"},
         }
@@ -254,6 +254,13 @@ async def test_toggle_action_publishes_mqtt():
     client = FakeMqttClient()
     await _dispatch_action("toggle", {"entity": "switch.boiler"}, client)
     assert ("inverter/cmd/toggle", '{"entity": "switch.boiler"}') in client.published
+
+
+async def test_toggle_control_flag_uses_bare_key():
+    """Header flags must hit Cerbo MQTT with bare keys, not HA entity ids."""
+    client = FakeMqttClient()
+    await _dispatch_action("toggle", {"entity": "input_boolean.minimize_charging"}, client)
+    assert ("inverter/cmd/toggle", '{"entity": "minimize_charging"}') in client.published
 
 
 @pytest.mark.asyncio

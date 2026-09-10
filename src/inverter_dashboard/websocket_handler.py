@@ -11,7 +11,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict
 
 from . import ha_client, settings_store
-from .config import CONSOLE_SEND_LINES, DEFAULT_LOOP_INTERVAL, DEFAULT_POWER_MAX, DEFAULT_POWER_MIN
+from .config import DEFAULT_LOOP_INTERVAL, DEFAULT_POWER_MAX, DEFAULT_POWER_MIN
 from .version import VERSION
 
 logger = logging.getLogger(__name__)
@@ -120,9 +120,6 @@ class InverterState(BaseModel):
     dryer_time: float | int | None = None
     dryer_power: float | int | bool | None = None
 
-    # Console
-    console: list[str] | None = None
-
     # Notifications (inverter-control pushes + Victron alarm transitions)
     notifications: list[dict[str, Any]] | None = None
 
@@ -158,7 +155,6 @@ def build_payload() -> dict[str, Any]:
     return _with_ui_config(
         {
             **filtered,
-            "console": mqtt.get_console()[-CONSOLE_SEND_LINES:],
             "notifications": mqtt.get_notifications(),
             "camera_event": mqtt.camera_event,
             "dashboard_version": VERSION,
@@ -216,10 +212,44 @@ async def broadcast_state():
         ws_clients.discard(ws)
 
 
+# Inverter-control flags published on Cerbo MQTT inverter/state.booleans
+# (same set as inverter-desktop). Always toggle via MQTT with the bare key —
+# never via HA input_boolean / binary_sensor mirrors.
+_CONTROL_FLAG_KEYS = frozenset(
+    {
+        "only_charging",
+        "no_feed",
+        "house_support",
+        "charge_battery",
+        "do_not_supply_charger",
+        "set_limit_to_ev_charger",
+        "minimize_charging",
+    }
+)
+
+
+def _control_flag_key(entity: str | None) -> str | None:
+    if not entity or not isinstance(entity, str):
+        return None
+    raw = entity.strip()
+    if not raw:
+        return None
+    key = raw.split(".")[-1] if "." in raw else raw
+    return key if key in _CONTROL_FLAG_KEYS else None
+
+
 async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Client):
     """Dispatch a single WebSocket action."""
     if action == "toggle":
         entity = data.get("entity")
+        flag = _control_flag_key(entity if isinstance(entity, str) else None)
+        if flag:
+            # Mirror desktop: Cerbo MQTT inverter/cmd/toggle with bare flag key.
+            payload = {"entity": flag}
+            if "state" in data:
+                payload["state"] = data["state"]
+            await mqtt_publish(mqtt_client, "toggle", payload)
+            return
         if entity and ha_client.is_direct_mode() and ha_client.is_toggle_allowed(entity):
             await ha_client.toggle_entity(entity)
             fresh = await ha_client.fetch_states_once()

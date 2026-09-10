@@ -18,20 +18,38 @@ class SelfUpdateDisabled(Exception):
 
 
 def get_version() -> str:
-    """Read version from VERSION file — works whether run as script or frozen binary."""
-    try:
-        if getattr(sys, "frozen", False):
-            version_path = os.path.join(sys._MEIPASS, "VERSION")  # pylint: disable=protected-access
-        else:
-            version_path = os.path.normpath(
-                os.path.join(os.path.dirname(__file__), "..", "..", "VERSION")
-            )
-            if not os.path.isfile(version_path):
-                version_path = os.path.join(os.path.dirname(__file__), "VERSION")
-        with open(version_path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except OSError:
-        return "dev"
+    """Read version from VERSION file — works as script, package, Docker, or frozen binary.
+
+    Docker images install the package non-editable (``uv sync --no-editable``) while
+    also copying ``VERSION`` to ``/app/VERSION``. Prefer an env override, then
+    package-adjacent / repo-root / Docker paths, then ``dev``.
+    """
+    env = (os.environ.get("INVERTER_DASHBOARD_VERSION") or "").strip()
+    if env:
+        return env
+
+    candidates: list[str] = []
+    if getattr(sys, "frozen", False):
+        candidates.append(os.path.join(sys._MEIPASS, "VERSION"))  # pylint: disable=protected-access
+    else:
+        here = os.path.dirname(os.path.abspath(__file__))
+        candidates.extend(
+            [
+                os.path.join(here, "VERSION"),  # packaged next to this module
+                os.path.normpath(os.path.join(here, "..", "..", "VERSION")),  # src layout
+                "/app/VERSION",  # Docker runtime COPY
+            ]
+        )
+
+    for version_path in candidates:
+        try:
+            with open(version_path, encoding="utf-8") as f:
+                value = f.read().strip()
+            if value:
+                return value
+        except OSError:
+            continue
+    return "dev"
 
 
 VERSION = get_version()
@@ -40,7 +58,10 @@ VERSION = get_version()
 def _update_url(filename: str) -> str:
     """Build URL for a given file, respecting UPDATE_PIN."""
     if UPDATE_PIN:
-        return f"https://raw.githubusercontent.com/victron-venus/inverter-dashboard/{UPDATE_PIN}/{filename}"
+        return (
+            f"https://raw.githubusercontent.com/victron-venus/inverter-dashboard/"
+            f"{UPDATE_PIN}/{filename}"
+        )
     return f"{GITHUB_RAW_URL}/{filename}"
 
 
