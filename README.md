@@ -49,12 +49,19 @@ flowchart TD
         MOBILE["Mobile"]
     end
 
-    INV -->|inverter/state| MQTT
-    DP -.->|"N/&lt;portal&gt;/tank/21/Level<br/>N/&lt;portal&gt;/pump/*/State"| MQTT
+    INV -->|"inverter/state (slim: daily_stats, booleans, …)"| MQTT
+    CERBO["Cerbo Venus MQTT<br/>system/battery/MPPT/vebus/acload"] -->|N/… live tiles| MQTT
+    DP -.->|"N/&lt;portal&gt;/tank/… /pump/…"| MQTT
     MQTT -.->|subscribe| WS
     WS -->|push state| UI
     UI --> BROWSER & MOBILE
 ```
+
+Live grid / consumption / battery / solar / loads / setpoint come from **Cerbo
+Venus MQTT** (same path as [inverter-desktop](https://github.com/victron-venus/inverter-desktop)).
+`inverter/state` still carries daemon-only extras (`daily_stats`, `solar_forecast`,
+flags, …). With `MQTT_SLIM_STATE` on inverter-control, those live tiles are no
+longer republished into `inverter/state`.
 
 ### Water system
 
@@ -149,7 +156,7 @@ kubectl -n inverter-dashboard get pods -o wide   # expect NODE=mp
 ```
 
 - Image: `alvit/inverter-dashboard:latest` (Docker Hub; `.github/workflows/docker-publish.yml` already publishes)
-- Default MQTT: `mosquitto.homeassistant.svc.cluster.local:1883`
+- Default MQTT: `192.168.160.150:1883` (Cerbo); set `CERBO_PORTAL_ID` for water/EV/keepalive
 - Ingress stub host is a placeholder — edit before enabling Traefik TLS / cert-manager
 
 ## Configuration Reference
@@ -245,7 +252,7 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 | `MQTT_PORT` | `1883` | MQTT broker port |
 | `WEB_PORT` | `8080` | Web server port (inside the container) |
 | `INVERTER_DASHBOARD_CONFIG` | `/app/config` | Host folder mounted read-only: `local_config.py` and optional TLS files |
-| `CERBO_PORTAL_ID` | *(empty)* | Cerbo GX VRM portal ID — enables dbus-pump water subscription when set |
+| `CERBO_PORTAL_ID` | *(empty)* | Cerbo GX VRM portal ID — water/EV/alarms + `R/<portal>/keepalive` |
 | `WATER_TANK_INSTANCE` / `WATER_PUMP_INSTANCE` / `WATER_VALVE_INSTANCE` | `21` / `1` / `2` | D-Bus device instances on the GX (must match dbus-pump) |
 
 ### Secrets (`local_config.py`) + optional HTTPS

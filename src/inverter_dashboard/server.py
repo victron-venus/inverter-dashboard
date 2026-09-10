@@ -23,6 +23,13 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config, ha_client, settings_store, websocket_handler
+from .cerbo import (
+    CERBO_OWNED_KEYS,
+    KEEPALIVE_INTERVAL_SECS,
+    CerboOverlayMixin,
+    cerbo_owns_key,
+    parse_cerbo_payload,
+)
 from .config import DASHBOARD_SECRET, WEB_PORT
 from .version import VERSION, SelfUpdateDisabled, check_latest_version, download_and_update
 
@@ -65,7 +72,9 @@ def pretty_service_name(service: str) -> str:
     return _capitalize(service)
 
 
-class MqttState:
+
+
+class MqttState(CerboOverlayMixin):
     """Encapsulated MQTT state."""
 
     NOTIFICATIONS_MAX = 100
@@ -74,25 +83,83 @@ class MqttState:
         self.current_state: dict[str, Any] = {}
         self.console_lines: list[str] = []
         self.notifications: list[dict[str, Any]] = []
+        # Active loads (Cerbo acload / dbus-emporia-vue): instance -> watts / names
         self._acload_names: dict[str, str] = {}
         self._acload_powers: dict[str, float] = {}
+        self._acload_product_names: dict[str, str] = {}
         # Discovered PV inverters keyed by GX instance: {power, voltage, current, name}
         self._pv_inverters: dict[str, dict[str, Any]] = {}
+        # Cerbo device maps (same durable sources as inverter-desktop)
+        self._batteries: dict[str, dict[str, Any]] = {}
+        self._chargers: dict[str, dict[str, Any]] = {}
+        self._system: dict[str, dict[str, Any]] = {}
+        self._vebus: dict[str, dict[str, Any]] = {}
+        self._portal_id: str = config.CERBO_PORTAL_ID or ""
         self._alarm_values: dict[str, int] = {}
         self.camera_event: dict[str, Any] | None = None
         self._on_state_update: Callable | None = None
+        # Optional: called when portal ID is discovered via inverter/portal
+        self._on_portal: Callable | None = None
 
     def set_state_callback(self, callback: Callable) -> None:
         """Set callback to be called when state updates"""
         self._on_state_update = callback
 
+    def set_portal_callback(self, callback: Callable) -> None:
+        """Called when portal ID is learned from inverter/portal (for late subscribe)."""
+        self._on_portal = callback
+
+    async def _emit(self) -> None:
+        if self._on_state_update:
+            await self._on_state_update()
+
+    def _merge_daemon_state(self, incoming: dict[str, Any]) -> None:
+        """Non-destructive merge of slim inverter/state into current_state.
+
+        Cerbo-owned live tiles are never taken from the daemon once we have
+        Cerbo overlays (or when the slim payload simply omits them). Missing
+        keys must not clear previously known values — that caused Active Loads
+        to flash then disappear.
+        """
+        for key, value in incoming.items():
+            if key in CERBO_OWNED_KEYS and self._cerbo_has_overlay(key):
+                continue
+            self.current_state[key] = value
+        # Re-apply durable Cerbo maps so slim ticks cannot blank live tiles.
+        self._apply_cerbo_overlays()
+
+    def _cerbo_has_overlay(self, key: str) -> bool:
+        """True when Cerbo device maps already own this dashboard field."""
+        return cerbo_owns_key(
+            key,
+            has_acloads=bool(self._acload_powers),
+            has_system=bool(self._system),
+            has_vebus=bool(self._vebus),
+            has_batteries=bool(self._batteries),
+            has_chargers=bool(self._chargers),
+            has_pv=bool(self._pv_inverters),
+            has_ev=any(k in self.current_state for k in ("ev_power", "car_soc", "ev_charging_kw")),
+            has_water=any(
+                k in self.current_state for k in ("water_level", "water_valve", "pump_switch")
+            ),
+        )
+
     async def on_message(self, topic: str, payload: bytes) -> None:
         """Process incoming MQTT message"""
         try:
             if topic == "inverter/state":
-                self.current_state = json.loads(payload.decode())
-                if self._on_state_update:
-                    await self._on_state_update()
+                data = json.loads(payload.decode())
+                if isinstance(data, dict):
+                    self._merge_daemon_state(data)
+                    await self._emit()
+
+            elif topic == "inverter/portal":
+                portal = payload.decode().strip().strip('"')
+                if portal and portal != self._portal_id:
+                    self._portal_id = portal
+                    logger.info("Discovered Cerbo portal ID via inverter/portal: %s", portal)
+                    if self._on_portal:
+                        await self._on_portal(portal)
 
             elif topic == "inverter/console":
                 line = payload.decode()
@@ -118,16 +185,30 @@ class MqttState:
                     await self._on_state_update()
 
             elif "/acload/" in topic:
-                self._handle_acload(topic, payload)
+                if self._handle_acload(topic, payload):
+                    await self._emit()
 
             elif "/pvinverter/" in topic:
-                if self._handle_pvinverter(topic, payload) and self._on_state_update:
-                    await self._on_state_update()
+                if self._handle_pvinverter(topic, payload):
+                    await self._emit()
+
+            elif any(
+                f"/{kind}/" in topic
+                for kind in ("system", "battery", "solarcharger", "vebus")
+            ):
+                if self._handle_cerbo_device(topic, payload):
+                    await self._emit()
 
             elif "/tank/" in topic or "/pump/" in topic:
+                before = dict(self.current_state)
                 self.handle_water(topic, payload)
+                if self.current_state != before:
+                    await self._emit()
             elif "/evcharger/" in topic or "/ev/" in topic:
+                before = dict(self.current_state)
                 self.handle_ev(topic, payload)
+                if self.current_state != before:
+                    await self._emit()
         except (json.JSONDecodeError, UnicodeDecodeError):
             logger.exception("MQTT message parse error")
         except Exception:
@@ -187,43 +268,70 @@ class MqttState:
         )
         return True
 
-    def _handle_acload(self, topic: str, payload: bytes) -> None:
+    def _handle_acload(self, topic: str, payload: bytes) -> bool:
         """Decode acload topic messages into power/name maps.
 
         Topic structure: N/<portal_id>/acload/<instance>/<path...>
+        Returns True when state changed.
         """
         parts = topic.split("/")
         if len(parts) < 5 or parts[2] != "acload":
-            return
+            return False
         instance = parts[3]
         path = "/".join(parts[4:])
-        try:
-            data = json.loads(payload.decode())
-            val = data.get("value")
-            if path in ("Ac/Power", "Ac/L1/Power") and isinstance(val, (int, float)):
-                self._acload_powers[instance] = float(val)
-                self._sync_acload_to_state()
-            elif path == "CustomName" and isinstance(val, str) and val.strip():
-                self._acload_names[instance] = val.strip()
-                self._sync_acload_to_state()
-        except (ValueError, AttributeError):
-            pass
-
-    def _sync_acload_to_state(self) -> None:
-        """Merge decoded acload topics into current_state['loads'] if loads is empty or missing."""
-        if not self._acload_powers:
-            return
-        current_loads = dict(self.current_state.get("loads") or {})
+        val = parse_cerbo_payload(payload)
         changed = False
-        for instance, power in self._acload_powers.items():
-            name = self._acload_names.get(instance) or f"AC Load {instance}"
-            # Standardize key format (lowercase with underscores or display name)
-            key = name.lower().replace(" ", "_")
-            if key not in current_loads:
-                current_loads[key] = power
+        if path in ("Ac/Power", "Ac/L1/Power") and isinstance(val, (int, float)):
+            self._acload_powers[instance] = float(val)
+            changed = True
+        elif path == "CustomName" and isinstance(val, str) and val.strip():
+            self._acload_names[instance] = val.strip()
+            changed = True
+        elif path == "ProductName" and isinstance(val, str) and val.strip():
+            self._acload_product_names[instance] = val.strip()
+            # Only use product name when no custom name yet
+            if instance not in self._acload_names:
                 changed = True
         if changed:
-            self.current_state["loads"] = current_loads
+            self._sync_acload_to_state()
+        return changed
+
+    def _acload_display_name(self, instance: str) -> str:
+        return (
+            self._acload_names.get(instance)
+            or self._acload_product_names.get(instance)
+            or f"AC Load {instance}"
+        )
+
+    def _sync_acload_to_state(self) -> None:
+        """Rebuild loads from Cerbo acload maps (instance-stable watts + display names).
+
+        Keys stay instance ids so power updates never rekey the map (desktop
+        pattern). ``load_names`` carries CustomName/ProductName for UIs that
+        support it; SPA that only shows the key still gets a readable fallback
+        via underscore-friendly names when custom names are present — we also
+        emit a name-keyed map when every instance has a display name so the
+        existing Vue LoadsTable keeps working without a SPA rebuild.
+        """
+        if not self._acload_powers:
+            return
+        loads_by_id: dict[str, float] = {}
+        names: dict[str, str] = {}
+        for instance, power in self._acload_powers.items():
+            loads_by_id[instance] = power
+            names[instance] = self._acload_display_name(instance)
+        # Prefer name-keyed map for the classic SPA (LoadsTable uses the key
+        # as the label). Instance ids alone would show as "81".
+        loads_named: dict[str, float] = {}
+        for instance, power in loads_by_id.items():
+            label = names[instance]
+            key = label.lower().replace(" ", "_") if label.startswith("AC Load ") else label
+            # Avoid colliding duplicate custom names: suffix instance
+            if key in loads_named and key != instance:
+                key = f"{key}_{instance}"
+            loads_named[key] = power
+        self.current_state["loads"] = loads_named
+        self.current_state["load_names"] = names
 
     def _handle_pvinverter(self, topic: str, payload: bytes) -> bool:
         """Decode GX PV-inverter topics into state['pv_inverters'].
@@ -259,9 +367,10 @@ class MqttState:
 
         ordered = [
             self._pv_inverters[k]
-            for k in sorted(self._pv_inverters, key=lambda x: x.isdigit() and int(x) or 0)
+            for k in sorted(self._pv_inverters, key=lambda x: int(x) if x.isdigit() else 0)
         ]
         self.current_state["pv_inverters"] = ordered
+        self._apply_cerbo_overlays()
         return True
 
     def handle_water(self, topic: str, payload: bytes) -> None:
@@ -271,10 +380,11 @@ class MqttState:
         N/<portal_id>/pump/<instance>/State (Venus MQTT-GUI format,
         payload {"value": ...}). Requires CERBO_PORTAL_ID to be configured.
         """
-        if not config.CERBO_PORTAL_ID:
+        portal = self._portal_id or config.CERBO_PORTAL_ID
+        if not portal:
             return
         parts = topic.split("/")
-        if len(parts) < 5 or parts[1] != config.CERBO_PORTAL_ID:
+        if len(parts) < 5 or parts[1] != portal:
             return
         service_type, device, path = parts[2], parts[3], "/".join(parts[4:])
         try:
@@ -302,10 +412,11 @@ class MqttState:
           N/<portal>/evcharger/<EVCHARGER_INSTANCE>/Ac/Power -> ev_charging_kw (kW)
         Requires CERBO_PORTAL_ID to be configured.
         """
-        if not config.CERBO_PORTAL_ID:
+        portal = self._portal_id or config.CERBO_PORTAL_ID
+        if not portal:
             return
         parts = topic.split("/")
-        if len(parts) < 5 or parts[1] != config.CERBO_PORTAL_ID:
+        if len(parts) < 5 or parts[1] != portal:
             return
         service_type, device, path = parts[2], parts[3], "/".join(parts[4:])
         try:
@@ -416,10 +527,16 @@ def _make_mqtt_client() -> Client:
     return Client(**client_kwargs)
 
 
-async def _subscribe_topics(client: Client) -> None:
-    """Subscribe to all dashboard topics after connecting."""
+async def _subscribe_topics(client: Client, portal_id: str | None = None) -> None:
+    """Subscribe to daemon + Cerbo portal topics after connecting.
+
+    Live grid/consumption/battery/solar/loads come from Cerbo Venus MQTT
+    (same durable sources as inverter-desktop). ``inverter/state`` still
+    supplies daemon-only extras (daily_stats, solar_forecast, booleans, ...).
+    """
     await client.subscribe("inverter/state")
     await client.subscribe("inverter/console")
+    await client.subscribe("inverter/portal")
     if config.CAMERA_TOPIC:
         try:
             await client.subscribe(config.CAMERA_TOPIC)
@@ -429,33 +546,56 @@ async def _subscribe_topics(client: Client) -> None:
         await client.subscribe("inverter/notifications")
     except Exception as e:
         logger.warning("Could not subscribe to inverter/notifications: %s", e)
-    if config.CERBO_PORTAL_ID:
+
+    # Wildcard Cerbo live tiles — work even before portal ID is known.
+    for filt, label in (
+        ("N/+/acload/+/#", "acload"),
+        ("N/+/pvinverter/+/#", "pvinverter"),
+        ("N/+/system/+/#", "system"),
+        ("N/+/battery/+/#", "battery"),
+        ("N/+/solarcharger/+/#", "solarcharger"),
+        ("N/+/vebus/+/#", "vebus"),
+    ):
         try:
-            await client.subscribe(f"N/{config.CERBO_PORTAL_ID}/+/Alarms/#")
+            await client.subscribe(filt)
         except Exception as e:
-            logger.warning("Could not subscribe to Victron alarm topics: %s", e)
+            logger.warning("Could not subscribe to %s topics (%s): %s", label, filt, e)
+
+    portal = portal_id or config.CERBO_PORTAL_ID
+    if portal:
+        await _subscribe_portal_topics(client, portal)
+
+
+async def _subscribe_portal_topics(client: Client, portal: str) -> None:
+    """Portal-scoped water / EV / alarms (require known VRM portal id)."""
     try:
-        await client.subscribe("N/+/acload/+/Ac/Power")
-        await client.subscribe("N/+/acload/+/CustomName")
+        await client.subscribe(f"N/{portal}/+/Alarms/#")
+        await client.subscribe(f"N/{portal}/+/+/Alarms/#")
     except Exception as e:
-        logger.warning("Could not subscribe to N/+/acload topics: %s", e)
-    # AC PV inverters of any vendor (Tasmota, ESPHome, ...) published on the
-    # GX broker — tiles stay alive even when inverter-control is down.
+        logger.warning("Could not subscribe to Victron alarm topics: %s", e)
     try:
-        await client.subscribe("N/+/pvinverter/+/#")
+        await client.subscribe(f"N/{portal}/tank/+/Level")
+        await client.subscribe(f"N/{portal}/pump/+/State")
+        await client.subscribe(f"N/{portal}/ev/{config.EV_INSTANCE}/Soc")
+        await client.subscribe(f"N/{portal}/ev/{config.EV_INSTANCE}/Ac/Power")
+        await client.subscribe(f"N/{portal}/evcharger/{config.EVCHARGER_INSTANCE}/Ac/Power")
+        logger.info("Subscribed to Cerbo water/EV/alarm topics for portal %s", portal)
     except Exception as e:
-        logger.warning("Could not subscribe to N/+/pvinverter topics: %s", e)
-    if config.CERBO_PORTAL_ID:
+        logger.warning("Could not subscribe to water/EV topics: %s", e)
+
+
+async def _keepalive_loop(client: Client, portal_getter) -> None:
+    """Publish R/<portal>/keepalive so Cerbo keeps sending N/ topics to this client."""
+    while True:
+        await asyncio.sleep(KEEPALIVE_INTERVAL_SECS)
+        portal = portal_getter()
+        if not portal:
+            continue
         try:
-            portal = config.CERBO_PORTAL_ID
-            await client.subscribe(f"N/{portal}/tank/+/Level")
-            await client.subscribe(f"N/{portal}/pump/+/State")
-            # EV (dbus-ev / dbus-evcharger)
-            await client.subscribe(f"N/{portal}/ev/{config.EV_INSTANCE}/Soc")
-            await client.subscribe(f"N/{portal}/ev/{config.EV_INSTANCE}/Ac/Power")
-            await client.subscribe(f"N/{portal}/evcharger/{config.EVCHARGER_INSTANCE}/Ac/Power")
+            await client.publish(f"R/{portal}/keepalive", "", qos=0)
         except Exception as e:
-            logger.warning("Could not subscribe to water/EV topics: %s", e)
+            logger.debug("Cerbo keepalive publish failed: %s", e)
+            return
 
 
 def _next_backoff(delay: float) -> float:
@@ -473,15 +613,31 @@ def _start_mqtt_client():
     async def mqtt_connect_and_loop():
         delay = max(config.MQTT_RECONNECT_MIN, 0.1)
         while True:
+            keepalive_task: asyncio.Task | None = None
             try:
                 async with _app_state.mqtt_client:
                     _app_state.mqtt_connected = True
                     logger.info("Connected to MQTT broker")
-                    await _subscribe_topics(_app_state.mqtt_client)
+                    ms = _app_state.mqtt_state
+                    assert ms is not None
+
+                    async def _on_portal(portal: str) -> None:
+                        client = _app_state.mqtt_client
+                        if client is not None:
+                            await _subscribe_portal_topics(client, portal)
+
+                    ms.set_portal_callback(_on_portal)
+                    await _subscribe_topics(_app_state.mqtt_client, ms._portal_id or None)
                     logger.info("Subscribed to MQTT topics")
+                    keepalive_task = asyncio.create_task(
+                        _keepalive_loop(
+                            _app_state.mqtt_client,
+                            lambda: (_app_state.mqtt_state._portal_id if _app_state.mqtt_state else ""),
+                        )
+                    )
                     delay = max(config.MQTT_RECONNECT_MIN, 0.1)
                     async for message in _app_state.mqtt_client.messages:
-                        await _app_state.mqtt_state.on_message(message.topic.value, message.payload)
+                        await ms.on_message(message.topic.value, message.payload)
             except asyncio.CancelledError:
                 raise
             except MqttError:
@@ -496,6 +652,12 @@ def _start_mqtt_client():
                 logger.exception("Unexpected error in MQTT loop — retrying in %.1fs", delay)
             finally:
                 _app_state.mqtt_connected = False
+                if keepalive_task is not None:
+                    keepalive_task.cancel()
+                    try:
+                        await keepalive_task
+                    except asyncio.CancelledError:
+                        pass
             await asyncio.sleep(delay)
             delay = _next_backoff(delay)
             _app_state.mqtt_client = _make_mqtt_client()

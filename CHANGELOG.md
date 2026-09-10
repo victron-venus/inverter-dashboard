@@ -8,9 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Live telemetry zeros after MQTT_SLIM_STATE**: dashboard now reads Cerbo Venus
+  MQTT (`system` / `battery` / `solarcharger` / `vebus` / `acload` / `pvinverter`)
+  for grid, consumption, bank SoC, solar, setpoint/mode, and active loads — the
+  same durable sources as inverter-desktop — instead of relying on slim
+  `inverter/state` for those tiles. Daily solar / battery-out from the daemon
+  still work.
+- **Active Loads blink-and-clear**: slim `inverter/state` no longer replaces
+  `current_state` wholesale; Cerbo acload maps are re-applied after each daemon
+  tick, and load power updates always refresh the UI.
 - MQTT message loop never connected: passing `tls_insecure` without an SSL
   context made paho raise `ValueError`, killing the loop task silently at
   startup. TLS params are now only passed when `MQTT_TLS` is enabled.
+
+### Changed
+- k3s ConfigMap: `MQTT_HOST=192.168.160.150`, `CERBO_PORTAL_ID=b827ebea1ece`
+  (Cerbo broker + portal keepalive / water+EV).
+- Subscribes to `inverter/portal` and publishes `R/<portal>/keepalive`.
 
 ### Added
 - **EV system via Cerbo MQTT** — `dbus-ev` / `dbus-evcharger` integration:
