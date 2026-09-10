@@ -100,7 +100,6 @@ class TestBuildPayloadContract:
         assert "console" not in payload
         wsh._state["mqtt_state"] = None
 
-
     def test_notifications_included(self):
         ms = MqttState()
         ms.push_notification(
