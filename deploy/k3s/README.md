@@ -16,3 +16,13 @@ kubectl -n inverter-dashboard get pods -o wide   # expect NODE=mp
 ```
 
 Do **not** confuse with `inverter-dashboard-go` (Cerbo-oriented). This Python image is the multi-arch NAS/k3s path.
+
+## Smoke (SPA)
+
+After rollout of a new `alvit/inverter-dashboard:latest`, confirm the Vue index is served (not the "Vue SPA not built" stub):
+
+```bash
+curl -sS http://inverter-dashboard.mp.2560801.xyz/ | grep -E 'id="app"|/assets/'
+```
+
+Server accepts both layouts: `static/dist/index.html` (export_dist.sh) and flat `static/index.html` + `static/assets/` (docker-publish image). Vite assets are mounted at `/assets`.
