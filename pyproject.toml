@@ -32,7 +32,8 @@ test = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-inverter_dashboard = ["VERSION"]
+# static/ holds the Vue SPA (flat layout from docker-publish, or static/dist from export_dist.sh)
+inverter_dashboard = ["VERSION", "static/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
