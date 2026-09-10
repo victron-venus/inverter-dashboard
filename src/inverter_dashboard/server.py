@@ -572,14 +572,23 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Inverter Dashboard", lifespan=lifespan)
 
 
+def _spa_static_candidates() -> list[Path]:
+    """Package-adjacent static/, plus Docker COPY at /app/src (non-editable install)."""
+    candidates = [Path(__file__).parent / "static"]
+    docker_static = Path("/app/src/inverter_dashboard/static")
+    if docker_static not in candidates:
+        candidates.append(docker_static)
+    return candidates
+
+
 def _resolve_spa_root() -> Path | None:
     """Prefer static/dist (export_dist.sh), else static/ (docker-publish image layout)."""
-    static_dir = Path(__file__).parent / "static"
-    dist_dir = static_dir / "dist"
-    if (dist_dir / "index.html").is_file():
-        return dist_dir
-    if (static_dir / "index.html").is_file():
-        return static_dir
+    for static_dir in _spa_static_candidates():
+        dist_dir = static_dir / "dist"
+        if (dist_dir / "index.html").is_file():
+            return dist_dir
+        if (static_dir / "index.html").is_file():
+            return static_dir
     return None
 
 
