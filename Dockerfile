@@ -24,6 +24,8 @@ RUN apk add --no-cache gcc libffi-dev musl-dev
 # Copy only what's needed for package installation with pyproject.toml
 COPY pyproject.toml uv.lock VERSION ./
 COPY src ./src
+# Package-data looks for VERSION next to the module in non-editable installs.
+RUN cp VERSION src/inverter_dashboard/VERSION
 
 # Install production dependencies + package into isolated venv
 RUN uv sync --frozen --no-dev --no-editable --python python

@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **PV inverters not filling solar total**: discover `N/.../pvinverter/...` like
+  desktop (CustomName/Serial/L1|L2), sum into `pv_inverter_total` /
+  `solar_total`, and publish Cerbo keepalive immediately on connect.
+- **Version shows "Web Dev"**: read `VERSION` from package-adjacent /
+  `/app/VERSION` paths used by non-editable Docker installs (was falling back
+  to `dev`).
+- **Header control flags missing / wrong source**: toggle and state use Cerbo
+  MQTT `inverter/state.booleans` bare keys (desktop parity), never HA
+  `input_boolean` / `binary_sensor` mirrors.
+- **Top daily status row**: refreshed Vue SPA includes DailyStats; row stays
+  visible when yesterday or forecast has data even if today is still 0.
+- **Console panel removed** from the bottom of the dashboard.
+
+### Fixed
 - **Live telemetry zeros after MQTT_SLIM_STATE**: dashboard now reads Cerbo Venus
   MQTT (`system` / `battery` / `solarcharger` / `vebus` / `acload` / `pvinverter`)
   for grid, consumption, bank SoC, solar, setpoint/mode, and active loads — the

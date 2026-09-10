@@ -278,7 +278,10 @@ class CerboOverlayMixin:
                 for k in sorted(self._pv_inverters, key=lambda x: int(x) if x.isdigit() else 0)
             ]
             self.current_state["pv_inverters"] = ordered
-            pv_total = sum(float(p.get("power") or 0.0) for p in ordered)
+            powers = [float(p.get("power") or 0.0) for p in ordered]
+            self.current_state["pv_inverter_individual"] = powers
+            self.current_state["pv_inverter_total"] = sum(powers)
+            pv_total = sum(powers)
         else:
             pv_total = 0.0
             for p in self.current_state.get("pv_inverters") or []:
@@ -288,6 +291,7 @@ class CerboOverlayMixin:
         if self._chargers or self._pv_inverters:
             if not self._chargers:
                 mppt_total = float(self.current_state.get("mppt_total") or 0.0)
+            # Headline solar tile = MPPT + discovered AC PV inverters (desktop).
             self.current_state["solar_total"] = mppt_total + pv_total
 
         # systemcalc grid / consumption (preferred)

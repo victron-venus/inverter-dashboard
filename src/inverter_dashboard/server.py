@@ -79,7 +79,6 @@ class MqttState(CerboOverlayMixin):
 
     def __init__(self) -> None:
         self.current_state: dict[str, Any] = {}
-        self.console_lines: list[str] = []
         self.notifications: list[dict[str, Any]] = []
         # Active loads (Cerbo acload / dbus-emporia-vue): instance -> watts / names
         self._acload_names: dict[str, str] = {}
@@ -122,6 +121,17 @@ class MqttState(CerboOverlayMixin):
         for key, value in incoming.items():
             if key in CERBO_OWNED_KEYS and self._cerbo_has_overlay(key):
                 continue
+            if key == "booleans" and isinstance(value, dict):
+                coerced: dict[str, bool] = {}
+                for bk, bv in value.items():
+                    if isinstance(bv, str):
+                        coerced[bk] = bv.lower() in ("true", "1", "on")
+                    elif isinstance(bv, (int, float)):
+                        coerced[bk] = bv != 0
+                    else:
+                        coerced[bk] = bool(bv)
+                self.current_state[key] = coerced
+                continue
             self.current_state[key] = value
         # Re-apply durable Cerbo maps so slim ticks cannot blank live tiles.
         self._apply_cerbo_overlays()
@@ -158,12 +168,6 @@ class MqttState(CerboOverlayMixin):
                     logger.info("Discovered Cerbo portal ID via inverter/portal: %s", portal)
                     if self._on_portal:
                         await self._on_portal(portal)
-
-            elif topic == "inverter/console":
-                line = payload.decode()
-                self.console_lines.append(line)
-                if len(self.console_lines) > config.CONSOLE_MAX_LINES:
-                    self.console_lines.pop(0)
 
             elif topic == "inverter/notifications":
                 self.push_notification(json.loads(payload.decode()))
@@ -350,16 +354,26 @@ class MqttState(CerboOverlayMixin):
         except (ValueError, AttributeError):
             return False
 
-        entry = self._pv_inverters.setdefault(instance, {})
-        if path in ("Ac/Power", "Ac/L1/Power") and isinstance(val, (int, float)):
+        entry = self._pv_inverters.setdefault(instance, {"instance": instance})
+        changed = False
+        if path in ("Ac/Power", "Ac/L1/Power", "Ac/L2/Power") and isinstance(val, (int, float)):
             entry["power"] = float(val)
-        elif path == "Ac/L1/Voltage" and isinstance(val, (int, float)):
+            changed = True
+        elif path in ("Ac/L1/Voltage", "Ac/L2/Voltage") and isinstance(val, (int, float)):
             entry["voltage"] = float(val)
-        elif path == "Ac/L1/Current" and isinstance(val, (int, float)):
+            changed = True
+        elif path in ("Ac/L1/Current", "Ac/L2/Current") and isinstance(val, (int, float)):
             entry["current"] = float(val)
-        elif path == "ProductName" and isinstance(val, str) and val.strip():
-            entry["name"] = val.strip()
-        else:
+            changed = True
+        elif path in ("ProductName", "CustomName") and isinstance(val, str) and val.strip():
+            # CustomName wins (user-facing); ProductName fills when unset.
+            if path == "CustomName" or not entry.get("name"):
+                entry["name"] = val.strip()
+            changed = True
+        elif path == "Serial" and isinstance(val, str) and val.strip():
+            entry["serial"] = val.strip()
+            changed = True
+        if not changed:
             return False
 
         ordered = [
@@ -367,6 +381,9 @@ class MqttState(CerboOverlayMixin):
             for k in sorted(self._pv_inverters, key=lambda x: int(x) if x.isdigit() else 0)
         ]
         self.current_state["pv_inverters"] = ordered
+        powers = [float(p.get("power") or 0.0) for p in ordered]
+        self.current_state["pv_inverter_individual"] = powers
+        self.current_state["pv_inverter_total"] = sum(powers)
         self._apply_cerbo_overlays()
         return True
 
@@ -440,10 +457,6 @@ class MqttState(CerboOverlayMixin):
     def get_state(self) -> dict[str, Any]:
         """Get current state"""
         return self.current_state
-
-    def get_console(self) -> list[str]:
-        """Get console lines"""
-        return self.console_lines
 
     def get_notifications(self) -> list[dict[str, Any]]:
         """Get notification list (inverter-control pushes + alarm transitions)."""
@@ -532,7 +545,6 @@ async def _subscribe_topics(client: Client, portal_id: str | None = None) -> Non
     supplies daemon-only extras (daily_stats, solar_forecast, booleans, ...).
     """
     await client.subscribe("inverter/state")
-    await client.subscribe("inverter/console")
     await client.subscribe("inverter/portal")
     if config.CAMERA_TOPIC:
         try:
@@ -582,17 +594,20 @@ async def _subscribe_portal_topics(client: Client, portal: str) -> None:
 
 
 async def _keepalive_loop(client: Client, portal_getter) -> None:
-    """Publish R/<portal>/keepalive so Cerbo keeps sending N/ topics to this client."""
+    """Publish R/<portal>/keepalive so Cerbo keeps sending N/ topics to this client.
+
+    Mirrors inverter-desktop: first publish runs immediately so PV inverters /
+    solarchargers / batteries start streaming without waiting a full interval.
+    """
     while True:
-        await asyncio.sleep(KEEPALIVE_INTERVAL_SECS)
         portal = portal_getter()
-        if not portal:
-            continue
-        try:
-            await client.publish(f"R/{portal}/keepalive", "", qos=0)
-        except Exception as e:
-            logger.debug("Cerbo keepalive publish failed: %s", e)
-            return
+        if portal:
+            try:
+                await client.publish(f"R/{portal}/keepalive", "", qos=0)
+            except Exception as e:
+                logger.debug("Cerbo keepalive publish failed: %s", e)
+                return
+        await asyncio.sleep(KEEPALIVE_INTERVAL_SECS)
 
 
 def _next_backoff(delay: float) -> float:
