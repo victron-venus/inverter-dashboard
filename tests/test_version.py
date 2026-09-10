@@ -27,7 +27,6 @@ class TestGetVersion:
         result = get_version()
         assert len(result) > 0
 
-
     def test_reads_package_adjacent_version(self, tmp_path, monkeypatch):
         """Packaged install: VERSION next to version.py wins."""
         ver = tmp_path / "VERSION"
