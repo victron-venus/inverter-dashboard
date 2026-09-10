@@ -72,8 +72,6 @@ def pretty_service_name(service: str) -> str:
     return _capitalize(service)
 
 
-
-
 class MqttState(CerboOverlayMixin):
     """Encapsulated MQTT state."""
 
@@ -193,8 +191,7 @@ class MqttState(CerboOverlayMixin):
                     await self._emit()
 
             elif any(
-                f"/{kind}/" in topic
-                for kind in ("system", "battery", "solarcharger", "vebus")
+                f"/{kind}/" in topic for kind in ("system", "battery", "solarcharger", "vebus")
             ):
                 if self._handle_cerbo_device(topic, payload):
                     await self._emit()
@@ -619,7 +616,8 @@ def _start_mqtt_client():
                     _app_state.mqtt_connected = True
                     logger.info("Connected to MQTT broker")
                     ms = _app_state.mqtt_state
-                    assert ms is not None
+                    if ms is None:
+                        raise RuntimeError("MQTT state not initialized")
 
                     async def _on_portal(portal: str) -> None:
                         client = _app_state.mqtt_client
@@ -632,7 +630,9 @@ def _start_mqtt_client():
                     keepalive_task = asyncio.create_task(
                         _keepalive_loop(
                             _app_state.mqtt_client,
-                            lambda: (_app_state.mqtt_state._portal_id if _app_state.mqtt_state else ""),
+                            lambda: (
+                                _app_state.mqtt_state._portal_id if _app_state.mqtt_state else ""
+                            ),
                         )
                     )
                     delay = max(config.MQTT_RECONNECT_MIN, 0.1)
@@ -654,10 +654,7 @@ def _start_mqtt_client():
                 _app_state.mqtt_connected = False
                 if keepalive_task is not None:
                     keepalive_task.cancel()
-                    try:
-                        await keepalive_task
-                    except asyncio.CancelledError:
-                        pass
+                    await asyncio.gather(keepalive_task, return_exceptions=True)
             await asyncio.sleep(delay)
             delay = _next_backoff(delay)
             _app_state.mqtt_client = _make_mqtt_client()

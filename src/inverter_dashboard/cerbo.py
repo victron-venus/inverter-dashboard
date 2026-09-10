@@ -145,6 +145,7 @@ def cerbo_owns_key(
 
 class CerboOverlayMixin:
     """Cerbo device-map overlays for MqttState."""
+
     def _handle_cerbo_device(self, topic: str, payload: bytes) -> bool:
         """Apply N/<portal>/{system,battery,solarcharger,vebus}/... into device maps."""
         parts = topic.split("/")
