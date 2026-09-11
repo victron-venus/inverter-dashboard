@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.16] - 2026-09-11
+
+### Fixed
+- Pin Vue SPA download in docker-publish to **inverter-dashboard-vue v2.1.5** (fixes live `ReferenceError: prodY is not defined` from undeclared DailyStats computed in v2.1.4).
+- Ship embedded static SPA assets from Vue **v2.1.5** (`index-Bjn2Wdgo.js`).
+
 ## [Unreleased]
 
 ### Fixed
