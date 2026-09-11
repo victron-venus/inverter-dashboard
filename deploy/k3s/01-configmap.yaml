@@ -11,6 +11,7 @@ data:
   GATEWAY_URL: "https://victron.2560801.xyz"
   GATEWAY_POLL_INTERVAL: "2"
   # Do NOT set MQTT_HOST here — a Cerbo MQTT client would re-hammer 192.168.160.150.
+  HOST: "0.0.0.0"
   WEB_PORT: "8080"
   INVERTER_DASHBOARD_CONFIG: "/app/config"
   # Portal id still used for water/EV instance defaults when mapping IGW snapshot leaves.
