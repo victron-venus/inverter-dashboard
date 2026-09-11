@@ -12,4 +12,4 @@ resources:
   - 05-ingress.yaml
 images:
   - name: alvit/inverter-dashboard
-    newTag: sha-6a53972
+    newTag: sha-ade2312
