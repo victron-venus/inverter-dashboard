@@ -2,6 +2,7 @@
 
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -32,7 +33,10 @@ def main() -> None:
     with (
         tempfile.TemporaryDirectory() as directory,
         subprocess.Popen(
-            [str(binary), "--port", str(port)], cwd=directory, env=environment
+            [str(binary), "--port", str(port)],
+            cwd=directory,
+            env=environment,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
         ) as process,
     ):
         try:
@@ -64,7 +68,11 @@ def main() -> None:
                 if not response.content:
                     raise RuntimeError(f"Empty packaged asset: {asset}")
         finally:
-            process.terminate()
+            if sys.platform == "win32":
+                # Signal the whole frozen process group so its child releases cwd.
+                process.send_signal(signal.CTRL_BREAK_EVENT)
+            else:
+                process.terminate()
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
