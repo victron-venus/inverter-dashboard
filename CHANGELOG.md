@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Alert banners (IGW + MQTT)**: Venus-platform GUIv2 notifications
+  (`platform/.../Notifications/<slot>/*`) drive the same `{id,level,title,body,source,ts}`
+  banners as inverter-desktop. IGW snapshot `platform` leaves work without Cerbo MQTT;
+  LAN mode also subscribes to platform topics (Alarms fallback when platform unseen).
+  Banner **X** dismisses locally and acknowledges on Cerbo via IGW
+  `acknowledge_all_notifications` or MQTT `AcknowledgeAll`.
+
 - **Inverter-gateway (IGW) transport**: optional remote live telemetry via
   `GET /v1/snapshot` (Cloudflare Access + bearer), same pattern as
   inverter-desktop. Env: `GATEWAY_ENABLED`, `GATEWAY_URL`,
