@@ -1,16 +1,25 @@
 """Remote inverter-gateway (IGW) client — mirrors inverter-desktop gateway.rs.
 
-When GATEWAY_ENABLED + GATEWAY_URL are set, the dashboard polls
-``GET /v1/snapshot`` through Cloudflare Access + bearer instead of opening
-a second Cerbo MQTT session. Live tiles are applied into the same
-MqttState device maps used by the LAN MQTT path.
+Live Cerbo tiles come from either:
+- Cerbo/LAN MQTT (``MQTT_HOST``), or
+- remote inverter-gateway (``GATEWAY_ENABLED`` + ``GATEWAY_URL`` → ``GET /v1/snapshot``).
+
+Precedence (same idea as inverter-desktop ``connectionPolicy``):
+1. Only ``MQTT_HOST`` → Cerbo MQTT client.
+2. Only IGW → snapshot poller.
+3. Both configured → probe MQTT; if the broker accepts TCP, use MQTT,
+   otherwise use IGW. Dual-path mode may fail over MQTT→IGW and later
+   recover IGW→MQTT when the broker is reachable again.
+4. Neither → no live data source.
+
+mp production clears ``MQTT_HOST`` so IGW stays primary.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -21,10 +30,19 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECS = 2.0
 REQUEST_TIMEOUT_SECS = 25.0
+MQTT_PROBE_TIMEOUT_SECS = 3.0
+MQTT_CONNECT_WATCHDOG_SECS = 15.0
+MQTT_RECOVERY_PROBE_SECS = 60.0
+
+StartupSource = Literal["mqtt", "igw", "none"]
+
+# Exclusive live path selected at startup (and updated on dual-path failover).
+_active_source: StartupSource = "none"
+_dual_path: bool = False
 
 
 def gateway_configured() -> bool:
-    """True when remote IGW should be used (enabled + URL)."""
+    """True when remote IGW looks configured (enabled + URL)."""
     return bool(config.GATEWAY_ENABLED and (config.GATEWAY_URL or "").strip())
 
 
@@ -33,9 +51,72 @@ def mqtt_configured() -> bool:
     return bool((config.MQTT_HOST or "").strip())
 
 
+def set_active_source(source: StartupSource, *, dual_path: bool = False) -> None:
+    """Record the exclusive live path (commands/ack follow this)."""
+    global _active_source, _dual_path
+    _active_source = source
+    _dual_path = dual_path and source in ("mqtt", "igw")
+
+
+def active_source() -> StartupSource:
+    """Currently selected exclusive data source."""
+    return _active_source
+
+
+def dual_path_enabled() -> bool:
+    """True when both MQTT and IGW were configured at selection time."""
+    return _dual_path
+
+
 def prefer_gateway() -> bool:
-    """mp / remote: IGW wins when enabled so we do not open a Cerbo MQTT client."""
-    return gateway_configured()
+    """True when the live exclusive path is IGW (commands/ack via gateway).
+
+    After startup selection this follows ``active_source()``. Before selection
+    (tests / early imports) it is True only for IGW-only configs so a coexisting
+    ``MQTT_HOST`` is not abandoned by default.
+    """
+    if _active_source != "none":
+        return _active_source == "igw"
+    return gateway_configured() and not mqtt_configured()
+
+
+def choose_startup_source(
+    *,
+    mqtt_configured: bool,
+    igw_configured: bool,
+    mqtt_reachable: bool,
+) -> StartupSource:
+    """Choose the exclusive live path — mirrors desktop ``chooseStartupSource``."""
+    if mqtt_configured and igw_configured:
+        return "mqtt" if mqtt_reachable else "igw"
+    if mqtt_configured:
+        return "mqtt"
+    if igw_configured:
+        return "igw"
+    return "none"
+
+
+async def probe_mqtt_reachable(timeout: float = MQTT_PROBE_TIMEOUT_SECS) -> bool:
+    """True when ``MQTT_HOST:MQTT_PORT`` accepts a TCP connection."""
+    host = (config.MQTT_HOST or "").strip()
+    if not host:
+        return False
+    port = int(config.MQTT_PORT or 1883)
+    try:
+        _reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=timeout,
+        )
+    except Exception as e:  # pylint: disable=broad-except
+        logger.debug("MQTT probe %s:%s failed: %s", host, port, e)
+        return False
+    try:
+        writer.close()
+        await writer.wait_closed()
+    except Exception as close_err:  # pylint: disable=broad-except
+        logger.debug("MQTT probe close %s:%s: %s", host, port, close_err)
+    logger.debug("MQTT probe %s:%s ok", host, port)
+    return True
 
 
 def _num(v: Any) -> float | None:

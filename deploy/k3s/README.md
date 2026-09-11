@@ -31,7 +31,7 @@ second Cerbo client flood.
 | `GATEWAY_ACCESS_CLIENT_SECRET` | Secret | CF Access service token |
 | `GATEWAY_API_TOKEN` | Secret | App bearer (`Authorization: Bearer …`) |
 | `CERBO_PORTAL_ID` | ConfigMap | water/EV instance defaults when mapping snapshot |
-| `MQTT_HOST` | — | **omit on mp** (Cerbo-direct is local/dev only) |
+| `MQTT_HOST` | ConfigMap `""` | Empty on mp (IGW-only). Set a broker host to enable dual-path MQTT-first + IGW fallback. |
 
 Create the gateway Secret from local files (never commit):
 
@@ -47,7 +47,8 @@ kubectl --context k3s-heaven -n inverter-dashboard create secret generic \
 ```
 
 Local/dev: leave `GATEWAY_ENABLED` unset/false and set `MQTT_HOST` to the Cerbo
-broker as before.
+broker as before. Dual-path (both `MQTT_HOST` and IGW): MQTT wins when the broker
+accepts TCP; otherwise IGW, with recovery probes while on IGW.
 
 ## Ingress / DNS
 

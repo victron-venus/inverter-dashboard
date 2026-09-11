@@ -10,7 +10,10 @@ data:
   GATEWAY_ENABLED: "true"
   GATEWAY_URL: "https://victron.2560801.xyz"
   GATEWAY_POLL_INTERVAL: "2"
-  # Do NOT set MQTT_HOST here — a Cerbo MQTT client would re-hammer 192.168.160.150.
+  # Explicit empty: pydantic default is "Cerbo"; blank keeps mp IGW-only
+  # (dual-path would probe MQTT when both are set). Optional: set a real
+  # MQTT_HOST alongside GATEWAY_* for LAN-first + IGW fallback.
+  MQTT_HOST: ""
   HOST: "0.0.0.0"
   WEB_PORT: "8080"
   INVERTER_DASHBOARD_CONFIG: "/app/config"

@@ -59,12 +59,23 @@ flowchart TD
 
 Live grid / consumption / battery / solar / loads / setpoint come from **Cerbo
 Venus MQTT** (same path as [inverter-desktop](https://github.com/victron-venus/inverter-desktop))
-**or** from remote **[inverter-gateway](https://github.com/victron-venus/inverter-gateway)**
-(`GATEWAY_ENABLED` + `GATEWAY_URL` → poll `/v1/snapshot`). Production on `mp`
-uses IGW so apps share one Cerbo MQTT client on Synology instead of each
-connecting to `192.168.160.150:1883`. `inverter/state` still carries daemon-only
-extras (`daily_stats`, `solar_forecast`, flags, …) when MQTT is used; IGW mode
-maps Cerbo live tiles only (daemon extras need HA overlay or a separate source).
+**and/or** remote **[inverter-gateway](https://github.com/victron-venus/inverter-gateway)**
+(`GATEWAY_ENABLED` + `GATEWAY_URL` → poll `/v1/snapshot`).
+
+**Data-source precedence** (exclusive live path, desktop-aligned):
+
+1. Only `MQTT_HOST` → Cerbo MQTT client.
+2. Only IGW (`GATEWAY_ENABLED` + `GATEWAY_URL`) → snapshot poller.
+3. Both configured → TCP-probe MQTT; if the broker responds, use MQTT;
+   otherwise use IGW. Dual-path may fail over MQTT→IGW and later recover
+   when MQTT is reachable again.
+4. Neither → no live telemetry source.
+
+Production on `mp` clears `MQTT_HOST` so IGW stays primary (one Cerbo MQTT
+client on Synology). Local/dev and optional ConfigMaps may set both.
+`inverter/state` still carries daemon-only extras (`daily_stats`,
+`solar_forecast`, flags, …) when MQTT is used; IGW mode maps Cerbo live tiles
+only (daemon extras need HA overlay or a separate source).
 
 ### Water system
 
@@ -159,7 +170,7 @@ kubectl -n inverter-dashboard get pods -o wide   # expect NODE=mp
 ```
 
 - Image: `alvit/inverter-dashboard:latest` (Docker Hub; `.github/workflows/docker-publish.yml` already publishes)
-- mp k3s: IGW at `https://victron.2560801.xyz` (no Cerbo MQTT in ConfigMap); local/dev still uses `MQTT_HOST`. Set `CERBO_PORTAL_ID` for water/EV instance defaults
+- mp k3s: IGW at `https://victron.2560801.xyz` with `MQTT_HOST=""` (IGW-only); local/dev uses `MQTT_HOST`, or both for dual-path. Set `CERBO_PORTAL_ID` for water/EV instance defaults
 - Ingress stub host is a placeholder — edit before enabling Traefik TLS / cert-manager
 
 ## Configuration Reference
@@ -251,9 +262,9 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `MQTT_HOST` | `Cerbo` | Cerbo/LAN MQTT broker (local/dev). **Omit / leave unused when IGW is enabled.** |
+| `MQTT_HOST` | `Cerbo` | Cerbo/LAN MQTT broker. Empty/`""` disables MQTT (mp IGW-only). May coexist with IGW. |
 | `MQTT_PORT` | `1883` | MQTT broker port |
-| `GATEWAY_ENABLED` | `false` | Prefer remote inverter-gateway snapshot polling (no Cerbo MQTT client) |
+| `GATEWAY_ENABLED` | `false` | Enable remote inverter-gateway snapshot polling (coexists with MQTT; see precedence above) |
 | `GATEWAY_URL` | _(empty)_ | IGW base URL, e.g. `https://victron.2560801.xyz` |
 | `GATEWAY_ACCESS_CLIENT_ID` | _(empty)_ | Cloudflare Access service-token client id |
 | `GATEWAY_ACCESS_CLIENT_SECRET` | _(empty)_ | Cloudflare Access service-token client secret |
