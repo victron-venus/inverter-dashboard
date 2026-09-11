@@ -26,6 +26,9 @@ spec:
           envFrom:
             - configMapRef:
                 name: inverter-dashboard
+            - secretRef:
+                name: inverter-dashboard-gateway
+                optional: true
           volumeMounts:
             - name: config
               mountPath: /app/config

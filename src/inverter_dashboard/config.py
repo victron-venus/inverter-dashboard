@@ -11,7 +11,7 @@ class Config(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # MQTT settings
+    # MQTT settings (Cerbo-direct / local-dev). Leave empty when using IGW only.
     MQTT_HOST: str = "Cerbo"
     MQTT_PORT: int = 1883
     MQTT_USERNAME: str = ""
@@ -22,6 +22,16 @@ class Config(BaseSettings):
     # MQTT auto-reconnect backoff (seconds)
     MQTT_RECONNECT_MIN: float = 1.0
     MQTT_RECONNECT_MAX: float = 60.0
+
+    # Remote inverter-gateway (IGW) — same pattern as inverter-desktop.
+    # When GATEWAY_ENABLED and GATEWAY_URL are set, live Cerbo tiles come from
+    # GET /v1/snapshot (Cloudflare Access + bearer) instead of a Cerbo MQTT session.
+    GATEWAY_ENABLED: bool = False
+    GATEWAY_URL: str = ""
+    GATEWAY_ACCESS_CLIENT_ID: str = ""
+    GATEWAY_ACCESS_CLIENT_SECRET: str = ""
+    GATEWAY_API_TOKEN: str = ""
+    GATEWAY_POLL_INTERVAL: float = 2.0
 
     # Web server settings
     HOST: str = "127.0.0.1"
@@ -72,7 +82,7 @@ class Config(BaseSettings):
     def GITHUB_RAW_URL(self) -> str:
         return f"https://raw.githubusercontent.com/{self.GITHUB_REPO}/main"
 
-    @field_validator("SELF_UPDATE_ENABLED", "MQTT_TLS", mode="before")
+    @field_validator("SELF_UPDATE_ENABLED", "MQTT_TLS", "GATEWAY_ENABLED", mode="before")
     @classmethod
     def _parse_bool(cls, v: str | bool) -> bool:
         if isinstance(v, bool):
@@ -91,6 +101,12 @@ MQTT_TLS = config.MQTT_TLS
 MQTT_CA_CERT = config.MQTT_CA_CERT
 MQTT_RECONNECT_MIN = config.MQTT_RECONNECT_MIN
 MQTT_RECONNECT_MAX = config.MQTT_RECONNECT_MAX
+GATEWAY_ENABLED = config.GATEWAY_ENABLED
+GATEWAY_URL = config.GATEWAY_URL
+GATEWAY_ACCESS_CLIENT_ID = config.GATEWAY_ACCESS_CLIENT_ID
+GATEWAY_ACCESS_CLIENT_SECRET = config.GATEWAY_ACCESS_CLIENT_SECRET
+GATEWAY_API_TOKEN = config.GATEWAY_API_TOKEN
+GATEWAY_POLL_INTERVAL = config.GATEWAY_POLL_INTERVAL
 HOST = config.HOST
 WEB_PORT = config.WEB_PORT
 DASHBOARD_SECRET = config.DASHBOARD_SECRET
