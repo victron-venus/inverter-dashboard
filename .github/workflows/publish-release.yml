@@ -50,13 +50,13 @@ jobs:
         with:
           version: '0.12.7'
       - name: Install locked dependencies
-        run: uv sync --locked --group packaging --no-dev
+        run: uv sync --locked --group packaging --no-dev --no-install-project --no-build
       - name: Build binary
-        run: uv run --no-sync python -m PyInstaller --clean --noconfirm inverter-dashboard.spec
+        run: uv run --no-sync --no-build python -m PyInstaller --clean --noconfirm inverter-dashboard.spec
       - name: Smoke test frozen application
-        run: uv run --no-sync python scripts/check_frozen_binary.py dist/${{ matrix.executable }}
+        run: uv run --no-sync --no-build python scripts/check_frozen_binary.py dist/${{ matrix.executable }}
       - name: Package verified binary
-        run: uv run --no-sync python scripts/package_binary.py dist/${{ matrix.executable }} ${{ matrix.platform }}
+        run: uv run --no-sync --no-build python scripts/package_binary.py dist/${{ matrix.executable }} ${{ matrix.platform }}
       - name: Upload release files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

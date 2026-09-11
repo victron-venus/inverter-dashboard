@@ -13,6 +13,20 @@ from pathlib import Path
 import httpx
 
 
+def stop_process(process: subprocess.Popen[bytes]) -> None:
+    """Release both the frozen launcher and its child before removing cwd."""
+    if sys.platform == "win32":
+        # Signal the whole frozen process group so its child releases cwd.
+        process.send_signal(signal.CTRL_BREAK_EVENT)
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+
+
 def main() -> None:
     """Start the binary on loopback and verify its packaged runtime assets."""
     binary = Path(sys.argv[1]).resolve()
@@ -68,16 +82,7 @@ def main() -> None:
                 if not response.content:
                     raise RuntimeError(f"Empty packaged asset: {asset}")
         finally:
-            if sys.platform == "win32":
-                # Signal the whole frozen process group so its child releases cwd.
-                process.send_signal(signal.CTRL_BREAK_EVENT)
-            else:
-                process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=10)
+            stop_process(process)
 
 
 if __name__ == "__main__":

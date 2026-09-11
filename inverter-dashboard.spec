@@ -1,13 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 # noqa: F401,F821  # Analysis/PYZ/EXE are injected by PyInstaller.
 
-from PyInstaller.utils.hooks import collect_data_files
-
 a = Analysis(
     ['scripts/frozen_entrypoint.py'],
     pathex=['src'],
     binaries=[],
-    datas=[('VERSION', '.')] + collect_data_files('inverter_dashboard'),
+    datas=[
+        ('VERSION', '.'),
+        ('src/inverter_dashboard/static', 'inverter_dashboard/static'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
