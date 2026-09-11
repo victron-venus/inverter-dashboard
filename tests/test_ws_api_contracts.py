@@ -488,6 +488,8 @@ class TestApiContracts:
         assert "mqtt_reconnects" in data
         assert "has_mqtt_state" in data
         assert isinstance(data["mqtt_reconnects"], int)
+        assert "gateway_connected" in data
+        assert "data_source" in data
 
     def test_api_state_without_mqtt_state_is_fine(self, monkeypatch):
         """API must not 500 when MQTT hasn't started."""

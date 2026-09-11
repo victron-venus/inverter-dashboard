@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.17] - 2026-09-11
+
+### Changed
+- **`GET /api/state`**: include live Cerbo/IGW tiles (`gt`/`tt`/`battery_*`/`solar_total`/`loads`/…)
+  alongside health/gateway counters so monitors and SPA HTTP fallback can verify non-zero
+  data without a WebSocket.
+
 ## [1.8.16] - 2026-09-11
 
 ### Fixed

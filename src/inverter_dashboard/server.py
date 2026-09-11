@@ -1031,12 +1031,19 @@ async def api_settings_post(request: Request):
 
 @app.get("/api/state")
 async def api_state():
-    """Minimal JSON for Docker HEALTHCHECK and monitoring (not full inverter payload)."""
+    """Health + live Cerbo/IGW tiles for monitoring and SPA HTTP fallback."""
     raw = _app_state.mqtt_state.get_state() if _app_state.mqtt_state else {}
-    return {
+    # Prefer the same filtered payload WS clients get (HA overlay + allowlist).
+    live: dict[str, Any] = {}
+    if _app_state.mqtt_state is not None:
+        try:
+            live = websocket_handler.build_payload()
+        except Exception:  # pylint: disable=broad-except
+            live = {}
+    out: dict[str, Any] = {
         "ok": True,
         "dashboard_version": VERSION,
-        "control_version": raw.get("version"),
+        "control_version": raw.get("version") or live.get("version"),
         "has_mqtt_state": bool(raw),
         "data_source": _app_state.data_source,
         "mqtt_connected": _app_state.mqtt_connected,
@@ -1046,6 +1053,32 @@ async def api_state():
         "gateway_errors": _app_state.gateway_errors,
         "gateway_url": (config.GATEWAY_URL or "").rstrip("/") or None,
     }
+    for key in (
+        "gt",
+        "tt",
+        "g1",
+        "g2",
+        "t1",
+        "t2",
+        "battery_soc",
+        "battery_power",
+        "battery_voltage",
+        "battery_current",
+        "solar_total",
+        "mppt_total",
+        "inverter_state",
+        "setpoint",
+        "water_level",
+        "car_soc",
+        "ev_charging_kw",
+        "loads",
+        "batteries",
+        "notifications",
+        "daily_stats",
+    ):
+        if key in live:
+            out[key] = live[key]
+    return out
 
 
 @app.post(
