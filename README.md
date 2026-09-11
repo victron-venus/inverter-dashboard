@@ -206,6 +206,44 @@ This repository follows a multi-channel release strategy managed by GitHub Actio
 - **Pre-releases**: Tagged as `vX.Y.Z-rc.N` or `vX.Y.Z-beta.N`. Automatically published as **Pre-release** on GitHub Releases to isolate testing releases.
 - **Nightly Builds**: Built daily at 02:00 UTC. Publishes PyInstaller binaries to the **[Nightly Build Release](https://github.com/victron-venus/inverter-dashboard/releases/tag/nightly)** and updates the Docker image tag `ghcr.io/victron-venus/inverter-dashboard:nightly`.
 
+### Run a standalone dashboard
+
+Download a ZIP and its matching `.sha256` file from the
+[latest stable release](https://github.com/victron-venus/inverter-dashboard/releases/latest):
+
+- Linux x86_64: `inverter-dashboard-linux-x86_64.zip` (built on Ubuntu 24.04).
+- macOS Intel: `inverter-dashboard-macos-x86_64.zip`.
+- macOS Apple Silicon: `inverter-dashboard-macos-arm64.zip`.
+- Windows x86_64: `inverter-dashboard-windows-x86_64.zip`.
+
+The executable includes Python, its runtime dependencies, and the Vue web
+interface. You do not need a source checkout, Python installation, or frontend
+build. Extract the archive into a directory where you keep dashboard settings.
+
+On Linux or macOS, make the extracted file executable and start it with your
+Cerbo's reachable address in place of `CERBO_IP`:
+
+```sh
+chmod +x inverter-dashboard
+./inverter-dashboard --mqtt-host CERBO_IP --port 8080
+```
+
+On Windows, open PowerShell in the extracted directory:
+
+```powershell
+.\inverter-dashboard.exe --mqtt-host CERBO_IP --port 8080
+```
+
+Open `http://127.0.0.1:8080` in your browser. The web server binds to loopback by
+default. Existing MQTT, gateway, and authentication settings also apply to the
+standalone executable; set `DASHBOARD_SECRET` before enabling remote access with
+`HOST`. Use `--help` to see the available command-line options.
+
+To verify a download, keep the ZIP beside its checksum file and use
+`sha256sum --check <archive>.sha256` on Linux or
+`shasum -a 256 --check <archive>.sha256` on macOS. On Windows, compare
+`Get-FileHash <archive>.zip -Algorithm SHA256` with the matching checksum file.
+
 ---
 
 ## Completed Features
@@ -479,16 +517,3 @@ For issues specific to:
 - **Home Assistant integration**: Validate token and entity availability
 - **Docker deployment**: Review container logs and volume mounts
 - **This project**: Open an issue in this repository
-
-### Binary release validation
-
-Pull requests and manual runs of **Publish Release Binaries** build and smoke-test
-Linux x86_64, macOS Intel, macOS Apple Silicon, and Windows x86_64 packages. The
-smoke test starts each frozen executable on loopback from an empty temporary
-directory, verifies its embedded version, and requests the bundled SPA and assets.
-No MQTT broker or inverter is required. Each successful job uploads a ZIP and
-SHA256 checksum; these artifacts can be inspected before tagging a release.
-
-Only a `v*` tag push publishes a GitHub release, after all four packages pass.
-Manual runs and pull requests never publish releases. The binary includes the SPA
-tracked in this repository. This workflow does not deploy to k3s or devices.

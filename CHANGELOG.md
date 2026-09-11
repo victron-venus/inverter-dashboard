@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.19] - 2026-09-11
+
+### Fixed
+- Restore standalone binaries for Linux x86_64, macOS Intel, macOS Apple Silicon,
+  and Windows x86_64 with their runtime dependencies and embedded Vue interface.
+- Preserve the application version in frozen binaries and publish ZIP archives
+  with SHA256 checksums for each platform.
+
 ## [1.8.17] - 2026-09-11
 
 ### Changed
