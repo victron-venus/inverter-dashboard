@@ -45,3 +45,6 @@ build/
 local_config.py
 .coverage
 *.backup
+
+# Verified binary release archives
+release/
