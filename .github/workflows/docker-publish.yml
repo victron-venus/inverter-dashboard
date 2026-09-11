@@ -39,13 +39,16 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download Vue SPA from inverter-dashboard-vue
-        run: |
-          gh release download --repo victron-venus/inverter-dashboard-vue --pattern 'vue-spa-dist.tar.gz' --dir dist-tmp
-          mkdir -p src/inverter_dashboard/static
-          tar -xzf dist-tmp/vue-spa-dist.tar.gz -C src/inverter_dashboard/static/
-          echo "Vue SPA installed to src/inverter_dashboard/static/"
         env:
           GH_TOKEN: ${{ github.token }}
+          # Pin so docker-publish never picks a stale Latest / ci-latest SPA.
+          VUE_SPA_TAG: v2.1.5
+        run: |
+          gh release download "$VUE_SPA_TAG" --repo victron-venus/inverter-dashboard-vue --pattern 'vue-spa-dist.tar.gz' --dir dist-tmp
+          mkdir -p src/inverter_dashboard/static
+          tar -xzf dist-tmp/vue-spa-dist.tar.gz -C src/inverter_dashboard/static/
+          echo "Vue SPA $VUE_SPA_TAG installed to src/inverter_dashboard/static/"
+          ls -la src/inverter_dashboard/static/assets/ | head
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
