@@ -6,6 +6,8 @@ Image: `alvit/inverter-dashboard:latest` (Docker Hub; existing `docker-publish.y
 
 ## Data source: inverter-gateway (IGW)
 
+> **Warning:** `02-secret.example.yaml` is **not** in `kustomization.yaml` resources. Apply real Secrets out-of-band; never `kubectl apply -f 02-secret.example.yaml` against prod.
+
 **Production ConfigMap uses IGW — not Cerbo MQTT.**
 
 Synology already runs [inverter-gateway](https://github.com/victron-venus/inverter-gateway)
