@@ -4,10 +4,12 @@ namespace: inverter-dashboard
 resources:
   - 00-namespace.yaml
   - 01-configmap.yaml
-  - 02-secret.example.yaml
+  # 02-secret.example.yaml is EXAMPLE ONLY — apply real Secrets out-of-band
+  # (inverter-dashboard-config + inverter-dashboard-gateway). Never include it
+  # in kustomize resources or `kubectl apply -k` will overwrite production.
   - 03-deployment.yaml
   - 04-service.yaml
   - 05-ingress.yaml
 images:
   - name: alvit/inverter-dashboard
-    newTag: latest
+    newTag: sha-6a53972
