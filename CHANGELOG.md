@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`GET /api/state`**: include live Cerbo/IGW tiles (`gt`/`tt`/`battery_*`/`solar_total`/`loads`/…)
   alongside health/gateway counters so monitors and SPA HTTP fallback can verify non-zero
   data without a WebSocket.
+- Pin Vue SPA download in docker-publish to **inverter-dashboard-vue v2.1.7** (HTTP `/api/state` poll when WS silent).
 
 ## [1.8.16] - 2026-09-11
 
