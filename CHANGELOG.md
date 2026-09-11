@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Inverter-gateway (IGW) transport**: optional remote live telemetry via
+  `GET /v1/snapshot` (Cloudflare Access + bearer), same pattern as
+  inverter-desktop. Env: `GATEWAY_ENABLED`, `GATEWAY_URL`,
+  `GATEWAY_ACCESS_CLIENT_ID` / `GATEWAY_ACCESS_CLIENT_SECRET`,
+  `GATEWAY_API_TOKEN`, `GATEWAY_POLL_INTERVAL`. When IGW is enabled the
+  dashboard does **not** open a Cerbo MQTT client (avoids multi-app broker load).
+- k3s ConfigMap on mp points at `https://victron.2560801.xyz` with **no**
+  `MQTT_HOST` / Cerbo broker; gateway credentials come from Secret
+  `inverter-dashboard-gateway`.
+
 ### Fixed
 - **PV inverters not filling solar total**: discover `N/.../pvinverter/...` like
   desktop (CustomName/Serial/L1|L2), sum into `pv_inverter_total` /

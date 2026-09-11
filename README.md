@@ -58,10 +58,13 @@ flowchart TD
 ```
 
 Live grid / consumption / battery / solar / loads / setpoint come from **Cerbo
-Venus MQTT** (same path as [inverter-desktop](https://github.com/victron-venus/inverter-desktop)).
-`inverter/state` still carries daemon-only extras (`daily_stats`, `solar_forecast`,
-flags, …). With `MQTT_SLIM_STATE` on inverter-control, those live tiles are no
-longer republished into `inverter/state`.
+Venus MQTT** (same path as [inverter-desktop](https://github.com/victron-venus/inverter-desktop))
+**or** from remote **[inverter-gateway](https://github.com/victron-venus/inverter-gateway)**
+(`GATEWAY_ENABLED` + `GATEWAY_URL` → poll `/v1/snapshot`). Production on `mp`
+uses IGW so apps share one Cerbo MQTT client on Synology instead of each
+connecting to `192.168.160.150:1883`. `inverter/state` still carries daemon-only
+extras (`daily_stats`, `solar_forecast`, flags, …) when MQTT is used; IGW mode
+maps Cerbo live tiles only (daemon extras need HA overlay or a separate source).
 
 ### Water system
 
@@ -156,7 +159,7 @@ kubectl -n inverter-dashboard get pods -o wide   # expect NODE=mp
 ```
 
 - Image: `alvit/inverter-dashboard:latest` (Docker Hub; `.github/workflows/docker-publish.yml` already publishes)
-- Default MQTT: `192.168.160.150:1883` (Cerbo); set `CERBO_PORTAL_ID` for water/EV/keepalive
+- mp k3s: IGW at `https://victron.2560801.xyz` (no Cerbo MQTT in ConfigMap); local/dev still uses `MQTT_HOST`. Set `CERBO_PORTAL_ID` for water/EV instance defaults
 - Ingress stub host is a placeholder — edit before enabling Traefik TLS / cert-manager
 
 ## Configuration Reference
@@ -248,8 +251,14 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `MQTT_HOST` | `192.168.160.150` | MQTT broker hostname |
+| `MQTT_HOST` | `Cerbo` | Cerbo/LAN MQTT broker (local/dev). **Omit / leave unused when IGW is enabled.** |
 | `MQTT_PORT` | `1883` | MQTT broker port |
+| `GATEWAY_ENABLED` | `false` | Prefer remote inverter-gateway snapshot polling (no Cerbo MQTT client) |
+| `GATEWAY_URL` | _(empty)_ | IGW base URL, e.g. `https://victron.2560801.xyz` |
+| `GATEWAY_ACCESS_CLIENT_ID` | _(empty)_ | Cloudflare Access service-token client id |
+| `GATEWAY_ACCESS_CLIENT_SECRET` | _(empty)_ | Cloudflare Access service-token client secret |
+| `GATEWAY_API_TOKEN` | _(empty)_ | Bearer token (`Authorization: Bearer …`) matching gateway `GATEWAY_API_TOKEN` |
+| `GATEWAY_POLL_INTERVAL` | `2` | Seconds between `/v1/snapshot` polls |
 | `WEB_PORT` | `8080` | Web server port (inside the container) |
 | `INVERTER_DASHBOARD_CONFIG` | `/app/config` | Host folder mounted read-only: `local_config.py` and optional TLS files |
 | `CERBO_PORTAL_ID` | *(empty)* | Cerbo GX VRM portal ID — water/EV/alarms + `R/<portal>/keepalive` |

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 Remote Web Dashboard for Inverter Control
-Connects to Cerbo GX via MQTT, serves dashboard via WebSocket
+
+Live Cerbo tiles via LAN MQTT (local/dev) or remote inverter-gateway (IGW)
+snapshot polling — same dual-transport idea as inverter-desktop. Serves the
+dashboard over WebSocket/HTTP.
 """
 
 import argparse
@@ -22,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, ha_client, settings_store, websocket_handler
+from . import config, gateway, ha_client, settings_store, websocket_handler
 from .cerbo import (
     CERBO_OWNED_KEYS,
     KEEPALIVE_INTERVAL_SECS,
@@ -488,6 +491,11 @@ class AppState:
     mqtt_tasks: list[asyncio.Task] = None
     mqtt_connected: bool = False
     mqtt_reconnects: int = 0
+    # IGW (inverter-gateway) remote snapshot poller
+    gateway_connected: bool = False
+    gateway_polls: int = 0
+    gateway_errors: int = 0
+    data_source: str = "none"  # "mqtt" | "igw" | "none"
 
     def __post_init__(self):
         if self.mqtt_tasks is None:
@@ -615,10 +623,32 @@ def _next_backoff(delay: float) -> float:
     return min(delay * 2, config.MQTT_RECONNECT_MAX)
 
 
+def _start_gateway_client():
+    """Poll inverter-gateway /v1/snapshot (no Cerbo MQTT client)."""
+
+    _app_state.mqtt_state = MqttState()
+    _app_state.mqtt_client = None
+    _app_state.data_source = "igw"
+    _app_state.mqtt_state.set_state_callback(websocket_handler.broadcast_state)
+    websocket_handler.set_mqtt_state(_app_state.mqtt_state)
+    if config.CERBO_PORTAL_ID:
+        _app_state.mqtt_state._portal_id = config.CERBO_PORTAL_ID
+
+    async def _apply_and_emit(snap: dict[str, Any]) -> None:
+        ms = _app_state.mqtt_state
+        if ms is not None:
+            gateway.apply_snapshot(ms, snap)
+            await ms._emit()
+
+    task = asyncio.create_task(gateway.gateway_poll_loop(_app_state, _apply_and_emit))
+    _app_state.mqtt_tasks.append(task)
+
+
 def _start_mqtt_client():
     """Start MQTT client connection and message loop with auto-reconnect."""
     _app_state.mqtt_state = MqttState()
     _app_state.mqtt_client = _make_mqtt_client()
+    _app_state.data_source = "mqtt"
     _app_state.mqtt_state.set_state_callback(websocket_handler.broadcast_state)
     websocket_handler.set_mqtt_state(_app_state.mqtt_state)
 
@@ -732,7 +762,19 @@ async def lifespan(_app: FastAPI):
     ha_client.load_config()
     settings_store.apply_connection_overrides()  # file wins over env; CLI applied later wins over file
     websocket_handler.set_ui_settings(settings_store.load_settings())
-    _start_mqtt_client()
+    if gateway.prefer_gateway():
+        logger.info(
+            "Data source: IGW (%s) — Cerbo MQTT client disabled",
+            config.GATEWAY_URL.rstrip("/"),
+        )
+        _start_gateway_client()
+    elif gateway.mqtt_configured():
+        logger.info("Data source: Cerbo MQTT (%s:%s)", config.MQTT_HOST, config.MQTT_PORT)
+        _start_mqtt_client()
+    else:
+        logger.warning("No data source configured (set MQTT_HOST or GATEWAY_ENABLED+GATEWAY_URL)")
+        _app_state.mqtt_state = MqttState()
+        websocket_handler.set_mqtt_state(_app_state.mqtt_state)
     ha_task = _start_ha_polling()
     _start_version_check()
 
@@ -860,8 +902,13 @@ async def api_state():
         "dashboard_version": VERSION,
         "control_version": raw.get("version"),
         "has_mqtt_state": bool(raw),
+        "data_source": _app_state.data_source,
         "mqtt_connected": _app_state.mqtt_connected,
         "mqtt_reconnects": _app_state.mqtt_reconnects,
+        "gateway_connected": _app_state.gateway_connected,
+        "gateway_polls": _app_state.gateway_polls,
+        "gateway_errors": _app_state.gateway_errors,
+        "gateway_url": (config.GATEWAY_URL or "").rstrip("/") or None,
     }
 
 

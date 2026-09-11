@@ -5,9 +5,13 @@ metadata:
   labels:
     app: inverter-dashboard
 data:
-  MQTT_HOST: "192.168.160.150"
-  MQTT_PORT: "1883"
+  # Live Cerbo tiles via Synology inverter-gateway (Cloudflare Access), NOT Cerbo MQTT.
+  # Synology IGW is loopback-only (127.0.0.1:9150); public front door is CF hostname.
+  GATEWAY_ENABLED: "true"
+  GATEWAY_URL: "https://victron.2560801.xyz"
+  GATEWAY_POLL_INTERVAL: "2"
+  # Do NOT set MQTT_HOST here — a Cerbo MQTT client would re-hammer 192.168.160.150.
   WEB_PORT: "8080"
   INVERTER_DASHBOARD_CONFIG: "/app/config"
-  # Cerbo VRM portal ID — enables water/EV/alarms + keepalive on Venus MQTT
+  # Portal id still used for water/EV instance defaults when mapping IGW snapshot leaves.
   CERBO_PORTAL_ID: "b827ebea1ece"
