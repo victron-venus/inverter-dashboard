@@ -16,7 +16,9 @@ def main() -> None:
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         bundle.write(binary, arcname=binary.name)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    archive.with_suffix(".zip.sha256").write_text(f"{digest}  {archive.name}\n", encoding="ascii")
+    archive.with_suffix(".zip.sha256").write_text(
+        f"{digest}  {archive.name}\n", encoding="ascii", newline="\n"
+    )
 
 
 if __name__ == "__main__":
