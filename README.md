@@ -479,3 +479,16 @@ For issues specific to:
 - **Home Assistant integration**: Validate token and entity availability
 - **Docker deployment**: Review container logs and volume mounts
 - **This project**: Open an issue in this repository
+
+### Binary release validation
+
+Pull requests and manual runs of **Publish Release Binaries** build and smoke-test
+Linux x86_64, macOS Intel, macOS Apple Silicon, and Windows x86_64 packages. The
+smoke test starts each frozen executable on loopback from an empty temporary
+directory, verifies its embedded version, and requests the bundled SPA and assets.
+No MQTT broker or inverter is required. Each successful job uploads a ZIP and
+SHA256 checksum; these artifacts can be inspected before tagging a release.
+
+Only a `v*` tag push publishes a GitHub release, after all four packages pass.
+Manual runs and pull requests never publish releases. The binary includes the SPA
+tracked in this repository. This workflow does not deploy to k3s or devices.
