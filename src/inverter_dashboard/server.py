@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pylint: disable=too-many-lines
 """
 Remote Web Dashboard for Inverter Control
 
@@ -25,7 +26,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, gateway, ha_client, settings_store, websocket_handler
+from . import config, gateway, ha_client, notifications, settings_store, websocket_handler
 from .cerbo import (
     CERBO_OWNED_KEYS,
     KEEPALIVE_INTERVAL_SECS,
@@ -96,6 +97,11 @@ class MqttState(CerboOverlayMixin):
         self._vebus: dict[str, dict[str, Any]] = {}
         self._portal_id: str = config.CERBO_PORTAL_ID or ""
         self._alarm_values: dict[str, int] = {}
+        # Venus-platform GUIv2 notification slots (desktop parity)
+        self._platform_slots: dict[tuple[str, int], dict[str, Any]] = {}
+        self._platform_seen: bool = False
+        # Local dismiss sticky for non-platform ids (platform uses Cerbo ack)
+        self._dismissed_ids: set[str] = set()
         self.camera_event: dict[str, Any] | None = None
         self._on_state_update: Callable | None = None
         # Optional: called when portal ID is discovered via inverter/portal
@@ -177,7 +183,15 @@ class MqttState(CerboOverlayMixin):
                 if self._on_state_update:
                     await self._on_state_update()
 
+            elif "/platform/" in topic and "/Notifications/" in topic:
+                changed = self.handle_platform_notification(topic, payload)
+                if changed and self._on_state_update:
+                    await self._on_state_update()
+
             elif "/Alarms/" in topic:
+                # Desktop suppresses raw Alarms once platform Notifications arrive.
+                if self._platform_seen:
+                    return
                 changed = self.handle_alarm(topic, payload)
                 if changed and self._on_state_update:
                     await self._on_state_update()
@@ -219,20 +233,32 @@ class MqttState(CerboOverlayMixin):
             logger.exception("MQTT message error")
 
     def push_notification(self, data: Any) -> None:
-        """Append a notification from inverter-control (MqttNotification shape)."""
-        if not isinstance(data, dict):
-            return
-        notif = {
-            "id": str(data.get("id") or ""),
-            "level": str(data.get("level") or "info"),
-            "title": str(data.get("title") or ""),
-            "body": str(data.get("body") or ""),
-            "source": str(data.get("source") or "inverter-control"),
-            "ts": str(data.get("ts") or ""),
-        }
-        self.notifications.append(notif)
-        if len(self.notifications) > self.NOTIFICATIONS_MAX:
-            self.notifications = self.notifications[-self.NOTIFICATIONS_MAX :]
+        """Upsert a notification (MqttNotification shape — desktop / alert-bridge)."""
+        notifications.mqtt_push_notification(self, data)
+
+    def _upsert_notification(self, notif: dict[str, str]) -> None:
+        notifications.mqtt_upsert_notification(self, notif)
+
+    def _remove_notification_id(self, nid: str) -> bool:
+        return notifications.mqtt_remove_notification_id(self, nid)
+
+    def dismiss_notification(self, nid: str) -> bool:
+        """User dismissed banner (X). Sticky for non-platform ids until a fresh id."""
+        return notifications.mqtt_dismiss_notification(self, nid)
+
+    def sync_platform_from_snapshot(self, platform_leaves: dict[str, Any]) -> bool:
+        """IGW: rebuild platform banners from snapshot ``platform`` map."""
+        return notifications.mqtt_sync_platform_from_snapshot(self, platform_leaves)
+
+    def sync_alarms_from_snapshot(self, snap: dict[str, Any]) -> bool:
+        """IGW fallback: map battery/vebus Alarms/* when platform unseen."""
+        return notifications.mqtt_sync_alarms_from_snapshot(
+            self, snap, pretty_service_name, pretty_alarm_name
+        )
+
+    def handle_platform_notification(self, topic: str, payload: bytes) -> bool:
+        """LAN MQTT: N/<portal>/platform/<inst>/Notifications/<slot>/<Field>."""
+        return notifications.mqtt_handle_platform_notification(self, topic, payload)
 
     def handle_alarm(self, topic: str, payload: bytes) -> bool:
         """Track a Victron alarm topic (value 0/1/2); emit/clear on transition.
@@ -585,6 +611,10 @@ async def _subscribe_topics(client: Client, portal_id: str | None = None) -> Non
 
 async def _subscribe_portal_topics(client: Client, portal: str) -> None:
     """Portal-scoped water / EV / alarms (require known VRM portal id)."""
+    try:
+        await client.subscribe(f"N/{portal}/platform/+/Notifications/#")
+    except Exception as e:
+        logger.warning("Could not subscribe to Victron platform notification topics: %s", e)
     try:
         await client.subscribe(f"N/{portal}/+/Alarms/#")
         await client.subscribe(f"N/{portal}/+/+/Alarms/#")

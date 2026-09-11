@@ -10,7 +10,7 @@ from aiomqtt import Client
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict
 
-from . import ha_client, settings_store
+from . import gateway, ha_client, settings_store
 from .config import DEFAULT_LOOP_INTERVAL, DEFAULT_POWER_MAX, DEFAULT_POWER_MIN
 from .version import VERSION
 
@@ -238,6 +238,34 @@ def _control_flag_key(entity: str | None) -> str | None:
     return key if key in _CONTROL_FLAG_KEYS else None
 
 
+async def _acknowledge_victron_on_cerbo(app_state, mqtt_client: Client | None) -> None:
+    """Mirror desktop acknowledge_victron_banner: IGW command or LAN MQTT AcknowledgeAll."""
+    from . import config
+
+    if gateway.prefer_gateway():
+        try:
+            await gateway.post_command("acknowledge_all_notifications", {})
+            logger.info("Acknowledged Victron notifications via IGW")
+        except Exception:
+            logger.exception("IGW acknowledge_all_notifications failed")
+        return
+
+    portal = ""
+    ms = _state.get("mqtt_state")
+    if ms is not None:
+        portal = getattr(ms, "_portal_id", "") or ""
+    portal = portal or (config.CERBO_PORTAL_ID or "")
+    if not portal or mqtt_client is None:
+        logger.warning("Cannot acknowledge Victron notifications: no portal/MQTT")
+        return
+    topic = f"W/{portal}/platform/0/Notifications/AcknowledgeAll"
+    try:
+        await mqtt_client.publish(topic, '{"value":1}', qos=0)
+        logger.info("Published Cerbo AcknowledgeAll on %s", topic)
+    except Exception:
+        logger.exception("MQTT AcknowledgeAll publish failed")
+
+
 async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Client):
     """Dispatch a single WebSocket action."""
     if action == "toggle":
@@ -288,6 +316,22 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Clien
             logger.warning("Rejected invalid settings patch: %s", list(data))
             return
         set_ui_settings(saved)
+        await broadcast_state()
+    elif action == "dismiss_notification":
+        # Wired from Vue NotificationBanner X — same UX as inverter-desktop.
+        nid = data.get("id")
+        ms = _state.get("mqtt_state")
+        if not isinstance(nid, str) or not nid or ms is None:
+            return
+        ms.dismiss_notification(nid)
+        if nid.startswith("victron-platform-"):
+            await _acknowledge_victron_on_cerbo(None, mqtt_client)
+        elif nid.startswith("victron-") and gateway.prefer_gateway():
+            # Raw Alarms/* fallback — best-effort silence via IGW whitelist.
+            try:
+                await gateway.post_command("silence_alarm", {})
+            except Exception:
+                logger.exception("IGW silence_alarm failed")
         await broadcast_state()
 
 

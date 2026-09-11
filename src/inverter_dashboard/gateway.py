@@ -249,6 +249,14 @@ def apply_snapshot(ms: Any, snap: dict[str, Any]) -> None:
     if evc_power is not None:
         ms.current_state["ev_charging_kw"] = evc_power / 1000.0
 
+    # Alert banners (desktop parity): Venus-platform GUIv2 slots from IGW
+    # ``platform`` leaves; Alarms/* fallback when platform never seen.
+    platform = snap.get("platform") or {}
+    if hasattr(ms, "sync_platform_from_snapshot"):
+        ms.sync_platform_from_snapshot(platform if isinstance(platform, dict) else {})
+    if hasattr(ms, "sync_alarms_from_snapshot"):
+        ms.sync_alarms_from_snapshot(snap)
+
 
 def build_headers() -> dict[str, str]:
     """CF Access service-token + optional GATEWAY_API_TOKEN bearer."""
