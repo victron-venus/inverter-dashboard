@@ -42,7 +42,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           # Pin so docker-publish never picks a stale Latest / ci-latest SPA.
-          VUE_SPA_TAG: v2.1.5
+          VUE_SPA_TAG: v2.1.7
         run: |
           gh release download "$VUE_SPA_TAG" --repo victron-venus/inverter-dashboard-vue --pattern 'vue-spa-dist.tar.gz' --dir dist-tmp
           mkdir -p src/inverter_dashboard/static
