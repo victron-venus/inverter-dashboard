@@ -1,4 +1,4 @@
-"""Unit tests for inverter-gateway (IGW) snapshot mapping."""
+"""Unit tests for inverter-gateway (IGW) snapshot mapping + data-source policy."""
 
 from __future__ import annotations
 
@@ -13,12 +13,30 @@ def _ms():
     return MqttState()
 
 
-def test_prefer_gateway_when_enabled(monkeypatch):
+@pytest.fixture(autouse=True)
+def _reset_active_source():
+    gateway.set_active_source("none", dual_path=False)
+    yield
+    gateway.set_active_source("none", dual_path=False)
+
+
+def test_prefer_gateway_igw_only_before_selection(monkeypatch):
+    """Before lifespan sets active_source, IGW-only configs prefer gateway."""
+    monkeypatch.setattr(config, "GATEWAY_ENABLED", True)
+    monkeypatch.setattr(config, "GATEWAY_URL", "https://victron.example")
+    monkeypatch.setattr(config, "MQTT_HOST", "")
+    assert gateway.gateway_configured() is True
+    assert gateway.prefer_gateway() is True
+
+
+def test_both_configured_does_not_abandon_mqtt_before_selection(monkeypatch):
+    """Coexistence: GATEWAY + MQTT_HOST must not force IGW-only before probe."""
     monkeypatch.setattr(config, "GATEWAY_ENABLED", True)
     monkeypatch.setattr(config, "GATEWAY_URL", "https://victron.example")
     monkeypatch.setattr(config, "MQTT_HOST", "192.168.160.150")
     assert gateway.gateway_configured() is True
-    assert gateway.prefer_gateway() is True
+    assert gateway.mqtt_configured() is True
+    assert gateway.prefer_gateway() is False
 
 
 def test_prefer_mqtt_when_gateway_off(monkeypatch):
@@ -27,6 +45,86 @@ def test_prefer_mqtt_when_gateway_off(monkeypatch):
     monkeypatch.setattr(config, "MQTT_HOST", "Cerbo")
     assert gateway.prefer_gateway() is False
     assert gateway.mqtt_configured() is True
+
+
+def test_prefer_gateway_follows_active_source(monkeypatch):
+    monkeypatch.setattr(config, "GATEWAY_ENABLED", True)
+    monkeypatch.setattr(config, "GATEWAY_URL", "https://victron.example")
+    monkeypatch.setattr(config, "MQTT_HOST", "Cerbo")
+    gateway.set_active_source("igw", dual_path=True)
+    assert gateway.prefer_gateway() is True
+    gateway.set_active_source("mqtt", dual_path=True)
+    assert gateway.prefer_gateway() is False
+
+
+def test_choose_startup_source_mqtt_first_when_reachable():
+    assert (
+        gateway.choose_startup_source(
+            mqtt_configured=True, igw_configured=True, mqtt_reachable=True
+        )
+        == "mqtt"
+    )
+    assert (
+        gateway.choose_startup_source(
+            mqtt_configured=True, igw_configured=True, mqtt_reachable=False
+        )
+        == "igw"
+    )
+    assert (
+        gateway.choose_startup_source(
+            mqtt_configured=True, igw_configured=False, mqtt_reachable=False
+        )
+        == "mqtt"
+    )
+    assert (
+        gateway.choose_startup_source(
+            mqtt_configured=False, igw_configured=True, mqtt_reachable=False
+        )
+        == "igw"
+    )
+    assert (
+        gateway.choose_startup_source(
+            mqtt_configured=False, igw_configured=False, mqtt_reachable=False
+        )
+        == "none"
+    )
+
+
+@pytest.mark.asyncio
+async def test_probe_mqtt_reachable_empty_host(monkeypatch):
+    monkeypatch.setattr(config, "MQTT_HOST", "")
+    assert await gateway.probe_mqtt_reachable() is False
+
+
+@pytest.mark.asyncio
+async def test_probe_mqtt_reachable_tcp_ok(monkeypatch):
+    class _W:
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+    async def _open(host, port):
+        assert host == "broker.local"
+        assert port == 1883
+        return (None, _W())
+
+    monkeypatch.setattr(config, "MQTT_HOST", "broker.local")
+    monkeypatch.setattr(config, "MQTT_PORT", 1883)
+    monkeypatch.setattr(gateway.asyncio, "open_connection", _open)
+    assert await gateway.probe_mqtt_reachable(timeout=1.0) is True
+
+
+@pytest.mark.asyncio
+async def test_probe_mqtt_reachable_tcp_fail(monkeypatch):
+    async def _open(host, port):
+        raise ConnectionRefusedError("nope")
+
+    monkeypatch.setattr(config, "MQTT_HOST", "broker.local")
+    monkeypatch.setattr(config, "MQTT_PORT", 1883)
+    monkeypatch.setattr(gateway.asyncio, "open_connection", _open)
+    assert await gateway.probe_mqtt_reachable(timeout=1.0) is False
 
 
 def test_apply_snapshot_maps_live_tiles(ms):

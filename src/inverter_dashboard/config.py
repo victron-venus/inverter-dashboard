@@ -11,7 +11,8 @@ class Config(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # MQTT settings (Cerbo-direct / local-dev). Leave empty when using IGW only.
+    # MQTT settings (Cerbo-direct / local-dev). Set "" for IGW-only (mp).
+    # May coexist with GATEWAY_*; see gateway.choose_startup_source precedence.
     MQTT_HOST: str = "Cerbo"
     MQTT_PORT: int = 1883
     MQTT_USERNAME: str = ""
@@ -24,8 +25,8 @@ class Config(BaseSettings):
     MQTT_RECONNECT_MAX: float = 60.0
 
     # Remote inverter-gateway (IGW) — same pattern as inverter-desktop.
-    # When GATEWAY_ENABLED and GATEWAY_URL are set, live Cerbo tiles come from
-    # GET /v1/snapshot (Cloudflare Access + bearer) instead of a Cerbo MQTT session.
+    # When enabled with GATEWAY_URL, snapshot polling is available. If MQTT_HOST
+    # is also set, MQTT is preferred when reachable (dual-path failover to IGW).
     GATEWAY_ENABLED: bool = False
     GATEWAY_URL: str = ""
     GATEWAY_ACCESS_CLIENT_ID: str = ""

@@ -722,9 +722,15 @@ def _start_mqtt_client():
                     delay,
                     _app_state.mqtt_reconnects,
                 )
+                if gateway.dual_path_enabled() and gateway.gateway_configured():
+                    await _failover_to_igw("MQTT connection lost")
+                    return
             except Exception:  # pylint: disable=broad-except
                 _app_state.mqtt_reconnects += 1
                 logger.exception("Unexpected error in MQTT loop — retrying in %.1fs", delay)
+                if gateway.dual_path_enabled() and gateway.gateway_configured():
+                    await _failover_to_igw("MQTT loop error")
+                    return
             finally:
                 _app_state.mqtt_connected = False
                 if keepalive_task is not None:
@@ -785,6 +791,118 @@ async def _shutdown_mqtt_client():
     _app_state.mqtt_client = None
 
 
+async def _cancel_data_source_tasks() -> None:
+    """Stop MQTT loop and/or IGW poller (exclusive switch).
+
+    Skips ``asyncio.current_task()`` so a dual-path failover/recovery coroutine
+    can replace sibling transports without cancelling itself.
+    """
+    current = asyncio.current_task()
+    tasks = [t for t in _app_state.mqtt_tasks if t is not current]
+    _app_state.mqtt_tasks.clear()
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    _app_state.mqtt_connected = False
+    _app_state.gateway_connected = False
+    _app_state.mqtt_client = None
+
+
+async def _failover_to_igw(reason: str) -> None:
+    """Dual-path: drop Cerbo MQTT and run IGW exclusively."""
+    if not gateway.dual_path_enabled() or gateway.active_source() == "igw":
+        return
+    if not gateway.gateway_configured():
+        return
+    logger.warning("Failing over to IGW (%s)", reason)
+    await _cancel_data_source_tasks()
+    gateway.set_active_source("igw", dual_path=True)
+    logger.info(
+        "Data source: IGW (%s) — Cerbo MQTT unreachable / offline",
+        config.GATEWAY_URL.rstrip("/"),
+    )
+    _start_gateway_client()
+    _app_state.mqtt_tasks.append(asyncio.create_task(_mqtt_recovery_loop()))
+
+
+async def _mqtt_connect_watchdog() -> None:
+    """If dual-path MQTT never ConnAcks, fall over to IGW."""
+    await asyncio.sleep(gateway.MQTT_CONNECT_WATCHDOG_SECS)
+    if (
+        gateway.dual_path_enabled()
+        and gateway.active_source() == "mqtt"
+        and not _app_state.mqtt_connected
+    ):
+        await _failover_to_igw("MQTT connect watchdog — no connection")
+
+
+async def _mqtt_recovery_loop() -> None:
+    """While on IGW in dual-path mode, periodically probe Cerbo MQTT to recover."""
+    while gateway.dual_path_enabled() and gateway.active_source() == "igw":
+        await asyncio.sleep(gateway.MQTT_RECOVERY_PROBE_SECS)
+        if not gateway.mqtt_configured():
+            continue
+        if not await gateway.probe_mqtt_reachable():
+            continue
+        logger.info(
+            "Cerbo MQTT reachable again (%s:%s) — recovering from IGW",
+            config.MQTT_HOST,
+            config.MQTT_PORT,
+        )
+        await _cancel_data_source_tasks()
+        gateway.set_active_source("mqtt", dual_path=True)
+        logger.info("Data source: Cerbo MQTT (%s:%s)", config.MQTT_HOST, config.MQTT_PORT)
+        _start_mqtt_client()
+        _app_state.mqtt_tasks.append(asyncio.create_task(_mqtt_connect_watchdog()))
+        return
+
+
+async def _select_and_start_data_source() -> None:
+    """MQTT-first when reachable; IGW otherwise — mirrors inverter-desktop."""
+    mqtt_ok = gateway.mqtt_configured()
+    igw_ok = gateway.gateway_configured()
+    dual = mqtt_ok and igw_ok
+    mqtt_reachable = False
+    if dual:
+        mqtt_reachable = await gateway.probe_mqtt_reachable()
+    elif mqtt_ok:
+        # Single-transport MQTT: start client even if probe would fail (reconnect loop).
+        mqtt_reachable = True
+
+    startup = gateway.choose_startup_source(
+        mqtt_configured=mqtt_ok,
+        igw_configured=igw_ok,
+        mqtt_reachable=mqtt_reachable if dual else mqtt_ok,
+    )
+    gateway.set_active_source(startup, dual_path=dual)
+
+    if startup == "mqtt":
+        logger.info(
+            "Data source: Cerbo MQTT (%s:%s)%s",
+            config.MQTT_HOST,
+            config.MQTT_PORT,
+            " (IGW available as fallback)" if dual else "",
+        )
+        _start_mqtt_client()
+        if dual:
+            _app_state.mqtt_tasks.append(asyncio.create_task(_mqtt_connect_watchdog()))
+    elif startup == "igw":
+        logger.info(
+            "Data source: IGW (%s)%s",
+            config.GATEWAY_URL.rstrip("/"),
+            " — Cerbo MQTT unreachable" if dual else "",
+        )
+        _start_gateway_client()
+        if dual:
+            _app_state.mqtt_tasks.append(asyncio.create_task(_mqtt_recovery_loop()))
+    else:
+        logger.warning("No data source configured (set MQTT_HOST or GATEWAY_ENABLED+GATEWAY_URL)")
+        gateway.set_active_source("none", dual_path=False)
+        _app_state.mqtt_state = MqttState()
+        websocket_handler.set_mqtt_state(_app_state.mqtt_state)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Application lifespan handler"""
@@ -792,19 +910,7 @@ async def lifespan(_app: FastAPI):
     ha_client.load_config()
     settings_store.apply_connection_overrides()  # file wins over env; CLI applied later wins over file
     websocket_handler.set_ui_settings(settings_store.load_settings())
-    if gateway.prefer_gateway():
-        logger.info(
-            "Data source: IGW (%s) — Cerbo MQTT client disabled",
-            config.GATEWAY_URL.rstrip("/"),
-        )
-        _start_gateway_client()
-    elif gateway.mqtt_configured():
-        logger.info("Data source: Cerbo MQTT (%s:%s)", config.MQTT_HOST, config.MQTT_PORT)
-        _start_mqtt_client()
-    else:
-        logger.warning("No data source configured (set MQTT_HOST or GATEWAY_ENABLED+GATEWAY_URL)")
-        _app_state.mqtt_state = MqttState()
-        websocket_handler.set_mqtt_state(_app_state.mqtt_state)
+    await _select_and_start_data_source()
     ha_task = _start_ha_polling()
     _start_version_check()
 
