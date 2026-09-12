@@ -169,7 +169,7 @@ kubectl apply -k deploy/k3s
 kubectl -n inverter-dashboard get pods -o wide   # expect NODE=mp
 ```
 
-- Image: `alvit/inverter-dashboard:latest` (Docker Hub; `.github/workflows/docker-publish.yml` already publishes)
+- Image: `alvit/inverter-dashboard` on Docker Hub. Registry publication promotes approved stable OCI assets; see the [operator runbook](docs/release-workflow.md).
 - mp k3s: IGW at `https://victron.2560801.xyz` with `MQTT_HOST=""` (IGW-only); local/dev uses `MQTT_HOST`, or both for dual-path. Set `CERBO_PORTAL_ID` for water/EV instance defaults
 - Ingress stub host is a placeholder — edit before enabling Traefik TLS / cert-manager
 
@@ -198,13 +198,11 @@ HA_SWITCH_ENTITIES = {
 
 ---
 
-## Release Channels & CI/CD
+<!-- ci-release-process:start -->
+## Release process
 
-This repository follows a multi-channel release strategy managed by GitHub Actions:
-
-- **Stable Releases**: Tagged as `vX.Y.Z` (e.g., `v1.0.0`). Publishes PyInstaller standalone executables for Linux, macOS, and Windows.
-- **Pre-releases**: Tagged as `vX.Y.Z-rc.N` or `vX.Y.Z-beta.N`. Automatically published as **Pre-release** on GitHub Releases to isolate testing releases.
-- **Nightly Builds**: Built daily at 02:00 UTC. Publishes PyInstaller binaries to the **[Nightly Build Release](https://github.com/victron-venus/inverter-dashboard/releases/tag/nightly)** and updates the Docker image tag `ghcr.io/victron-venus/inverter-dashboard:nightly`.
+See the [release strategy](RELEASING.md) for validation, nightly, beta, RC and stable promotion rules, and the [operator runbook](docs/release-workflow.md) for local commands.
+<!-- ci-release-process:end -->
 
 ### Run a standalone dashboard
 
@@ -248,7 +246,7 @@ To verify a download, keep the ZIP beside its checksum file and use
 
 ## Completed Features
 
-- ✅ **CI/CD Releases & Nightly Builds**: Docker `:nightly` build and PyInstaller binaries configured
+- ✅ **Release packaging**: Candidate artifacts and checksums; see the [release strategy](RELEASING.md).
 - ✅ **Async MQTT Migration**: Refactored `mqtt_handler.py` to use `aiomqtt` (asyncio wrapper for paho-mqtt) for non-blocking I/O in the FastAPI event loop
 - ✅ **Ultra-Slim Multi-Arch Docker Image**: Refactored `Dockerfile` using `uv` (fast Python package installer) and multi-stage builds to reduce image size to ~40MB (achieved 84MB from 149MB - further reduction needs distroless/scratch base)
 - ✅ **Static Vue Asset Mounting**: Added FastAPI StaticFiles mounting route for `inverter-dashboard-vue` compiled dist assets
