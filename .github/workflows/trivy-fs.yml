@@ -43,6 +43,7 @@ jobs:
         format: 'sarif'
         exit-code: '1'
         severity: HIGH,CRITICAL
+        limit-severities-for-sarif: true
         output: 'trivy-results.sarif'
 
     - name: Upload Trivy scan results to GitHub Security tab
