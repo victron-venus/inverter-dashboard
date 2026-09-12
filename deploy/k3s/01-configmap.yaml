@@ -5,10 +5,13 @@ metadata:
   labels:
     app: inverter-dashboard
 data:
-  # Live Cerbo tiles via Synology inverter-gateway (Cloudflare Access), NOT Cerbo MQTT.
-  # Synology IGW is loopback-only (127.0.0.1:9150); public front door is CF hostname.
+  # Live Cerbo tiles via Synology inverter-gateway (synology-apps), NOT Cerbo MQTT.
+  # mp→syn overlay/ClusterIP can fail during mp NotReady flaps; NodePort on the
+  # Synology LAN IP is the reliable LAN path (bearer only, no Cloudflare).
+  # Prefer ClusterIP when healthy: http://inverter-gateway.synology-apps.svc:8080
+  # Public option: https://victron.2560801.xyz (needs CF Access headers + bearer).
   GATEWAY_ENABLED: "true"
-  GATEWAY_URL: "https://victron.2560801.xyz"
+  GATEWAY_URL: "http://192.168.175.130:30150"
   GATEWAY_POLL_INTERVAL: "2"
   # Explicit empty: pydantic default is "Cerbo"; blank keeps mp IGW-only
   # (dual-path would probe MQTT when both are set). Optional: set a real
