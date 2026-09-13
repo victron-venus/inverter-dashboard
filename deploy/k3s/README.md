@@ -8,30 +8,32 @@ Image: `alvit/inverter-dashboard:latest` (Docker Hub; existing `docker-publish.y
 
 > **Warning:** `02-secret.example.yaml` is **not** in `kustomization.yaml` resources. Apply real Secrets out-of-band; never `kubectl apply -f 02-secret.example.yaml` against prod.
 
-**Production ConfigMap uses IGW — not Cerbo MQTT.**
+**The checked-in ConfigMap uses the HTTPS IGW endpoint.**
 
 Synology runs [inverter-gateway](https://github.com/victron-venus/inverter-gateway)
 in namespace `synology-apps` (Service `inverter-gateway`, port `8080`, also
-NodePort `30150`). Dashboard pods on `mp` poll IGW over LAN (NodePort or ClusterIP) with
-**`GATEWAY_API_TOKEN` bearer only** (no Cloudflare Access headers). That avoids
-CF 302s that break pod→public egress and keeps a **single** Cerbo MQTT client on
-the NAS (avoid every app hammering `192.168.160.150:1883`).
+NodePort `30150`). The checked-in URL is the public HTTPS endpoint and requires Cloudflare Access
+headers plus `GATEWAY_API_TOKEN`. Operators can select a LAN route when public
+egress is unavailable; NodePort and ClusterIP use the bearer token only. All
+options share the gateway's Cerbo MQTT client.
 
 ### GATEWAY_URL choices
 
 | Mode | `GATEWAY_URL` | Auth |
 |------|---------------|------|
-| **k3s / mp (live default)** | `http://192.168.175.130:30150` (syn NodePort) | Bearer `GATEWAY_API_TOKEN` only; leave CF Access id/secret empty |
+| LAN alternative | `http://192.168.175.130:30150` (syn NodePort) | Bearer `GATEWAY_API_TOKEN` only; leave CF Access id/secret empty |
 | ClusterIP (preferred when overlay healthy) | `http://inverter-gateway.synology-apps.svc:8080` | Bearer only |
-| Public / off-cluster | `https://victron.2560801.xyz` | CF Access service-token headers + bearer |
+| **Checked-in default / off-cluster** | `https://victron.2560801.xyz` | CF Access service-token headers + bearer |
 
 **Gap:** from `mp`, ClusterIP to `synology-apps` on node `syn` has been observed to fail
 (rising `gateway_errors`, `gateway_connected=false`) while the same `/health` and
 `/v1/snapshot` succeed from `h7` and via syn NodePort `192.168.175.130:30150`.
 `mp` also flaps NotReady (kubelet 502), which breaks Ingress/`kubectl exec` during
-recovery. Prefer NodePort on the Synology LAN until overlay/DNS from `mp` is stable.
-CF public URL remains for laptop/desktop Remote Gateway clients — not for in-cluster
-pods (CF 302 breaks pod egress).
+recovery. The NodePort route can be selected while diagnosing overlay/DNS from `mp`.
+LAN HTTP sends the bearer token and telemetry without TLS. Use that option only
+on a network whose exposure is acceptable; otherwise retain HTTPS and repair
+the Cloudflare Access service-token configuration. A successful `/health` request
+does not verify authenticated snapshots or connectivity from every cluster node.
 
 `fastapi-mqtt-gateway` on mp stays scaled to 0 on purpose — do not stand up a
 second Cerbo client flood.
@@ -39,7 +41,7 @@ second Cerbo client flood.
 | Env | Where | Purpose |
 |-----|-------|---------|
 | `GATEWAY_ENABLED` | ConfigMap | `true` on mp |
-| `GATEWAY_URL` | ConfigMap | In-cluster IGW (see table); public CF optional |
+| `GATEWAY_URL` | ConfigMap | HTTPS default; optional LAN routes above |
 | `GATEWAY_POLL_INTERVAL` | ConfigMap | seconds (default 2) |
 | `GATEWAY_ACCESS_CLIENT_ID` | Secret `inverter-dashboard-gateway` | CF Access (empty for NodePort/ClusterIP) |
 | `GATEWAY_ACCESS_CLIENT_SECRET` | Secret | CF Access (empty for NodePort/ClusterIP) |
@@ -93,7 +95,7 @@ curl -sS http://inverter-dashboard.mp.2560801.xyz/ | grep -E 'id="app"|/assets/'
 curl -sS http://inverter-dashboard.mp.2560801.xyz/api/state
 # expect data_source=igw, gateway_connected=true (native MQTT may remain disconnected in IGW-only mode); measured zero values are valid
 kubectl --context k3s-heaven -n inverter-dashboard logs deploy/inverter-dashboard --tail=50
-# expect: IGW connected to http://192.168.175.130:30150 (or ClusterIP if used)
+# expect: IGW connected to the selected GATEWAY_URL
 ```
 
 Server accepts both layouts: `static/dist/index.html` (export_dist.sh) and flat `static/index.html` + `static/assets/` (docker-publish image). Vite assets are mounted at `/assets`.
