@@ -1,5 +1,4 @@
-# Ingress for Traefik-mp (LAN HTTP on *.mp.2560801.xyz).
-# OpenWRT: address=/mp.2560801.xyz/192.168.151.107 covers this host.
+# Example ingress. Set your real host and ingress class in an ignored local overlay.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -10,13 +9,13 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
     # cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
-  ingressClassName: traefik-mp
+  ingressClassName: traefik
   # tls:
   #   - hosts:
-  #       - inverter-dashboard.mp.2560801.xyz
+  #       - dashboard.example.com
   #     secretName: inverter-dashboard-tls
   rules:
-    - host: inverter-dashboard.mp.2560801.xyz
+    - host: dashboard.example.com
       http:
         paths:
           - path: /
