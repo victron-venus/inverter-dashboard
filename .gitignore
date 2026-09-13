@@ -54,3 +54,6 @@ release/
 
 # Private deployment configuration and operational notes
 .local-private/
+
+# Local coverage databases may contain absolute filesystem paths
+.coverage.*
