@@ -10,7 +10,7 @@ Image: `alvit/inverter-dashboard:latest` (Docker Hub; existing `docker-publish.y
 
 **The checked-in ConfigMap uses the HTTPS IGW endpoint.**
 
-The recovered September 6, 2026 deployment draft records
+The recovered September 10, 2026 deployment draft records
 [inverter-gateway](https://github.com/victron-venus/inverter-gateway) in namespace
 `synology-apps` (Service `inverter-gateway`, port `8080`, NodePort `30150`).
 On September 13, the documented NodePort `/health` returned HTTP 200 with
@@ -28,7 +28,7 @@ options share the gateway's Cerbo MQTT client.
 | ClusterIP (preferred when overlay healthy) | `http://inverter-gateway.synology-apps.svc:8080` | Bearer only |
 | **Checked-in default / off-cluster** | `https://victron.2560801.xyz` | CF Access service-token headers + bearer |
 
-**Historical diagnosis (September 6 draft):** from `mp`, ClusterIP to
+**Historical diagnosis (September 10 draft):** from `mp`, ClusterIP to
 `synology-apps` on node `syn` was reported to fail
 (rising `gateway_errors`, `gateway_connected=false`) while the same `/health` and
 `/v1/snapshot` succeed from `h7` and via syn NodePort `192.168.175.130:30150`.
