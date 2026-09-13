@@ -10,7 +10,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 version, channel = sys.argv[1:]
-if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
+if not re.fullmatch(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", version, flags=re.ASCII):
     raise SystemExit("Release version must be a base X.Y.Z version")
 if channel not in {"nightly", "beta", "rc"}:
     raise SystemExit("Build only nightly/beta/rc; stable must promote verified RC artifacts")
