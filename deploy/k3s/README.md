@@ -52,17 +52,16 @@ second Cerbo client flood.
 Create the gateway Secret from local files (never commit):
 
 ```bash
-# NodePort/ClusterIP path: CF Access literals empty; token from inverter-gateway/.env
+# HTTPS default: CF Access service token plus inverter-gateway API token
 kubectl --context k3s-heaven -n inverter-dashboard create secret generic \
   inverter-dashboard-gateway \
-  --from-literal=GATEWAY_ACCESS_CLIENT_ID= \
-  --from-literal=GATEWAY_ACCESS_CLIENT_SECRET= \
+  --from-literal=GATEWAY_ACCESS_CLIENT_ID=… \
+  --from-literal=GATEWAY_ACCESS_CLIENT_SECRET=… \
   --from-literal=GATEWAY_API_TOKEN=… \
   --dry-run=client -o yaml | kubectl --context k3s-heaven apply -f -
 
-# Public CF path only: also set GATEWAY_ACCESS_* from
-# foss-cloudflare-infrastructure/local.generated.service-token.json
-# and GATEWAY_URL=https://victron.2560801.xyz
+# For an explicitly selected NodePort/ClusterIP route, leave both
+# GATEWAY_ACCESS_CLIENT_ID and GATEWAY_ACCESS_CLIENT_SECRET empty.
 ```
 
 Local/dev: leave `GATEWAY_ENABLED` unset/false and set `MQTT_HOST` to the Cerbo
