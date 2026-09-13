@@ -33,7 +33,7 @@ def test_both_configured_does_not_abandon_mqtt_before_selection(monkeypatch):
     """Coexistence: GATEWAY + MQTT_HOST must not force IGW-only before probe."""
     monkeypatch.setattr(config, "GATEWAY_ENABLED", True)
     monkeypatch.setattr(config, "GATEWAY_URL", "https://victron.example")
-    monkeypatch.setattr(config, "MQTT_HOST", "192.168.160.150")
+    monkeypatch.setattr(config, "MQTT_HOST", "192.0.2.10")
     assert gateway.gateway_configured() is True
     assert gateway.mqtt_configured() is True
     assert gateway.prefer_gateway() is False
