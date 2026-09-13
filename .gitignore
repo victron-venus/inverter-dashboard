@@ -32,6 +32,7 @@ Thumbs.db
 
 commit.*
 release.*
+!scripts/release.py
 logs
 bandit-results.sarif
 bandit-results.json
@@ -44,7 +45,9 @@ build/
 .scannerwork
 local_config.py
 .coverage
+/coverage.xml
 *.backup
 
 # Verified binary release archives
 release/
+/release-output/

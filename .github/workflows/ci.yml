@@ -1,18 +1,17 @@
 name: CI
 
 on:
+  workflow_call: {}
   push:
     branches: [main]
     paths-ignore:
       - '**.md'
       - 'docs/**'
-      - '**.json'
   pull_request:
     branches: ['**']
     paths-ignore:
       - '**.md'
       - 'docs/**'
-      - '**.json'
 
 permissions:
   contents: read
@@ -20,10 +19,25 @@ permissions:
 jobs:
   ci:
     name: CI
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/python-ci.yml@2f679e8adc653a0d599fde5f627d387c6207a219
-    with:
-      python-version: '3.12'
-      coverage-threshold: 68
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - name: Run locked local validation
+        run: bash scripts/ci.sh
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dashboard-python-coverage
+          path: coverage.xml
+          if-no-files-found: ignore
 
   integration:
     name: Integration Tests

@@ -1,0 +1,28 @@
+{
+  "version_file": "VERSION",
+  "validation_workflows": [
+    "ci.yml",
+    "codeql.yml",
+    "python-security.yml",
+    "trivy-fs.yml"
+  ],
+  "artifact_pattern": "release-assets*",
+  "local_checks": [
+    "uv run --locked --extra test --with ruff --with pytest-cov python -m ruff check .",
+    "uv run --locked --extra test --with ruff --with pytest-cov python -m ruff format --check .",
+    "uv run --locked --extra test --with ruff --with pytest-cov python -m pytest --cov=src/inverter_dashboard --cov-report=xml --cov-report=term-missing --cov-fail-under=68"
+  ],
+  "notes": [
+    "Local checks use uv with the committed dependency lock and ephemeral lint/test tools; Docker integration additionally runs in CI.",
+    "All four platform binaries retain frozen-application smoke tests. OCI archive keeps the committed SPA; frontend updates are separate reviewed source changes.",
+    "Registry/deployment promotion consumes the approved OCI archive without rebuilding.",
+    "Mandatory validation is locked lint, formatting, tests and 68% application-source coverage (test files excluded) plus security/integration jobs. Broad mypy was previously silently skipped; the existing typing baseline has 63 source errors and mixed src/package test imports, so type checking is an explicit follow-up, not a reported passing gate."
+  ],
+  "container_assets": {
+    "inverter-dashboard-container.oci.tar": "docker.io/alvit/inverter-dashboard"
+  },
+  "repository": "victron-venus/inverter-dashboard",
+  "mode": "release",
+  "default_branch": "main",
+  "visibility": "public"
+}
