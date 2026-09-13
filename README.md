@@ -265,7 +265,7 @@ To verify a download, keep the ZIP beside its checksum file and use
 docker run -d \
   --name inverter-dashboard \
   -p 8080:8080 \
-  -e MQTT_HOST=192.168.1.100 \
+  -e MQTT_HOST=192.0.2.10 \
   alvit/inverter-dashboard:latest
 ```
 
@@ -279,14 +279,17 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - MQTT_HOST=192.168.1.100
+      - MQTT_HOST=192.0.2.10
       - MQTT_PORT=1883
     restart: unless-stopped
 ```
 
 ### Portainer Stack
 
-See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
+See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment. Set
+`MQTT_HOST` to your broker through a local environment file or the deployment UI.
+The checked-in `mqtt.example.com` default and documentation addresses are
+placeholders; keep real broker addresses out of commits.
 
 ## Configuration
 
@@ -327,7 +330,7 @@ If **both** cert files exist in that folder, the **entrypoint enables HTTPS on t
 ### Command Line Arguments
 
 ```bash
-python server.py --mqtt-host 192.168.1.100 --mqtt-port 1883 --port 8080
+python server.py --mqtt-host 192.0.2.10 --mqtt-port 1883 --port 8080
 ```
 
 ### HTTPS (why you still see `http://`)
@@ -462,7 +465,7 @@ python server.py --mqtt-host your-mqtt-broker
 
 ```bash
 docker build -t inverter-dashboard .
-docker run -p 8080:8080 -e MQTT_HOST=192.168.1.100 inverter-dashboard
+docker run -p 8080:8080 -e MQTT_HOST=192.0.2.10 inverter-dashboard
 ```
 
 ## Multi-Architecture Support
