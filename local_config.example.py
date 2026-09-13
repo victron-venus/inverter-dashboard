@@ -20,6 +20,10 @@ polls those sensors from HA REST (same entity IDs as in inverter-control site_co
 
 # ---------------------------------------------------------------------------
 # Connection
+# Native energy connection is configured through environment variables:
+# MQTT_HOST=Cerbo
+# CERBO_PORTAL_ID=<VRM portal ID shown in GX settings>
+# A silent modern Venus broker requires this ID to start notifications.
 # ---------------------------------------------------------------------------
 HA_URL = "http://homeassistant.local:8123"
 HA_TOKEN = "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN"
@@ -76,11 +80,12 @@ HA_APPLIANCE_ENTITIES = {
 # Water card (optional — leave empty strings to skip)
 # Water card — dbus-pump via Cerbo MQTT; no HA entities.
 
-# EV card (optional — leave CERBO_PORTAL_ID empty to disable)
+# EV card (optional — select the matching native device instances)
 # EV data comes from dbus-ev (vehicle) and dbus-evcharger (wallbox) via
 # Cerbo MQTT — no Home Assistant involved.
 #
-# Requires CERBO_PORTAL_ID to be set (see Water card above).
+# Set CERBO_PORTAL_ID in the environment for reliable native MQTT bootstrap.
+# Empty portal enables passive discovery; it does not disable EV or water.
 # EV_INSTANCE (vehicle, dbus-ev) and EVCHARGER_INSTANCE (wallbox, dbus-evcharger)
 # must match the respective local_config.py DEVICE_INSTANCE values.
 #   EV_INSTANCE = 22       # vehicle Soc + Ac/Power

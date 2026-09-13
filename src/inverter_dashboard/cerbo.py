@@ -1,19 +1,42 @@
-"""Cerbo Venus MQTT helpers — live tiles shared with inverter-desktop."""
+"""Transport-independent reducer for native Venus MQTT notifications.
+
+Keep raw leaves so totals, fallbacks and null invalidation behave identically
+for incremental MQTT messages and complete inverter-gateway snapshots.
+"""
 
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
-# Live tiles owned by Cerbo MQTT / dbus-* (mirrored out of slim inverter/state).
+from . import config
+
+CERBO_KINDS = (
+    "system",
+    "grid",
+    "battery",
+    "solarcharger",
+    "pvinverter",
+    "vebus",
+    "acload",
+    "tank",
+    "pump",
+    "ev",
+    "evcharger",
+)
+KEEPALIVE_INTERVAL_SECS = 45
 CERBO_OWNED_KEYS = frozenset(
     {
         "g1",
         "g2",
+        "g3",
         "gt",
         "t1",
         "t2",
+        "t3",
         "tt",
+        "grid_available",
         "bv",
         "bc",
         "bp",
@@ -42,9 +65,21 @@ CERBO_OWNED_KEYS = frozenset(
         "water_level",
         "water_valve",
         "pump_switch",
+        "water_valve_mode",
+        "pump_mode",
     }
 )
-
+COLLECTION_DEFAULTS = {
+    "batteries": [],
+    "mppt_chargers": [],
+    "mppt_data": [],
+    "mppt_individual": [],
+    "pv_inverters": [],
+    "pv_inverter_individual": [],
+    "pv_inverter_powers": [],
+    "loads": {},
+    "load_names": {},
+}
 INVERTER_STATES = {
     0: "Off",
     1: "Low Power",
@@ -60,27 +95,39 @@ INVERTER_STATES = {
     11: "Power supply",
     252: "External control",
 }
+BATTERY_PATHS = {
+    "Soc": "soc",
+    "Dc/0/Voltage": "voltage",
+    "Dc/0/Current": "current",
+    "Dc/0/Power": "power",
+    "Dc/0/Temperature": "temperature",
+    "System/MinCellVoltage": "min_cell_voltage",
+    "System/MaxCellVoltage": "max_cell_voltage",
+    "TimeToGo": "time_to_go_seconds",
+    "ConsumedAmphours": "consumed_amphours",
+    "InstalledCapacity": "capacity",
+}
 
-_V_SOC_MIN = 40.0
-_V_SOC_MAX = 54.4
-KEEPALIVE_INTERVAL_SECS = 45
 
-
-def voltage_soc(voltage: float) -> float:
-    """Map pack voltage to 0–100% SoC (absorption at 54.4 V)."""
-    pct = ((voltage - _V_SOC_MIN) / (_V_SOC_MAX - _V_SOC_MIN)) * 100.0
-    return round(max(0.0, min(100.0, pct)))
+def number(value: Any) -> float | None:
+    """MQTT numbers are JSON numbers; booleans, NaN and strings are not watts."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            value = float(value)
+        except (OverflowError, ValueError):
+            return None
+        if math.isfinite(value):
+            return value
+    return None
 
 
 def parse_cerbo_payload(payload: bytes) -> Any:
-    """Return the Venus MQTT-GUI ``value`` field, or None on bad payloads."""
+    """Return the Venus ``value`` field, or None for malformed messages."""
     try:
-        data = json.loads(payload.decode())
-    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        data = json.loads(payload)
+    except (ValueError, UnicodeDecodeError):
         return None
-    if not isinstance(data, dict):
-        return None
-    return data.get("value")
+    return data.get("value") if isinstance(data, dict) else None
 
 
 def state_from_current(amps: float) -> str:
@@ -91,244 +138,447 @@ def state_from_current(amps: float) -> str:
     return "Idle"
 
 
-def cerbo_owns_key(
-    key: str,
-    *,
-    has_acloads: bool,
-    has_system: bool,
-    has_vebus: bool,
-    has_batteries: bool,
-    has_chargers: bool,
-    has_pv: bool,
-    has_ev: bool,
-    has_water: bool,
-) -> bool:
-    """True when Cerbo device maps already own this dashboard field."""
-    owned = {
-        "loads": has_acloads,
-        "load_names": has_acloads,
-        "g1": has_system or has_vebus,
-        "g2": has_system or has_vebus,
-        "gt": has_system or has_vebus,
-        "t1": has_system or has_vebus,
-        "t2": has_system or has_vebus,
-        "tt": has_system or has_vebus,
-        "battery_soc": has_batteries,
-        "battery_power": has_batteries,
-        "battery_voltage": has_batteries,
-        "battery_current": has_batteries,
-        "bv": has_batteries,
-        "bc": has_batteries,
-        "bp": has_batteries,
-        "batteries": has_batteries,
-        "solar_total": has_chargers or has_pv,
-        "mppt_total": has_chargers or has_pv,
-        "mppt_chargers": has_chargers or has_pv,
-        "mppt_individual": has_chargers or has_pv,
-        "mppt_data": has_chargers or has_pv,
-        "pv_total": has_chargers or has_pv,
-        "pv_inverters": has_pv,
-        "pv_inverter_total": has_pv,
-        "pv_inverter_individual": has_pv,
-        "pv_inverter_powers": has_pv,
-        "setpoint": has_vebus,
-        "inverter_state": has_vebus,
-        "ev_power": has_ev,
-        "car_soc": has_ev,
-        "ev_charging_kw": has_ev,
-        "water_level": has_water,
-        "water_valve": has_water,
-        "pump_switch": has_water,
-    }
-    return owned.get(key, False)
+def _sort_key(instance: str) -> tuple[int, int | str]:
+    return (0, int(instance)) if instance.isdigit() else (1, instance)
+
+
+def _text(value: Any) -> str | None:
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def _first_number(*values: Any) -> float | None:
+    return next((v for value in values if (v := number(value)) is not None), None)
+
+
+def _sum_known(values) -> float | None:
+    known = [v for value in values if (v := number(value)) is not None]
+    return number(sum(known)) if known else None
+
+
+def _power(leaves: dict[str, Any], prefix: str = "Ac") -> float | None:
+    """Prefer published total, including zero; otherwise sum distinct phases."""
+    total = number(leaves.get(f"{prefix}/Power"))
+    if total is not None:
+        return total
+    return _sum_known(leaves.get(f"{prefix}/L{i}/Power") for i in (1, 2, 3))
+
+
+def _identity(instance: str, leaves: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {"instance": instance}
+    for key, val in (
+        ("name", _text(leaves.get("CustomName")) or _text(leaves.get("ProductName"))),
+        ("serial", _text(leaves.get("Serial"))),
+    ):
+        if val is not None:
+            result[key] = val
+    return result
 
 
 class CerboOverlayMixin:
-    """Cerbo device-map overlays for MqttState."""
+    """Native telemetry reducer used by the MQTT server and IGW snapshot path."""
 
-    def _handle_cerbo_device(self, topic: str, payload: bytes) -> bool:
-        """Apply N/<portal>/{system,battery,solarcharger,vebus}/... into device maps."""
+    def _init_cerbo(self) -> None:
+        self._cerbo_devices: dict[str, dict[str, dict[str, Any]]] = {}
+        self._cerbo_claimed_keys: set[str] = set()
+        self._cerbo_overlay: dict[str, Any] = {}
+
+    def clear_cerbo_state(self) -> None:
+        """Invalidate observations after disconnect; await a fresh full publish."""
+        self._cerbo_devices.clear()
+        self._apply_cerbo_overlays()
+
+    def replace_cerbo_snapshot(self, snapshot: dict[str, Any]) -> None:
+        """Replace all native leaves from an IGW snapshot, including removals."""
+        devices: dict[str, dict[str, dict[str, Any]]] = {}
+        for kind in CERBO_KINDS:
+            values = snapshot.get(kind)
+            if not isinstance(values, dict):
+                continue
+            for key, value in values.items():
+                if not isinstance(key, str) or "/" not in key:
+                    continue
+                instance, path = key.split("/", 1)
+                if not instance or not path or not self._valid_path_value(kind, path, value):
+                    continue
+                devices.setdefault(kind, {}).setdefault(instance, {})[path] = value
+                if value is None:
+                    self._claim_invalid_leaf(kind, instance, path)
+        self._cerbo_devices = devices
+        self._apply_cerbo_overlays()
+
+    @staticmethod
+    def _valid_path_value(kind: str, path: str, value: Any) -> bool:
+        if value is None or number(value) is not None:
+            return True
+        return isinstance(value, str) and path in (
+            "CustomName",
+            "ProductName",
+            "Serial",
+            "System/MinVoltageCellId",
+            "System/MaxVoltageCellId",
+            "BatteryService",
+            "ActiveBatteryService",
+            "AutoSelectedBatteryService",
+        )
+
+    def _handle_cerbo_device(self, topic: str, payload: bytes) -> bool:  # pylint: disable=too-many-return-statements
         parts = topic.split("/")
-        if len(parts) < 5 or parts[0] != "N":
+        if len(parts) < 4 or parts[0] != "N" or not parts[1] or not parts[3]:
+            return False
+        if self._portal_id and parts[1] != self._portal_id:
             return False
         kind, instance = parts[2], parts[3]
-        if kind not in ("system", "battery", "solarcharger", "vebus"):
+        if kind not in CERBO_KINDS:
             return False
         path = "/".join(parts[4:])
-        val = parse_cerbo_payload(payload)
-        changed = False
-        if kind == "system":
-            entry = self._system.setdefault(instance, {})
-            if path == "Ac/Grid/L1/Power" and isinstance(val, (int, float)):
-                entry["g1"] = float(val)
-                changed = True
-            elif path == "Ac/Grid/L2/Power" and isinstance(val, (int, float)):
-                entry["g2"] = float(val)
-                changed = True
-            elif path == "Ac/Consumption/L1/Power" and isinstance(val, (int, float)):
-                entry["t1"] = float(val)
-                changed = True
-            elif path == "Ac/Consumption/L2/Power" and isinstance(val, (int, float)):
-                entry["t2"] = float(val)
-                changed = True
-        elif kind == "battery":
-            entry = self._batteries.setdefault(instance, {"instance": instance})
-            if path == "Soc" and isinstance(val, (int, float)):
-                entry["soc"] = float(val)
-                changed = True
-            elif path == "Dc/0/Voltage" and isinstance(val, (int, float)):
-                entry["voltage"] = float(val)
-                changed = True
-            elif path == "Dc/0/Current" and isinstance(val, (int, float)):
-                entry["current"] = float(val)
-                entry["state"] = state_from_current(float(val))
-                changed = True
-            elif path == "Dc/0/Power" and isinstance(val, (int, float)):
-                entry["power"] = float(val)
-                changed = True
-            elif path == "ProductName" and isinstance(val, str) and val.strip():
-                entry.setdefault("name", val.strip())
-                changed = True
-            elif path == "CustomName" and isinstance(val, str) and val.strip():
-                entry["name"] = val.strip()
-                changed = True
-            elif path == "Serial" and isinstance(val, str) and val.strip():
-                entry["serial"] = val.strip()
-                changed = True
-        elif kind == "solarcharger":
-            entry = self._chargers.setdefault(instance, {})
-            if path == "Yield/Power" and isinstance(val, (int, float)):
-                entry["power"] = float(val)
-                changed = True
-            elif path == "Pv/V" and isinstance(val, (int, float)):
-                entry["pv_voltage"] = float(val)
-                changed = True
-            elif path == "Dc/0/Current" and isinstance(val, (int, float)):
-                entry["current"] = float(val)
-                changed = True
-            elif path == "ProductName" and isinstance(val, str) and val.strip():
-                entry["name"] = val.strip()
-                changed = True
-            elif path == "Serial" and isinstance(val, str) and val.strip():
-                entry["serial"] = val.strip()
-                changed = True
-        elif kind == "vebus":
-            entry = self._vebus.setdefault(instance, {})
-            if path in ("Ac/ActiveIn/L1/Power", "Ac/L1/Power") and isinstance(val, (int, float)):
-                entry["l1_power"] = float(val)
-                changed = True
-            elif path in ("Ac/ActiveIn/L2/Power", "Ac/L2/Power") and isinstance(val, (int, float)):
-                entry["l2_power"] = float(val)
-                changed = True
-            elif path in ("Ac/Out/P", "Ac/Power") and isinstance(val, (int, float)):
-                entry["ac_power"] = float(val)
-                changed = True
-            elif path == "Hub4/L1/AcPowerSetpoint" and isinstance(val, (int, float)):
-                entry["setpoint"] = float(val)
-                changed = True
-            elif path == "State" and isinstance(val, (int, float)):
-                code = int(val)
-                entry["inverter_state"] = INVERTER_STATES.get(code, f"? ({code})")
-                changed = True
-        if changed:
-            self._apply_cerbo_overlays()
-        return changed
+        if not payload:
+            devices = self._cerbo_devices.get(kind, {})
+            if instance not in devices:
+                return False
+            # dbus-flashmq clears each service leaf with an empty payload when
+            # the service disappears. Remove it immediately on the first such
+            # notification; JSON {"value": null} invalidates only one leaf.
+            devices.pop(instance)
+        else:
+            if not path:
+                return False
+            try:
+                data = json.loads(payload)
+            except (ValueError, UnicodeDecodeError):
+                return False
+            if not isinstance(data, dict) or "value" not in data:
+                return False
+            value = data["value"]
+            if not self._valid_path_value(kind, path, value):
+                return False
+            if not self._known_path(kind, path):
+                return False
+            self._cerbo_devices.setdefault(kind, {}).setdefault(instance, {})[path] = value
+            if value is None:
+                self._claim_invalid_leaf(kind, instance, path)
+        before = dict(self.current_state)
+        self._apply_cerbo_overlays()
+        return self.current_state != before
 
-    def _find_shunt(self) -> dict[str, Any] | None:
-        for entry in self._batteries.values():
-            name = str(entry.get("name") or "").lower()
-            if "shunt" in name:
-                return entry
-        return None
+    def _claim_invalid_leaf(self, kind: str, instance: str, path: str) -> None:
+        """An explicit unknown is authoritative even before the first sample."""
+        keys: set[str] = set()
+        selected_instances = {
+            "tank": config.WATER_TANK_INSTANCE,
+            "ev": config.EV_INSTANCE,
+            "evcharger": config.EVCHARGER_INSTANCE,
+        }
+        if kind in selected_instances and instance != str(selected_instances[kind]):
+            return
+        if kind in ("grid", "vebus"):
+            for i in (1, 2, 3):
+                if path in (f"Ac/L{i}/Power", f"Ac/ActiveIn/L{i}/Power", f"Ac/ActiveIn/L{i}/P"):
+                    keys.update((f"g{i}", "gt"))
+            if kind == "grid" and path == "Ac/Power":
+                keys.add("gt")
+        if kind == "pump":
+            if instance == str(config.WATER_PUMP_INSTANCE):
+                keys.update(("pump_mode",) if path == "Mode" else ("pump_switch",))
+            elif instance == str(config.WATER_VALVE_INSTANCE):
+                keys.update(("water_valve_mode",) if path == "Mode" else ("water_valve",))
+        if kind == "system":
+            for i in (1, 2, 3):
+                if path == f"Ac/Grid/L{i}/Power":
+                    keys.update((f"g{i}", "gt"))
+                if path in (
+                    f"Ac/Consumption/L{i}/Power",
+                    f"Ac/ConsumptionOnInput/L{i}/Power",
+                    f"Ac/ConsumptionOnOutput/L{i}/Power",
+                ):
+                    keys.update((f"t{i}", "tt"))
+            if path == "Dc/Pv/Power":
+                keys.update(("mppt_total", "pv_total", "solar_total"))
+            if path.startswith("Ac/PvOn") and path.endswith("/Power"):
+                keys.update(("pv_inverter_total", "solar_total"))
+        if kind in ("battery", "system"):
+            prefix = "Dc/Battery/" if kind == "system" else "Dc/0/"
+            for field, leaf, alias in (
+                ("soc", "Soc", None),
+                ("voltage", "Voltage", "bv"),
+                ("current", "Current", "bc"),
+                ("power", "Power", "bp"),
+            ):
+                expected = "Soc" if field == "soc" and kind == "battery" else prefix + leaf
+                if path == expected:
+                    keys.add(f"battery_{field}")
+                    if alias:
+                        keys.add(alias)
+        if kind == "solarcharger" and path in ("Yield/Power", "Dc/0/Power"):
+            keys.update(("mppt_total", "pv_total", "solar_total"))
+        if kind == "pvinverter" and path.endswith("/Power"):
+            keys.update(("pv_inverter_total", "solar_total"))
+        if kind == "vebus":
+            if path == "State":
+                keys.add("inverter_state")
+            if path.startswith("Hub4/") and path.endswith("/AcPowerSetpoint"):
+                keys.add("setpoint")
+        for service, leaf, fields in (
+            ("ev", "Soc", ("car_soc",)),
+            ("ev", "Ac/Power", ("ev_power",)),
+            ("evcharger", "Ac/Power", ("ev_charging_kw",)),
+            ("tank", "Level", ("water_level",)),
+        ):
+            if kind == service and path == leaf:
+                keys.update(fields)
+        self._cerbo_claimed_keys.update(keys)
+
+    @staticmethod
+    def _known_path(kind: str, path: str) -> bool:  # pylint: disable=too-many-return-statements
+        if path in ("ProductName", "CustomName", "Serial", "Connected"):
+            return True
+        if kind == "battery":
+            return path in BATTERY_PATHS or path in (
+                "System/MinVoltageCellId",
+                "System/MaxVoltageCellId",
+                "State",
+            )
+        if kind == "system":
+            return path.startswith(("Ac/", "Dc/Battery/", "Dc/Pv/")) or path in (
+                "BatteryService",
+                "ActiveBatteryService",
+                "AutoSelectedBatteryService",
+            )
+        if kind == "solarcharger":
+            return path in ("Yield/Power", "Dc/0/Power", "Dc/0/Voltage", "Dc/0/Current", "Pv/V")
+        if kind in ("acload", "pvinverter", "grid"):
+            return path.startswith("Ac/")
+        if kind == "vebus":
+            return path.startswith(("Ac/", "Hub4/", "Dc/")) or path in ("State", "Mode")
+        if kind == "tank":
+            return path == "Level"
+        if kind == "pump":
+            return path in ("State", "Status", "Mode")
+        return path in ("Soc", "Ac/Power")
+
+    def _devices(self, kind: str):
+        values = self._cerbo_devices.get(kind, {})
+        return [
+            (i, values[i]) for i in sorted(values, key=_sort_key) if values[i].get("Connected") != 0
+        ]
 
     def _apply_cerbo_overlays(self) -> None:
-        """Write Cerbo device maps into current_state (desktop apply_cerbo_to_state)."""
-        if self._acload_powers:
-            self._sync_acload_to_state()
+        overlay: dict[str, Any] = {}
+        systems = self._devices("system")
+        system = dict(systems).get("0", systems[0][1] if systems else {})
+        vebuses = self._devices("vebus")
+        vebus = vebuses[0][1] if vebuses else {}
+        self._apply_ac(overlay, system, vebus)
+        self._apply_batteries(overlay, system)
+        self._apply_solar(overlay, system)
+        self._apply_loads(overlay)
+        self._apply_ev_water(overlay)
+        setpoints = [vebus.get(f"Hub4/L{i}/AcPowerSetpoint") for i in (1, 2, 3)]
+        if (value := _sum_known(setpoints)) is not None:
+            overlay["setpoint"] = value
+        if (code := number(vebus.get("State"))) is not None:
+            overlay["inverter_state"] = INVERTER_STATES.get(int(code), f"? ({int(code)})")
 
-        if self._batteries:
-            batteries = []
-            for inst in sorted(self._batteries, key=lambda x: int(x) if x.isdigit() else 0):
-                b = dict(self._batteries[inst])
-                b.setdefault("instance", inst)
-                batteries.append(b)
-            shunt = self._find_shunt()
-            if shunt is not None:
-                voltage = shunt.get("voltage")
-                if isinstance(voltage, (int, float)):
-                    self.current_state["battery_soc"] = voltage_soc(float(voltage))
-                    self.current_state["battery_voltage"] = float(voltage)
-                self.current_state["battery_current"] = float(shunt.get("current") or 0.0)
-                self.current_state["battery_power"] = float(shunt.get("power") or 0.0)
-            self.current_state["batteries"] = batteries
+        # A formerly observed field stays unavailable after null/removal until a
+        # native replacement arrives. Old controller mirrors must not revive it.
+        self._cerbo_claimed_keys.update(overlay)
+        for key in self._cerbo_claimed_keys:
+            self.current_state[key] = overlay.get(key, COLLECTION_DEFAULTS.get(key))
+        self._cerbo_overlay = overlay
+        if self._cerbo_claimed_keys or self.current_state:
+            self.current_state["telemetry_available"] = {
+                key: self.current_state.get(key) is not None
+                for key in CERBO_OWNED_KEYS
+                if key not in COLLECTION_DEFAULTS
+            }
 
-        if self._chargers:
-            chargers = []
-            for inst in sorted(self._chargers, key=lambda x: int(x) if x.isdigit() else 0):
-                chargers.append(dict(self._chargers[inst]))
-            mppt_total = sum(float(c.get("power") or 0.0) for c in chargers)
-            self.current_state["mppt_chargers"] = chargers
-            self.current_state["mppt_total"] = mppt_total
-        else:
-            mppt_total = float(self.current_state.get("mppt_total") or 0.0)
+    def _apply_ac(self, out, system, vebus) -> None:
+        meters = self._devices("grid")
+        grid = meters[0][1] if meters else {}
+        # A disconnected AC input must not supply a stale grid fallback.
+        input_source = number(vebus.get("Ac/ActiveIn/ActiveInput"))
+        connected = number(vebus.get("Ac/ActiveIn/Connected"))
+        use_input = (
+            connected != 0
+            and input_source != 240
+            and number(system.get("Ac/ActiveIn/Source")) in (1, 3)
+        )
+        for i in (1, 2, 3):
+            value = _first_number(
+                system.get(f"Ac/Grid/L{i}/Power"),
+                grid.get(f"Ac/L{i}/Power"),
+                vebus.get(f"Ac/ActiveIn/L{i}/P") if use_input else None,
+                vebus.get(f"Ac/ActiveIn/L{i}/Power") if use_input else None,
+            )
+            if value is not None:
+                out[f"g{i}"] = value
+            consumption = _sum_known(
+                [
+                    system.get(f"Ac/ConsumptionOnInput/L{i}/Power"),
+                    system.get(f"Ac/ConsumptionOnOutput/L{i}/Power"),
+                ]
+            )
+            value = _first_number(
+                system.get(f"Ac/Consumption/L{i}/Power"),
+                consumption,
+            )
+            if value is not None:
+                out[f"t{i}"] = value
+        total = _sum_known(out.get(f"g{i}") for i in (1, 2, 3))
+        # A meter aggregate is useful when no phase powers were published.
+        if total is None:
+            total = _power(grid)
+        if total is not None:
+            out["gt"] = total
+            out["grid_available"] = True
+        elif connected is not None:
+            out["grid_available"] = bool(connected)
+        total = _sum_known(out.get(f"t{i}") for i in (1, 2, 3))
+        if total is not None:
+            out["tt"] = total
 
-        if self._pv_inverters:
-            ordered = [
-                self._pv_inverters[k]
-                for k in sorted(self._pv_inverters, key=lambda x: int(x) if x.isdigit() else 0)
-            ]
-            self.current_state["pv_inverters"] = ordered
-            powers = [float(p.get("power") or 0.0) for p in ordered]
-            self.current_state["pv_inverter_individual"] = powers
-            self.current_state["pv_inverter_total"] = sum(powers)
-            pv_total = sum(powers)
-        else:
-            pv_total = 0.0
-            for p in self.current_state.get("pv_inverters") or []:
-                if isinstance(p, dict):
-                    pv_total += float(p.get("power") or 0.0)
+    def _apply_batteries(self, out, system) -> None:
+        batteries = []
+        for instance, leaves in self._devices("battery"):
+            entry = _identity(instance, leaves)
+            for path, key in BATTERY_PATHS.items():
+                if (value := number(leaves.get(path))) is not None:
+                    entry[key] = value
+            for path, key in (
+                ("System/MinVoltageCellId", "min_voltage_cell_id"),
+                ("System/MaxVoltageCellId", "max_voltage_cell_id"),
+            ):
+                value = leaves.get(path)
+                if value is not None and (isinstance(value, str) or number(value) is not None):
+                    entry[key] = str(value)
+            if "current" in entry:
+                entry["state"] = state_from_current(entry["current"])
+            if (
+                "power" not in entry
+                and "voltage" in entry
+                and "current" in entry
+                and (power := number(entry["voltage"] * entry["current"])) is not None
+            ):
+                entry["power"] = power
+            if (seconds := entry.get("time_to_go_seconds")) is not None and seconds >= 0:
+                minutes = int(seconds / 60)
+                entry["time_to_go"] = f"{minutes // 60}h {minutes % 60:02d}m"
+            if len(entry) > 1:
+                batteries.append(entry)
+        self._batteries = {b["instance"]: b for b in batteries}
+        if batteries:
+            out["batteries"] = batteries
+        # Use the explicitly selected monitor, or the only battery service.
+        # Device names cannot distinguish overlapping BMS and shunt readings.
+        selected = batteries[0] if len(batteries) == 1 else {}
+        if (instance := number(system.get("Dc/Battery/Instance"))) is not None:
+            selected = self._batteries.get(str(int(instance)), {})
+        for field, path in (
+            ("soc", "Soc"),
+            ("voltage", "Voltage"),
+            ("current", "Current"),
+            ("power", "Power"),
+        ):
+            value = _first_number(system.get(f"Dc/Battery/{path}"), selected.get(field))
+            if value is not None:
+                out[f"battery_{field}"] = value
+        for field, alias in (("voltage", "bv"), ("current", "bc"), ("power", "bp")):
+            if f"battery_{field}" in out:
+                out[alias] = out[f"battery_{field}"]
 
-        if self._chargers or self._pv_inverters:
-            if not self._chargers:
-                mppt_total = float(self.current_state.get("mppt_total") or 0.0)
-            # Headline solar tile = MPPT + discovered AC PV inverters (desktop).
-            self.current_state["solar_total"] = mppt_total + pv_total
+    def _apply_solar(self, out, system) -> None:
+        chargers = []
+        for instance, leaves in self._devices("solarcharger"):
+            entry = _identity(instance, leaves)
+            for path, key in (("Pv/V", "pv_voltage"), ("Dc/0/Current", "current")):
+                if (value := number(leaves.get(path))) is not None:
+                    entry[key] = value
+            voltage = number(leaves.get("Dc/0/Voltage"))
+            current = number(leaves.get("Dc/0/Current"))
+            product = voltage * current if voltage is not None and current is not None else None
+            power = _first_number(leaves.get("Yield/Power"), leaves.get("Dc/0/Power"), product)
+            if power is not None:
+                entry["power"] = power
+            if len(entry) > 1:
+                chargers.append(entry)
+        self._chargers = {c["instance"]: c for c in chargers}
+        if chargers:
+            out["mppt_chargers"] = chargers
+            out["mppt_data"] = chargers
+        powers = [c["power"] for c in chargers if "power" in c]
+        mppt = _first_number(system.get("Dc/Pv/Power"), _sum_known(powers))
+        if powers:
+            out["mppt_individual"] = powers
+        if mppt is not None:
+            out["mppt_total"] = mppt
+            out["pv_total"] = mppt
+        inverters = []
+        for instance, leaves in self._devices("pvinverter"):
+            entry = _identity(instance, leaves)
+            if (value := _power(leaves)) is not None:
+                entry["power"] = value
+            for path, key in (("Ac/L1/Voltage", "voltage"), ("Ac/L1/Current", "current")):
+                if (value := number(leaves.get(path))) is not None:
+                    entry[key] = value
+            if len(entry) > 1:
+                inverters.append(entry)
+        self._pv_inverters = {p["instance"]: p for p in inverters}
+        if inverters:
+            out["pv_inverters"] = inverters
+        powers = [p["power"] for p in inverters if "power" in p]
+        if powers:
+            out["pv_inverter_individual"] = powers
+            out["pv_inverter_powers"] = powers
+        ac_pv = _sum_known(
+            system.get(f"Ac/PvOn{position}/L{i}/Power")
+            for position in ("Grid", "Output", "Genset")
+            for i in (1, 2, 3)
+        )
+        ac_pv = _first_number(ac_pv, _sum_known(powers))
+        if ac_pv is not None:
+            out["pv_inverter_total"] = ac_pv
+        # Never add a stale legacy total to a native component.
+        if (total := _sum_known((mppt, ac_pv))) is not None:
+            out["solar_total"] = total
 
-        # systemcalc grid / consumption (preferred)
-        if self._system:
-            s = next(iter(self._system.values()))
-            if "g1" in s:
-                self.current_state["g1"] = s["g1"]
-            if "g2" in s:
-                self.current_state["g2"] = s["g2"]
-            if "t1" in s:
-                self.current_state["t1"] = s["t1"]
-            if "t2" in s:
-                self.current_state["t2"] = s["t2"]
-            g1, g2 = self.current_state.get("g1"), self.current_state.get("g2")
-            if isinstance(g1, (int, float)) and isinstance(g2, (int, float)):
-                self.current_state["gt"] = float(g1) + float(g2)
-            t1, t2 = self.current_state.get("t1"), self.current_state.get("t2")
-            if isinstance(t1, (int, float)) and isinstance(t2, (int, float)):
-                self.current_state["tt"] = float(t1) + float(t2)
-            elif isinstance(t1, (int, float)):
-                self.current_state["tt"] = float(t1)
-            elif isinstance(t2, (int, float)):
-                self.current_state["tt"] = float(t2)
+    def _apply_loads(self, out) -> None:
+        loads = {}
+        names = {}
+        self._acload_powers = {}
+        self._acload_names = {}
+        self._acload_product_names = {}
+        for instance, leaves in self._devices("acload"):
+            power = _power(leaves)
+            if power is None:
+                continue
+            name = _text(leaves.get("CustomName")) or _text(leaves.get("ProductName"))
+            names[instance] = name or f"AC Load {instance}"
+            key = name or f"ac_load_{instance}"
+            if key in loads:
+                key = f"{key}_{instance}"
+            loads[key] = power
+            self._acload_powers[instance] = power
+            self._acload_names[instance] = names[instance]
+        if loads:
+            out["loads"] = loads
+            out["load_names"] = names
 
-        if self._vebus:
-            v = next(iter(self._vebus.values()))
-            if "g1" not in self.current_state and "l1_power" in v:
-                self.current_state["g1"] = v["l1_power"]
-            if "g2" not in self.current_state and "l2_power" in v:
-                self.current_state["g2"] = v["l2_power"]
-            if "gt" not in self.current_state:
-                g1, g2 = self.current_state.get("g1"), self.current_state.get("g2")
-                if isinstance(g1, (int, float)) and isinstance(g2, (int, float)):
-                    self.current_state["gt"] = float(g1) + float(g2)
-                elif "ac_power" in v:
-                    self.current_state["gt"] = v["ac_power"]
-            if "setpoint" in v:
-                self.current_state["setpoint"] = v["setpoint"]
-            if "inverter_state" in v:
-                self.current_state["inverter_state"] = v["inverter_state"]
+    def _apply_ev_water(self, out) -> None:
+        for kind, instance, path, key, scale in (
+            ("tank", config.WATER_TANK_INSTANCE, "Level", "water_level", 1),
+            ("ev", config.EV_INSTANCE, "Soc", "car_soc", 1),
+            ("ev", config.EV_INSTANCE, "Ac/Power", "ev_power", 1),
+            ("evcharger", config.EVCHARGER_INSTANCE, "Ac/Power", "ev_charging_kw", 0.001),
+        ):
+            leaves = dict(self._devices(kind)).get(str(instance), {})
+            if (value := number(leaves.get(path))) is not None:
+                # Victron tank Level is percent, including legitimate 0..1%.
+                out[key] = value * scale
+        for instance, key, mode_key in (
+            (config.WATER_VALVE_INSTANCE, "water_valve", "water_valve_mode"),
+            (config.WATER_PUMP_INSTANCE, "pump_switch", "pump_mode"),
+        ):
+            leaves = dict(self._devices("pump")).get(str(instance), {})
+            if (value := _first_number(leaves.get("State"), leaves.get("Status"))) is not None:
+                out[key] = bool(value)
+            if (mode := number(leaves.get("Mode"))) in (0, 1, 2):
+                out[mode_key] = int(mode)

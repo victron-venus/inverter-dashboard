@@ -138,6 +138,7 @@ def test_apply_snapshot_maps_live_tiles(ms):
         "battery": {
             "512/CustomName": "SmartShunt 500A",
             "512/Dc/0/Voltage": 47.2,
+            "512/Soc": 61.0,
             "512/Dc/0/Current": -12.5,
             "512/Dc/0/Power": -590.0,
         },
@@ -166,7 +167,7 @@ def test_apply_snapshot_maps_live_tiles(ms):
     assert ms.current_state["g1"] == 10.0
     assert ms.current_state["gt"] == 15.0
     assert ms.current_state["tt"] == 120.0
-    assert ms.current_state["battery_soc"] == 50.0
+    assert ms.current_state["battery_soc"] == 61.0
     assert ms.current_state["battery_power"] == -590.0
     assert ms.current_state["mppt_total"] == 300.0
     assert ms.current_state["solar_total"] == 500.0
@@ -177,9 +178,9 @@ def test_apply_snapshot_maps_live_tiles(ms):
     assert ms.current_state["ev_charging_kw"] == 1.5
 
 
-def test_tank_fraction_normalized(ms):
+def test_low_tank_level_stays_percentage(ms):
     gateway.apply_snapshot(ms, {"tank": {"21/Level": 0.42}})
-    assert ms.current_state["water_level"] == pytest.approx(42.0)
+    assert ms.current_state["water_level"] == pytest.approx(0.42)
 
 
 def test_build_headers_includes_cf_and_bearer(monkeypatch):

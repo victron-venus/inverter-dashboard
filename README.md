@@ -10,7 +10,7 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/victron-venus/inverter-dashboard/graphs/commit-activity)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
-Real-time web dashboard for monitoring Victron inverter systems via MQTT. Designed to work with [inverter-control](https://github.com/victron-venus/inverter-control) on Cerbo GX.
+Real-time web dashboard for monitoring Victron inverter systems directly through Cerbo GX MQTT or inverter-gateway. [inverter-control](https://github.com/victron-venus/inverter-control) supplies control policy, history and forecasts when available; it is not required to relay live telemetry.
 
 > **Dashboard options:** For Cerbo GX deployments, [**inverter-dashboard-go**](https://github.com/victron-venus/inverter-dashboard-go) is the recommended primary (single binary, low footprint). **This repo** targets Docker/NAS installs (`alvit/inverter-dashboard`). For a native app, see [**inverter-desktop**](https://github.com/victron-venus/inverter-desktop).
 
@@ -18,7 +18,7 @@ Real-time web dashboard for monitoring Victron inverter systems via MQTT. Design
 
 ## Project Role
 
-⚠️ **This is the original prototype dashboard.** For production use, see:
+**This dashboard targets Docker, NAS and general-purpose servers.** The projects share the Vue interface and direct Cerbo telemetry contract:
 
 | Use Case | Recommended |
 |----------|-------------|
@@ -77,86 +77,78 @@ client on Synology). Local/dev and optional ConfigMaps may set both.
 `solar_forecast`, flags, …) when MQTT is used; IGW mode maps Cerbo live tiles
 only (daemon extras need HA overlay or a separate source).
 
-### Water system
+### Direct Cerbo telemetry
 
-Water data comes **exclusively** from [dbus-pump](https://github.com/victron-venus/dbus-pump)
-via Cerbo MQTT — no Home Assistant involved. Enable it by setting `CERBO_PORTAL_ID`
-(plus optional `WATER_TANK_INSTANCE` / `WATER_PUMP_INSTANCE` / `WATER_VALVE_INSTANCE`,
-defaults 21/1/2, matching dbus-pump's `local_config.py`). Valve/pump automation lives in
-dbus-pump; the dashboard is read-only.
+Point `MQTT_HOST` at the Cerbo broker and set `CERBO_PORTAL_ID` to the GX's VRM
+portal ID (shown in its VRM settings). Local MQTT access must be enabled on the GX.
+The dashboard subscribes to that portal's native topics before publishing an empty
+`R/<portal>/keepalive` to request a full refresh. Further keepalives run every
+45 seconds with `suppress-republish`, so an unchanged system does not repeatedly
+send its entire tree. Reconnects invalidate old live observations and request a
+fresh tree.
 
----
+When the portal is omitted, the dashboard can learn it from native `system/.../Serial`,
+heartbeat or keepalive notifications, or legacy `inverter/portal`. Modern Venus
+MQTT notifications are not retained, so a silent broker cannot be discovered
+reliably until another client starts notifications. **Configure `CERBO_PORTAL_ID`
+for unattended startup**, and whenever the broker's ACL requires portal-scoped
+subscriptions. A selected portal stays fixed; another portal's notifications
+cannot mix into this dashboard.
 
-## Home Assistant Integration: Local-First Architecture
+The same reducer handles MQTT notifications and complete IGW snapshots:
 
-The dashboard uses a **local-first approach** for Home Assistant integrations — MQTT bridging, not direct cloud polling.
+- Grid and consumption support L1, L2 and L3; systemcalc is preferred, with grid
+  meter and connected VE.Bus input fallbacks when native source identity is mains
+  or shore power. Generator input is not grid. VE.Bus output alone is not total
+  consumption; systemcalc consumption is required to account for the site topology.
+- Battery headline readings prefer systemcalc's selected battery measurements.
+  The explicitly selected battery instance, or a single unambiguous battery service,
+  provides a fallback. Measured SoC is used;
+  it is never guessed from a fixed pack voltage range. Per-device tiles include
+  identity, temperature, time remaining and cell-voltage diagnostics when available.
+- Solar combines DC MPPT and AC PV, without counting device and system totals twice.
+  Published totals, including zero, take priority over summed phase powers.
+- AC loads use native device names, with instance suffixes for duplicate names.
+- Null values, service removal and snapshot omissions invalidate affected readings.
+  Invalid JSON and nonnumeric measurements are ignored. `telemetry_available`
+  distinguishes missing readings from measured zero; stale controller mirrors
+  cannot restore a native reading that became unavailable.
 
-### Why Not Direct HA REST Polling?
+### Water and EV
 
-Home Assistant runs in the cloud (outside the home network). Direct API polling creates critical problems:
+Water data comes from [dbus-pump](https://github.com/victron-venus/dbus-pump) through
+native `tank` and `pump` topics. `Level` is a percentage, including values below
+1%; pump `State`/`Status` and `Mode` are read directly. Configure
+`WATER_TANK_INSTANCE`, `WATER_PUMP_INSTANCE` and `WATER_VALVE_INSTANCE` to match
+that bridge (defaults 21/1/2).
 
-| Problem | Impact |
-|---|---|
-| **Internet dependency** | Dashboard fails when connectivity drops |
-| **Latency** | MQTT delivers state in ~100ms; HA API polling takes 12+ seconds per cycle |
-| **Rate limits** | HA cloud API has request limits; excessive polling triggers throttling |
-| **Cloud HA downtime** | Dashboard loses all switch/sensor visibility |
-| **Single point of failure** | Cloud HA becomes a hard dependency |
+With direct Cerbo MQTT connected, the dashboard can set the configured pump or
+valve to Auto (0), forced on (1), or forced off (2) through its native writable
+`W/<portal>/pump/<instance>/Mode` path. Controls are enabled only after that
+device's Mode is available; the displayed state changes when Cerbo confirms it.
+Gateway-only and public views remain read-only for water controls. Home Assistant
+switches and controller commands are not used for these overrides; automation
+continues to run in dbus-pump.
 
-### Our Approach: Local MQTT Bridging
+Vehicle SoC and power come from `ev/<EV_INSTANCE>` (default 22), and wallbox power
+from `evcharger/<EVCHARGER_INSTANCE>` (default 40). Vehicle power is watts;
+`ev_charging_kw` is kilowatts. These fields do not require a Home Assistant relay
+or a full `inverter/state` payload.
 
-```mermaid
-flowchart TD
-    HA["Home Assistant<br/>(cloud)"]
-    INV["inverter-control<br/>(on Cerbo GX)"]
-    MQTT["MQTT<br/>(local broker)"]
-    DASH["Dashboard"]
+## Home Assistant integration
 
-    HA -.->|"polls locally [when configured]"| INV
-    INV -->|"bridges entity states"| MQTT
-    MQTT -->|"pushes inverter/state"| DASH
-```
+`inverter/state` remains the source of controller-specific fields such as
+`daily_stats`, `solar_forecast`, `ess_mode`, `booleans`, `dry_run`, limits and uptime.
+The slim controller no longer forwards every appliance or HA entity. Configure
+`HA_APPLIANCE_ENTITIES` in `local_config.py` to read the desired appliances directly
+from HA. `HA_DIRECT_CONTROLS=True` additionally enables explicitly configured HA
+switches and buttons. Use only entities owned by HA; controller policy flags and
+native Cerbo power, battery, EV and water readings keep their own sources.
 
-**inverter-control** bridges entity states into MQTT `inverter/state` every 2–5 seconds. Dashboard receives everything from one source.
+HA is optional for native energy monitoring. IGW snapshots contain live device
+telemetry; controller-only history and forecasts are unavailable through IGW unless
+a separate source supplies them.
 
-### Two Modes of Operation
-
-#### Mode 1: MQTT-State (Default) — `HA_DIRECT_CONTROLS = False` ✓
-
-```python
-# ha_client.py — merge_overlay is no-op; HA state from MQTT only
-if not is_direct_mode():
-    return merged
-```
-
-- **No HTTP calls from dashboard to HA cloud**
-- Entity states arrive via MQTT `inverter/state` at ~2–5s intervals
-- Works when HA cloud is down or internet is out
-- **Recommended for all production deployments**
-
-#### Mode 2: Direct Polling — `HA_DIRECT_CONTROLS = True` (diagnostic only)
-
-```python
-# Dashboard polls HA REST API every 12 seconds
-async def fetch_states_once():
-    for key, eid in _boolean_entities.items():
-        st = await _get_state(client, headers, eid)
-        booleans[key] = st == "on"
-    out["ha_direct_connected"] = True
-```
-
-- If HA cloud is unreachable → all switches show "off" until reconnection
-- **Not recommended for production**
-
-### Key Benefits
-
-1. **Offline resilience**: MQTT state still flows when internet/HA cloud is down
-2. **Sub-second updates**: MQTT delivers entity states every cycle (~2–5s), far faster than 12s API polling
-3. **No vendor lock-in**: Dashboard works with MQTT broker alone
-4. **Fail-safe defaults**: Disconnected direct mode → all switches show `False`
-5. **Zero API rate limit risk**: No direct HA REST calls from dashboard
-
-#
 ## Deploy to k3s (node `mp`)
 
 Python / multi-arch image for NAS and k3s (prefer this over `inverter-dashboard-go` for cluster workers).
@@ -170,7 +162,7 @@ kubectl -n inverter-dashboard get pods -o wide   # expect NODE=mp
 ```
 
 - Image: `alvit/inverter-dashboard` on Docker Hub. Registry publication promotes approved stable OCI assets; see the [operator runbook](docs/release-workflow.md).
-- mp k3s: IGW at `https://victron.2560801.xyz` with `MQTT_HOST=""` (IGW-only); local/dev uses `MQTT_HOST`, or both for dual-path. Set `CERBO_PORTAL_ID` for water/EV instance defaults
+- mp k3s: IGW at `https://victron.2560801.xyz` with `MQTT_HOST=""` (IGW-only); local/dev uses `MQTT_HOST`, or both for dual-path. Set `CERBO_PORTAL_ID` for reliable native MQTT bootstrap and configure water/EV instances separately
 - Ingress stub host is a placeholder — edit before enabling Traefik TLS / cert-manager
 
 ## Configuration Reference
@@ -308,7 +300,7 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 | `GATEWAY_POLL_INTERVAL` | `2` | Seconds between `/v1/snapshot` polls |
 | `WEB_PORT` | `8080` | Web server port (inside the container) |
 | `INVERTER_DASHBOARD_CONFIG` | `/app/config` | Host folder mounted read-only: `local_config.py` and optional TLS files |
-| `CERBO_PORTAL_ID` | *(empty)* | Cerbo GX VRM portal ID — water/EV/alarms + `R/<portal>/keepalive` |
+| `CERBO_PORTAL_ID` | *(empty)* | VRM portal ID for scoped native subscriptions and immediate bootstrap. Required on a silent broker; otherwise passive discovery is available. |
 | `WATER_TANK_INSTANCE` / `WATER_PUMP_INSTANCE` / `WATER_VALVE_INSTANCE` | `21` / `1` / `2` | D-Bus device instances on the GX (must match dbus-pump) |
 
 ### Secrets (`local_config.py`) + optional HTTPS
@@ -385,10 +377,20 @@ By default the app and the published Docker image listen on **plain HTTP** (port
 ## MQTT Topics
 
 ### Subscribed (incoming data)
-- `inverter/state` - JSON with current system state
-- `inverter/console` - Console log messages
+
+- `N/<portal>/{system,grid,battery,solarcharger,pvinverter,vebus,acload}/+/#` — native energy measurements and device identity
+- `N/<portal>/{tank,pump,ev,evcharger}/+/#` — water and EV measurements
+- `N/<portal>/platform/+/Notifications/#` and native `Alarms/#` — Victron notifications
+- `inverter/state` — optional controller policy, history, forecasts and legacy compatibility
+- `inverter/portal` — optional legacy portal discovery
+- `inverter/notifications` — controller notification events
+- `CAMERA_TOPIC` — optional configured camera events
+
+The dashboard sends read-only `R/<portal>/keepalive` requests to maintain native
+notifications. Control actions remain separate from telemetry subscription.
 
 ### Published (commands)
+- `W/<portal>/pump/<configured-instance>/Mode` — explicit water Auto/on/off overrides (`{"value":0|1|2}`), direct MQTT only
 - `inverter/cmd/toggle` - Toggle boolean entities
 - `inverter/cmd/press` - Press button entities
 - `inverter/cmd/setpoint` - Set power setpoint

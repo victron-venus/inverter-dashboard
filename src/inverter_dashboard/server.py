@@ -28,11 +28,11 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config, gateway, ha_client, notifications, settings_store, websocket_handler
 from .cerbo import (
+    CERBO_KINDS,
     CERBO_OWNED_KEYS,
     KEEPALIVE_INTERVAL_SECS,
     CerboOverlayMixin,
-    cerbo_owns_key,
-    parse_cerbo_payload,
+    number,
 )
 from .config import DASHBOARD_SECRET, WEB_PORT
 from .version import VERSION, SelfUpdateDisabled, check_latest_version, download_and_update
@@ -96,6 +96,7 @@ class MqttState(CerboOverlayMixin):
         self._system: dict[str, dict[str, Any]] = {}
         self._vebus: dict[str, dict[str, Any]] = {}
         self._portal_id: str = config.CERBO_PORTAL_ID or ""
+        self._init_cerbo()
         self._alarm_values: dict[str, int] = {}
         # Venus-platform GUIv2 notification slots (desktop parity)
         self._platform_slots: dict[tuple[str, int], dict[str, Any]] = {}
@@ -112,7 +113,7 @@ class MqttState(CerboOverlayMixin):
         self._on_state_update = callback
 
     def set_portal_callback(self, callback: Callable) -> None:
-        """Called when portal ID is learned from inverter/portal (for late subscribe)."""
+        """Called when a portal is learned from native notifications or legacy discovery."""
         self._on_portal = callback
 
     async def _emit(self) -> None:
@@ -146,24 +147,44 @@ class MqttState(CerboOverlayMixin):
         self._apply_cerbo_overlays()
 
     def _cerbo_has_overlay(self, key: str) -> bool:
-        """True when Cerbo device maps already own this dashboard field."""
-        return cerbo_owns_key(
-            key,
-            has_acloads=bool(self._acload_powers),
-            has_system=bool(self._system),
-            has_vebus=bool(self._vebus),
-            has_batteries=bool(self._batteries),
-            has_chargers=bool(self._chargers),
-            has_pv=bool(self._pv_inverters),
-            has_ev=any(k in self.current_state for k in ("ev_power", "car_soc", "ev_charging_kw")),
-            has_water=any(
-                k in self.current_state for k in ("water_level", "water_valve", "pump_switch")
-            ),
-        )
+        return key in self._cerbo_claimed_keys
+
+    async def _discover_portal(self, portal: str) -> None:
+        # Never let a foreign publisher override a configured/discovered site.
+        if (
+            self._portal_id
+            or not portal
+            or any(c in "/+#" or c.isspace() or ord(c) == 0 for c in portal)
+        ):
+            return
+        if self._on_portal:
+            await self._on_portal(portal)
+        self._portal_id = portal
+        logger.info("Discovered Cerbo portal ID: %s", portal)
 
     async def on_message(self, topic: str, payload: bytes) -> None:
         """Process incoming MQTT message"""
         try:
+            if topic.startswith("N/"):
+                parts = topic.split("/")
+                if len(parts) < 3:
+                    return
+                # Discovery can come from system Serial, heartbeat, or an
+                # already streaming native leaf. Selection then stays fixed.
+                if (
+                    not self._portal_id
+                    and payload
+                    and (len(parts) >= 5 or parts[2] in ("heartbeat", "keepalive"))
+                ):
+                    try:
+                        discovery = json.loads(payload)
+                    except (ValueError, UnicodeDecodeError):
+                        return
+                    value = discovery.get("value") if isinstance(discovery, dict) else None
+                    if (isinstance(value, str) and value.strip()) or number(value) is not None:
+                        await self._discover_portal(parts[1])
+                if parts[1] != self._portal_id:
+                    return
             if topic == "inverter/state":
                 data = json.loads(payload.decode())
                 if isinstance(data, dict):
@@ -171,12 +192,7 @@ class MqttState(CerboOverlayMixin):
                     await self._emit()
 
             elif topic == "inverter/portal":
-                portal = payload.decode().strip().strip('"')
-                if portal and portal != self._portal_id:
-                    self._portal_id = portal
-                    logger.info("Discovered Cerbo portal ID via inverter/portal: %s", portal)
-                    if self._on_portal:
-                        await self._on_portal(portal)
+                await self._discover_portal(payload.decode().strip().strip('"'))
 
             elif topic == "inverter/notifications":
                 self.push_notification(json.loads(payload.decode()))
@@ -203,29 +219,8 @@ class MqttState(CerboOverlayMixin):
                 if self.camera_event and self._on_state_update:
                     await self._on_state_update()
 
-            elif "/acload/" in topic:
-                if self._handle_acload(topic, payload):
-                    await self._emit()
-
-            elif "/pvinverter/" in topic:
-                if self._handle_pvinverter(topic, payload):
-                    await self._emit()
-
-            elif any(
-                f"/{kind}/" in topic for kind in ("system", "battery", "solarcharger", "vebus")
-            ):
+            elif topic.startswith("N/"):
                 if self._handle_cerbo_device(topic, payload):
-                    await self._emit()
-
-            elif "/tank/" in topic or "/pump/" in topic:
-                before = dict(self.current_state)
-                self.handle_water(topic, payload)
-                if self.current_state != before:
-                    await self._emit()
-            elif "/evcharger/" in topic or "/ev/" in topic:
-                before = dict(self.current_state)
-                self.handle_ev(topic, payload)
-                if self.current_state != before:
                     await self._emit()
         except (json.JSONDecodeError, UnicodeDecodeError):
             logger.exception("MQTT message parse error")
@@ -269,7 +264,10 @@ class MqttState(CerboOverlayMixin):
             val = json.loads(payload.decode()).get("value")
         except (ValueError, AttributeError):
             return False
-        value = int(val) if isinstance(val, (int, float)) else 0
+        numeric = number(val)
+        if val is not None and numeric is None:
+            return False
+        value = int(numeric) if numeric is not None else 0
         prev = self._alarm_values.get(topic, 0)
         if prev == value:
             return False
@@ -284,7 +282,9 @@ class MqttState(CerboOverlayMixin):
 
         parts = topic.split("/")
         service = parts[2] if len(parts) > 4 else "device"
-        alarm_name = parts[4] if len(parts) > 4 else topic
+        if len(parts) > 5 and parts[3] != "Alarms":
+            service = f"{service}_{parts[3]}"
+        alarm_name = parts[-1]
         level = "alarm" if value == 2 else "warning"
         state_txt = "Alarm" if value == 2 else "Warning"
         self.push_notification(
@@ -299,189 +299,18 @@ class MqttState(CerboOverlayMixin):
         return True
 
     def _handle_acload(self, topic: str, payload: bytes) -> bool:
-        """Decode acload topic messages into power/name maps.
-
-        Topic structure: N/<portal_id>/acload/<instance>/<path...>
-        Returns True when state changed.
-        """
-        parts = topic.split("/")
-        if len(parts) < 5 or parts[2] != "acload":
-            return False
-        instance = parts[3]
-        path = "/".join(parts[4:])
-        val = parse_cerbo_payload(payload)
-        changed = False
-        if path in ("Ac/Power", "Ac/L1/Power") and isinstance(val, (int, float)):
-            self._acload_powers[instance] = float(val)
-            changed = True
-        elif path == "CustomName" and isinstance(val, str) and val.strip():
-            self._acload_names[instance] = val.strip()
-            changed = True
-        elif path == "ProductName" and isinstance(val, str) and val.strip():
-            self._acload_product_names[instance] = val.strip()
-            # Only use product name when no custom name yet
-            if instance not in self._acload_names:
-                changed = True
-        if changed:
-            self._sync_acload_to_state()
-        return changed
-
-    def _acload_display_name(self, instance: str) -> str:
-        return (
-            self._acload_names.get(instance)
-            or self._acload_product_names.get(instance)
-            or f"AC Load {instance}"
-        )
-
-    def _sync_acload_to_state(self) -> None:
-        """Rebuild loads from Cerbo acload maps (instance-stable watts + display names).
-
-        Keys stay instance ids so power updates never rekey the map (desktop
-        pattern). ``load_names`` carries CustomName/ProductName for UIs that
-        support it; SPA that only shows the key still gets a readable fallback
-        via underscore-friendly names when custom names are present — we also
-        emit a name-keyed map when every instance has a display name so the
-        existing Vue LoadsTable keeps working without a SPA rebuild.
-        """
-        if not self._acload_powers:
-            return
-        loads_by_id: dict[str, float] = {}
-        names: dict[str, str] = {}
-        for instance, power in self._acload_powers.items():
-            loads_by_id[instance] = power
-            names[instance] = self._acload_display_name(instance)
-        # Prefer name-keyed map for the classic SPA (LoadsTable uses the key
-        # as the label). Instance ids alone would show as "81".
-        loads_named: dict[str, float] = {}
-        for instance, power in loads_by_id.items():
-            label = names[instance]
-            key = label.lower().replace(" ", "_") if label.startswith("AC Load ") else label
-            # Avoid colliding duplicate custom names: suffix instance
-            if key in loads_named and key != instance:
-                key = f"{key}_{instance}"
-            loads_named[key] = power
-        self.current_state["loads"] = loads_named
-        self.current_state["load_names"] = names
+        return self._handle_cerbo_device(topic, payload)
 
     def _handle_pvinverter(self, topic: str, payload: bytes) -> bool:
-        """Decode GX PV-inverter topics into state['pv_inverters'].
-
-        Topic structure: N/<portal_id>/pvinverter/<instance>/<path...>
-        (payload {"value": ...}). Works with any vendor's dbus publisher
-        (dbus-tasmota-pv, dbus-esphome, ...) and without inverter-control.
-
-        Returns True when the state changed.
-        """
-        parts = topic.split("/")
-        if len(parts) < 5 or parts[2] != "pvinverter":
-            return False
-        instance = parts[3]
-        path = "/".join(parts[4:])
-        try:
-            data = json.loads(payload.decode())
-            val = data.get("value")
-        except (ValueError, AttributeError):
-            return False
-
-        entry = self._pv_inverters.setdefault(instance, {"instance": instance})
-        changed = False
-        if path in ("Ac/Power", "Ac/L1/Power", "Ac/L2/Power") and isinstance(val, (int, float)):
-            entry["power"] = float(val)
-            changed = True
-        elif path in ("Ac/L1/Voltage", "Ac/L2/Voltage") and isinstance(val, (int, float)):
-            entry["voltage"] = float(val)
-            changed = True
-        elif path in ("Ac/L1/Current", "Ac/L2/Current") and isinstance(val, (int, float)):
-            entry["current"] = float(val)
-            changed = True
-        elif path in ("ProductName", "CustomName") and isinstance(val, str) and val.strip():
-            # CustomName wins (user-facing); ProductName fills when unset.
-            if path == "CustomName" or not entry.get("name"):
-                entry["name"] = val.strip()
-            changed = True
-        elif path == "Serial" and isinstance(val, str) and val.strip():
-            entry["serial"] = val.strip()
-            changed = True
-        if not changed:
-            return False
-
-        ordered = [
-            self._pv_inverters[k]
-            for k in sorted(self._pv_inverters, key=lambda x: int(x) if x.isdigit() else 0)
-        ]
-        self.current_state["pv_inverters"] = ordered
-        powers = [float(p.get("power") or 0.0) for p in ordered]
-        self.current_state["pv_inverter_individual"] = powers
-        self.current_state["pv_inverter_total"] = sum(powers)
-        self._apply_cerbo_overlays()
-        return True
+        return self._handle_cerbo_device(topic, payload)
 
     def handle_water(self, topic: str, payload: bytes) -> None:
-        """Decode dbus-pump water topics into state keys.
-
-        Topic structure: N/<portal_id>/tank/<instance>/Level and
-        N/<portal_id>/pump/<instance>/State (Venus MQTT-GUI format,
-        payload {"value": ...}). Requires CERBO_PORTAL_ID to be configured.
-        """
-        portal = self._portal_id or config.CERBO_PORTAL_ID
-        if not portal:
-            return
-        parts = topic.split("/")
-        if len(parts) < 5 or parts[1] != portal:
-            return
-        service_type, device, path = parts[2], parts[3], "/".join(parts[4:])
-        try:
-            data = json.loads(payload.decode())
-            val = data.get("value")
-        except (ValueError, AttributeError):
-            return
-
-        # Venus bridges pump.startstop services as N/<portal>/pump/<instance>/State
-        if service_type == "tank" and device == str(config.WATER_TANK_INSTANCE):
-            if path == "Level" and isinstance(val, (int, float)):
-                self.current_state["water_level"] = float(val)
-        elif service_type == "pump" and path == "State" and isinstance(val, (int, float)):
-            if device == str(config.WATER_VALVE_INSTANCE):
-                self.current_state["water_valve"] = bool(val)
-            elif device == str(config.WATER_PUMP_INSTANCE):
-                self.current_state["pump_switch"] = bool(val)
+        if self._portal_id:
+            self._handle_cerbo_device(topic, payload)
 
     def handle_ev(self, topic: str, payload: bytes) -> None:
-        """Decode dbus-ev / dbus-evcharger EV topics into state keys.
-
-        Topic shapes (Venus MQTT-GUI format, payload {"value": ...}):
-          N/<portal>/ev/<EV_INSTANCE>/Soc           -> car_soc (%)
-          N/<portal>/ev/<EV_INSTANCE>/Ac/Power      -> ev_power (W)
-          N/<portal>/evcharger/<EVCHARGER_INSTANCE>/Ac/Power -> ev_charging_kw (kW)
-        Requires CERBO_PORTAL_ID to be configured.
-        """
-        portal = self._portal_id or config.CERBO_PORTAL_ID
-        if not portal:
-            return
-        parts = topic.split("/")
-        if len(parts) < 5 or parts[1] != portal:
-            return
-        service_type, device, path = parts[2], parts[3], "/".join(parts[4:])
-        try:
-            data = json.loads(payload.decode())
-            val = data.get("value")
-        except (ValueError, AttributeError):
-            return
-        if not isinstance(val, (int, float)):
-            return
-
-        if service_type == "ev" and device == str(config.EV_INSTANCE):
-            if path == "Soc":
-                self.current_state["car_soc"] = float(val)
-            elif path == "Ac/Power":
-                self.current_state["ev_power"] = float(val)
-        elif (
-            service_type == "evcharger"
-            and device == str(config.EVCHARGER_INSTANCE)
-            and path == "Ac/Power"
-        ):
-            # W -> kW (dashboard field name keeps the kw suffix)
-            self.current_state["ev_charging_kw"] = float(val) / 1000.0
+        if self._portal_id:
+            self._handle_cerbo_device(topic, payload)
 
     def get_state(self) -> dict[str, Any]:
         """Get current state"""
@@ -530,6 +359,7 @@ class AppState:
 
 # Module-level app state
 _app_state = AppState()
+websocket_handler.set_app_state(_app_state)
 
 
 def _verify_secret(request: Request, token: str | None = None) -> None:
@@ -572,80 +402,47 @@ def _make_mqtt_client() -> Client:
 
 
 async def _subscribe_topics(client: Client, portal_id: str | None = None) -> None:
-    """Subscribe to daemon + Cerbo portal topics after connecting.
-
-    Live grid/consumption/battery/solar/loads come from Cerbo Venus MQTT
-    (same durable sources as inverter-desktop). ``inverter/state`` still
-    supplies daemon-only extras (daily_stats, solar_forecast, booleans, ...).
-    """
-    await client.subscribe("inverter/state")
-    await client.subscribe("inverter/portal")
+    """Subscribe first, then request a complete Venus publish for this session."""
+    for topic in ("inverter/state", "inverter/portal", "inverter/notifications"):
+        await client.subscribe(topic)
     if config.CAMERA_TOPIC:
-        try:
-            await client.subscribe(config.CAMERA_TOPIC)
-        except Exception as e:
-            logger.warning("Could not subscribe to %s: %s", config.CAMERA_TOPIC, e)
-    try:
-        await client.subscribe("inverter/notifications")
-    except Exception as e:
-        logger.warning("Could not subscribe to inverter/notifications: %s", e)
-
-    # Wildcard Cerbo live tiles — work even before portal ID is known.
-    for filt, label in (
-        ("N/+/acload/+/#", "acload"),
-        ("N/+/pvinverter/+/#", "pvinverter"),
-        ("N/+/system/+/#", "system"),
-        ("N/+/battery/+/#", "battery"),
-        ("N/+/solarcharger/+/#", "solarcharger"),
-        ("N/+/vebus/+/#", "vebus"),
-    ):
-        try:
-            await client.subscribe(filt)
-        except Exception as e:
-            logger.warning("Could not subscribe to %s topics (%s): %s", label, filt, e)
-
+        await client.subscribe(config.CAMERA_TOPIC)
     portal = portal_id or config.CERBO_PORTAL_ID
     if portal:
         await _subscribe_portal_topics(client, portal)
+    else:
+        # dbus-flashmq does not retain native telemetry. A silent broker needs
+        # an explicitly configured portal; never publish a wildcard R/ topic.
+        for topic in ("N/+/system/+/Serial", "N/+/heartbeat", "N/+/keepalive"):
+            await client.subscribe(topic)
+        logger.info(
+            "Awaiting Cerbo portal discovery; configure CERBO_PORTAL_ID for a silent broker"
+        )
 
 
 async def _subscribe_portal_topics(client: Client, portal: str) -> None:
-    """Portal-scoped water / EV / alarms (require known VRM portal id)."""
-    try:
-        await client.subscribe(f"N/{portal}/platform/+/Notifications/#")
-    except Exception as e:
-        logger.warning("Could not subscribe to Victron platform notification topics: %s", e)
-    try:
-        await client.subscribe(f"N/{portal}/+/Alarms/#")
-        await client.subscribe(f"N/{portal}/+/+/Alarms/#")
-    except Exception as e:
-        logger.warning("Could not subscribe to Victron alarm topics: %s", e)
-    try:
-        await client.subscribe(f"N/{portal}/tank/+/Level")
-        await client.subscribe(f"N/{portal}/pump/+/State")
-        await client.subscribe(f"N/{portal}/ev/{config.EV_INSTANCE}/Soc")
-        await client.subscribe(f"N/{portal}/ev/{config.EV_INSTANCE}/Ac/Power")
-        await client.subscribe(f"N/{portal}/evcharger/{config.EVCHARGER_INSTANCE}/Ac/Power")
-        logger.info("Subscribed to Cerbo water/EV/alarm topics for portal %s", portal)
-    except Exception as e:
-        logger.warning("Could not subscribe to water/EV topics: %s", e)
+    """Use portal-scoped filters (also valid with VRM MQTT ACLs)."""
+    for kind in CERBO_KINDS:
+        await client.subscribe(f"N/{portal}/{kind}/+/#")
+    await client.subscribe(f"N/{portal}/platform/+/Notifications/#")
+    await client.subscribe(f"N/{portal}/+/Alarms/#")
+    await client.subscribe(f"N/{portal}/+/+/Alarms/#")
+    # Empty payload requests the full tree AFTER all subscriptions exist.
+    await client.publish(f"R/{portal}/keepalive", "", qos=0)
 
 
 async def _keepalive_loop(client: Client, portal_getter) -> None:
-    """Publish R/<portal>/keepalive so Cerbo keeps sending N/ topics to this client.
-
-    Mirrors inverter-desktop: first publish runs immediately so PV inverters /
-    solarchargers / batteries start streaming without waiting a full interval.
-    """
+    """Maintain streaming without triggering full republishes every 45 seconds."""
     while True:
+        await asyncio.sleep(KEEPALIVE_INTERVAL_SECS)
         portal = portal_getter()
         if portal:
             try:
-                await client.publish(f"R/{portal}/keepalive", "", qos=0)
-            except Exception as e:
-                logger.debug("Cerbo keepalive publish failed: %s", e)
-                return
-        await asyncio.sleep(KEEPALIVE_INTERVAL_SECS)
+                await client.publish(
+                    f"R/{portal}/keepalive", '{"keepalive-options":["suppress-republish"]}', qos=0
+                )
+            except MqttError as exc:
+                logger.warning("Cerbo keepalive failed; retrying on next interval: %s", exc)
 
 
 def _next_backoff(delay: float) -> float:
@@ -670,7 +467,9 @@ def _start_gateway_client():
             gateway.apply_snapshot(ms, snap)
             await ms._emit()
 
-    task = asyncio.create_task(gateway.gateway_poll_loop(_app_state, _apply_and_emit))
+    task = asyncio.create_task(
+        gateway.gateway_poll_loop(_app_state, _apply_and_emit, websocket_handler.broadcast_state)
+    )
     _app_state.mqtt_tasks.append(task)
 
 
@@ -700,6 +499,7 @@ def _start_mqtt_client():
                             await _subscribe_portal_topics(client, portal)
 
                     ms.set_portal_callback(_on_portal)
+                    ms.clear_cerbo_state()
                     await _subscribe_topics(_app_state.mqtt_client, ms._portal_id or None)
                     logger.info("Subscribed to MQTT topics")
                     keepalive_task = asyncio.create_task(
@@ -733,6 +533,9 @@ def _start_mqtt_client():
                     return
             finally:
                 _app_state.mqtt_connected = False
+                if _app_state.mqtt_state is not None:
+                    _app_state.mqtt_state.clear_cerbo_state()
+                    await _app_state.mqtt_state._emit()
                 if keepalive_task is not None:
                     keepalive_task.cancel()
                     await asyncio.gather(keepalive_task, return_exceptions=True)
@@ -1041,6 +844,7 @@ async def api_state():
         except Exception:  # pylint: disable=broad-except
             live = {}
     out: dict[str, Any] = {
+        **live,
         "ok": True,
         "dashboard_version": VERSION,
         "control_version": raw.get("version") or live.get("version"),
@@ -1053,31 +857,6 @@ async def api_state():
         "gateway_errors": _app_state.gateway_errors,
         "gateway_url": (config.GATEWAY_URL or "").rstrip("/") or None,
     }
-    for key in (
-        "gt",
-        "tt",
-        "g1",
-        "g2",
-        "t1",
-        "t2",
-        "battery_soc",
-        "battery_power",
-        "battery_voltage",
-        "battery_current",
-        "solar_total",
-        "mppt_total",
-        "inverter_state",
-        "setpoint",
-        "water_level",
-        "car_soc",
-        "ev_charging_kw",
-        "loads",
-        "batteries",
-        "notifications",
-        "daily_stats",
-    ):
-        if key in live:
-            out[key] = live[key]
     return out
 
 
