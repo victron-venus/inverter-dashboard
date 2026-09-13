@@ -6,7 +6,6 @@ import json
 import pytest
 
 from inverter_dashboard import config
-from inverter_dashboard.cerbo import voltage_soc
 from inverter_dashboard.server import MqttState
 
 
@@ -17,12 +16,6 @@ def _msg(value):
 @pytest.fixture(name="ms")
 def _ms():
     return MqttState()
-
-
-def test_voltage_soc_matches_desktop():
-    assert voltage_soc(40.0) == 0.0
-    assert voltage_soc(54.4) == 100.0
-    assert voltage_soc(47.2) == 50.0
 
 
 def test_slim_inverter_state_does_not_clear_cerbo_loads(ms):
@@ -60,12 +53,15 @@ def test_systemcalc_grid_and_consumption(ms):
     assert ms.current_state["daily_stats"]["battery_out"] == 3.1
 
 
-def test_battery_shunt_voltage_soc(ms):
+def test_battery_measured_soc_without_voltage_guess(ms):
     assert ms._handle_cerbo_device("N/p1/battery/512/ProductName", _msg("SmartShunt 500A")) is True
     assert ms._handle_cerbo_device("N/p1/battery/512/Dc/0/Voltage", _msg(47.2)) is True
     assert ms._handle_cerbo_device("N/p1/battery/512/Dc/0/Current", _msg(-12.5)) is True
-    assert ms._handle_cerbo_device("N/p1/battery/512/Dc/0/Power", _msg(-590)) is True
-    assert ms.current_state["battery_soc"] == 50.0
+    # This equals the existing voltage/current-derived value; no state emit is needed.
+    ms._handle_cerbo_device("N/p1/battery/512/Dc/0/Power", _msg(-590))
+    assert "battery_soc" not in ms.current_state
+    ms._handle_cerbo_device("N/p1/battery/512/Soc", _msg(73))
+    assert ms.current_state["battery_soc"] == 73.0
     assert ms.current_state["battery_voltage"] == 47.2
     assert ms.current_state["battery_current"] == -12.5
     assert ms.current_state["battery_power"] == -590.0
