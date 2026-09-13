@@ -10,9 +10,12 @@ Image: `alvit/inverter-dashboard:latest` (Docker Hub; existing `docker-publish.y
 
 **The checked-in ConfigMap uses the HTTPS IGW endpoint.**
 
-Synology runs [inverter-gateway](https://github.com/victron-venus/inverter-gateway)
-in namespace `synology-apps` (Service `inverter-gateway`, port `8080`, also
-NodePort `30150`). The checked-in URL is the public HTTPS endpoint and requires Cloudflare Access
+The recovered September 6, 2026 deployment draft records
+[inverter-gateway](https://github.com/victron-venus/inverter-gateway) in namespace
+`synology-apps` (Service `inverter-gateway`, port `8080`, NodePort `30150`).
+On September 13, the documented NodePort `/health` returned HTTP 200 with
+`status: ok` and `mqtt_connected: true`; the Kubernetes Service layout was not
+independently rechecked. The checked-in URL is the public HTTPS endpoint and requires Cloudflare Access
 headers plus `GATEWAY_API_TOKEN`. Operators can select a LAN route when public
 egress is unavailable; NodePort and ClusterIP use the bearer token only. All
 options share the gateway's Cerbo MQTT client.
@@ -25,18 +28,19 @@ options share the gateway's Cerbo MQTT client.
 | ClusterIP (preferred when overlay healthy) | `http://inverter-gateway.synology-apps.svc:8080` | Bearer only |
 | **Checked-in default / off-cluster** | `https://victron.2560801.xyz` | CF Access service-token headers + bearer |
 
-**Gap:** from `mp`, ClusterIP to `synology-apps` on node `syn` has been observed to fail
+**Historical diagnosis (September 6 draft):** from `mp`, ClusterIP to
+`synology-apps` on node `syn` was reported to fail
 (rising `gateway_errors`, `gateway_connected=false`) while the same `/health` and
 `/v1/snapshot` succeed from `h7` and via syn NodePort `192.168.175.130:30150`.
-`mp` also flaps NotReady (kubelet 502), which breaks Ingress/`kubectl exec` during
-recovery. The NodePort route can be selected while diagnosing overlay/DNS from `mp`.
+The draft also reported `mp` flapping NotReady (kubelet 502), interrupting
+Ingress/`kubectl exec`. These node and overlay conditions were not revalidated. The NodePort route can be selected while diagnosing overlay/DNS from `mp`.
 LAN HTTP sends the bearer token and telemetry without TLS. Use that option only
 on a network whose exposure is acceptable; otherwise retain HTTPS and repair
 the Cloudflare Access service-token configuration. A successful `/health` request
 does not verify authenticated snapshots or connectivity from every cluster node.
 
-`fastapi-mqtt-gateway` on mp stays scaled to 0 on purpose — do not stand up a
-second Cerbo client flood.
+The same draft kept `fastapi-mqtt-gateway` on `mp` scaled to zero to avoid
+duplicate Cerbo clients. Check current deployments before changing that layout.
 
 | Env | Where | Purpose |
 |-----|-------|---------|
