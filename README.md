@@ -71,7 +71,7 @@ Venus MQTT** (same path as [inverter-desktop](https://github.com/victron-venus/i
    when MQTT is reachable again.
 4. Neither → no live telemetry source.
 
-Production on `mp` clears `MQTT_HOST` so IGW stays primary (one Cerbo MQTT
+Production on `worker-1` clears `MQTT_HOST` so IGW stays primary (one Cerbo MQTT
 client on Synology). Local/dev and optional ConfigMaps may set both.
 `inverter/state` still carries daemon-only extras (`daily_stats`,
 `solar_forecast`, flags, …) when MQTT is used; IGW mode maps Cerbo live tiles
@@ -149,21 +149,23 @@ HA is optional for native energy monitoring. IGW snapshots contain live device
 telemetry; controller-only history and forecasts are unavailable through IGW unless
 a separate source supplies them.
 
-## Deploy to k3s (node `mp`)
+## Deploy to k3s (node `worker-1`)
 
 Python / multi-arch image for NAS and k3s (prefer this over `inverter-dashboard-go` for cluster workers).
 
-Manifests: [`deploy/k3s/`](deploy/k3s/) — Namespace `inverter-dashboard`, Deployment with `nodeSelector: kubernetes.io/hostname: mp`, Service, optional Ingress stub, ConfigMap + example Secret mounting `local_config.py` (placeholder only).
+Portable examples and the local configuration workflow are in
+[`deploy/k3s/`](deploy/k3s/). Copy the manifests into `.local-private/` and set your
+worker, gateway URL, portal identifier and ingress host there before deployment.
+The example worker is `worker-1`; the namespace is `inverter-dashboard`.
 
-```bash
-# Edit/replace the example Secret with a real local_config.py before production
-kubectl apply -k deploy/k3s
-kubectl -n inverter-dashboard get pods -o wide   # expect NODE=mp
-```
+Create real Secrets out-of-band and apply your configured local copy as described
+in the runbook. The placeholder Secret is excluded from Kustomize resources.
 
 - Image: `alvit/inverter-dashboard` on Docker Hub. Registry publication promotes approved stable OCI assets; see the [operator runbook](docs/release-workflow.md).
-- mp k3s: IGW at `https://victron.2560801.xyz` with `MQTT_HOST=""` (IGW-only); local/dev uses `MQTT_HOST`, or both for dual-path. Set `CERBO_PORTAL_ID` for reliable native MQTT bootstrap and configure water/EV instances separately
-- Ingress stub host is a placeholder — edit before enabling Traefik TLS / cert-manager
+- For IGW-only deployments, use your gateway endpoint and `MQTT_HOST=""`.
+  Local/dev can use `MQTT_HOST`, or configure both paths for MQTT-first fallback.
+  Set `CERBO_PORTAL_ID` locally for native MQTT bootstrap and configure water/EV instances separately.
+- The public Ingress host is a documentation placeholder; configure your own DNS and TLS locally.
 
 ## Configuration Reference
 
@@ -290,10 +292,10 @@ See [portainer-stack.yml](portainer-stack.yml) for Portainer deployment.
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `MQTT_HOST` | `Cerbo` | Cerbo/LAN MQTT broker. Empty/`""` disables MQTT (mp IGW-only). May coexist with IGW. |
+| `MQTT_HOST` | `Cerbo` | Cerbo/LAN MQTT broker. Empty/`""` disables MQTT (IGW-only). May coexist with IGW. |
 | `MQTT_PORT` | `1883` | MQTT broker port |
 | `GATEWAY_ENABLED` | `false` | Enable remote inverter-gateway snapshot polling (coexists with MQTT; see precedence above) |
-| `GATEWAY_URL` | _(empty)_ | IGW base URL, e.g. `https://victron.2560801.xyz` |
+| `GATEWAY_URL` | _(empty)_ | IGW base URL, e.g. `https://gateway.example.com` |
 | `GATEWAY_ACCESS_CLIENT_ID` | _(empty)_ | Cloudflare Access service-token client id |
 | `GATEWAY_ACCESS_CLIENT_SECRET` | _(empty)_ | Cloudflare Access service-token client secret |
 | `GATEWAY_API_TOKEN` | _(empty)_ | Bearer token (`Authorization: Bearer …`) matching gateway `GATEWAY_API_TOKEN` |

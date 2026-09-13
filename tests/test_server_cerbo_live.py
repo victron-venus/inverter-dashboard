@@ -117,8 +117,8 @@ def test_portal_discovery_updates_id(monkeypatch):
     ms.set_portal_callback(on_portal)
 
     async def run():
-        await ms.on_message("inverter/portal", b"b827ebea1ece")
+        await ms.on_message("inverter/portal", b"000000000001")
 
     asyncio.run(run())
-    assert ms._portal_id == "b827ebea1ece"
-    assert seen == ["b827ebea1ece"]
+    assert ms._portal_id == "000000000001"
+    assert seen == ["000000000001"]
