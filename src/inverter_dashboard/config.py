@@ -60,14 +60,16 @@ class Config(BaseSettings):
     HA_POLL_TIMEOUT: float = 20.0
     HA_REQUEST_TIMEOUT: float = 15.0
 
-    # Water system — dbus-pump via Cerbo MQTT (empty portal ID disables water).
+    # Native Cerbo telemetry. Set portal ID for reliable startup on a silent broker.
+    # Empty enables passive discovery from native notifications or inverter/portal.
+    # Water system — dbus-pump via Cerbo MQTT.
     # Instances must match dbus-pump's local_config.py.
     CERBO_PORTAL_ID: str = ""
     WATER_TANK_INSTANCE: int = 21
     WATER_PUMP_INSTANCE: int = 1
     WATER_VALVE_INSTANCE: int = 2
 
-    # EV system — dbus-ev / dbus-evcharger via Cerbo MQTT (empty portal ID disables EV).
+    # EV system — dbus-ev / dbus-evcharger on the configured or discovered portal.
     # Instances must match dbus-ev's local_config.py (vehicle) and
     # dbus-evcharger's local_config.py (wallbox, instance 40).
     EV_INSTANCE: int = 22

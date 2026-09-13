@@ -4,9 +4,9 @@ Optional Home Assistant REST client for inverter-dashboard.
 Reads local_config.py when present; if HA_DIRECT_CONTROLS is False or file missing,
 all UI state for switches comes from MQTT (inverter-control) only.
 
-When HA_DIRECT_CONTROLS is True and HA is configured, boolean/switch/water state for
-entities listed in local_config comes only from HA REST polling — MQTT is not used as
-fallback when HA is unreachable (values show off until HA responds again).
+When HA_DIRECT_CONTROLS is True, configured home devices and appliances use HA REST.
+Controller flags and Cerbo telemetry always keep their MQTT source, including during
+HA outages. HA mirrors from older configurations cannot replace these values.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
 from typing import Any
@@ -21,6 +22,7 @@ from urllib.parse import quote
 
 import httpx
 
+from .cerbo import CERBO_OWNED_KEYS
 from .config import HA_POLL_TIMEOUT, HA_REQUEST_TIMEOUT
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,64 @@ _overlay: dict[str, Any] = {
 
 # Reusable async HTTP client for HA requests
 _http_client: httpx.AsyncClient | None = None
+
+CONTROL_FLAG_KEYS = frozenset(
+    {
+        "only_charging",
+        "no_feed",
+        "house_support",
+        "charge_battery",
+        "do_not_supply_charger",
+        "set_limit_to_ev_charger",
+        "minimize_charging",
+    }
+)
+_MQTT_OWNED_KEYS = (
+    CERBO_OWNED_KEYS
+    | CONTROL_FLAG_KEYS
+    | frozenset(
+        {
+            "booleans",
+            "features",
+            "ess_mode",
+            "dry_run",
+            "daily_stats",
+            "solar_forecast",
+            "limits",
+            "loop_interval",
+            "filtered_gt",
+            "dvcc_limits",
+            "perf",
+            "ui_config",
+            "version",
+            "uptime",
+            "grid_control_valid",
+            "grid_control_reason",
+            "water_pump_mode",
+            "water_valve_mode",
+            "car_charging_power",
+            "ev_charging_power",
+            "ev_present",
+            "evcharger_present",
+            "discovered_water_ev",
+            "g3",
+            "t3",
+        }
+    )
+)
+
+
+def _ha_owns_field(key: str, entity: str = "") -> bool:
+    """Legacy HA aliases must not claim controller flags or live Cerbo fields."""
+    return (
+        isinstance(entity, str)
+        and key not in _MQTT_OWNED_KEYS
+        and entity.rsplit(".", 1)[-1] not in CONTROL_FLAG_KEYS
+    )
+
+
+def _ha_fields(entities: dict[str, str]):
+    return ((key, entity) for key, entity in entities.items() if _ha_owns_field(key, entity))
 
 
 def _prepend_local_config_import_path() -> None:
@@ -269,7 +329,9 @@ def is_toggle_allowed(entity_id: str) -> bool:
     """Only entity IDs listed in local_config may be toggled from the dashboard."""
     if not entity_id or not _configured:
         return False
-    allowed = set(_boolean_entities.values()) | set(_switch_entities.values())
+    allowed = {entity for _, entity in _ha_fields(_boolean_entities)} | {
+        entity for _, entity in _ha_fields(_switch_entities)
+    }
     return entity_id in allowed
 
 
@@ -472,22 +534,22 @@ async def fetch_states_once() -> dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=HA_POLL_TIMEOUT) as client:
             booleans = {}
-            for key, eid in _boolean_entities.items():
+            for key, eid in _ha_fields(_boolean_entities):
                 st = await _get_state(client, headers, eid)
                 booleans[key] = st == "on"
             out["booleans"] = booleans
 
-            for key, eid in _switch_entities.items():
+            for key, eid in _ha_fields(_switch_entities):
                 st = await _get_state(client, headers, eid)
                 out[key] = st == "on"
 
-            for key, eid in _appliance_entities.items():
+            for key, eid in _ha_fields(_appliance_entities):
                 st = await _get_state(client, headers, eid)
                 out[key] = _appliance_field_value(key, eid, st)
 
             out["ha_direct_connected"] = True
 
-            for key, eid in _sensor_entities.items():
+            for key, eid in _ha_fields(_sensor_entities):
                 st = await _get_state(client, headers, eid)
                 if st is not None:
                     val = _parse_numeric_state(st)
@@ -509,13 +571,17 @@ async def fetch_states_once() -> dict[str, Any]:
 
 def _apply_connected_overlay(merged: dict[str, Any], o: dict[str, Any]) -> None:
     """Fill merged dashboard state from a live HA overlay."""
-    merged["booleans"] = dict(o.get("booleans") or {})
-    for k in _switch_entities:
+    booleans = dict(merged.get("booleans") or {})
+    overlay_booleans = o.get("booleans") or {}
+    for k, _ in _ha_fields(_boolean_entities):
+        booleans[k] = bool(overlay_booleans.get(k))
+    merged["booleans"] = booleans
+    for k, _ in _ha_fields(_switch_entities):
         merged[k] = bool(o.get(k))
-    for k in _appliance_entities:
+    for k, _ in _ha_fields(_appliance_entities):
         if k in o:
             merged[k] = o[k]
-    for k in _sensor_entities:
+    for k, _ in _ha_fields(_sensor_entities):
         if k in o:
             merged[k] = o[k]
     if o.get("ha_filtered"):
@@ -524,10 +590,13 @@ def _apply_connected_overlay(merged: dict[str, Any], o: dict[str, Any]) -> None:
 
 def _apply_disconnected_overlay(merged: dict[str, Any]) -> None:
     """Fill merged dashboard state with safe defaults when HA is unreachable."""
-    merged["booleans"] = dict.fromkeys(_boolean_entities, False)
-    for k in _switch_entities:
+    booleans = dict(merged.get("booleans") or {})
+    for k, _ in _ha_fields(_boolean_entities):
+        booleans[k] = False
+    merged["booleans"] = booleans
+    for k, _ in _ha_fields(_switch_entities):
         merged[k] = False
-    for k in _appliance_entities:
+    for k, _ in _ha_fields(_appliance_entities):
         merged[k] = _appliance_fallback(k)
 
 
@@ -608,3 +677,55 @@ async def press_entity(entity_id: str) -> bool:
         "POST", "/api/services/button/press", json_body={"entity_id": entity_id}
     )
     return resp is not None and resp.status_code == 200
+
+
+async def perform_action(action: str, entity: str, payload: dict[str, Any]) -> bool:
+    """Dispatch configured rich HA controls through the direct HA connection."""
+    if not is_direct_mode():
+        raise ValueError("Direct Home Assistant controls are not enabled")
+    if not isinstance(entity, str) or not entity or entity.rsplit(".", 1)[-1] in CONTROL_FLAG_KEYS:
+        raise ValueError("A Home Assistant entity is required")
+    domain = entity.split(".", 1)[0]
+    body: dict[str, Any] = {"entity_id": entity}
+    allowed = False
+    service = ""
+    if action == "number_set":
+        allowed = domain in ("number", "input_number") and entity in _filtered_entities.get(
+            "numbers", []
+        )
+        value = payload.get("value")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
+            raise ValueError("Number value must be finite")
+        body["value"] = value
+        service = "set_value"
+    elif action == "set_cover_position":
+        allowed = domain == "cover" and entity in _filtered_entities.get("covers", [])
+        position = payload.get("position")
+        if (
+            isinstance(position, bool)
+            or not isinstance(position, (int, float))
+            or not math.isfinite(position)
+            or not 0 <= position <= 100
+            or int(position) != position
+        ):
+            raise ValueError("Cover position must be an integer from 0 to 100")
+        body["position"] = int(position)
+        service = "set_cover_position"
+    elif action == "media_player":
+        allowed = domain == "media_player" and entity in _filtered_entities.get("media_players", [])
+        services = {"play": "media_play", "pause": "media_pause", "stop": "media_stop"}
+        mp_action = payload.get("mp_action")
+        service = services.get(mp_action, "") if isinstance(mp_action, str) else ""
+        if not service:
+            raise ValueError("Unsupported media action")
+    elif action == "scene_activate":
+        allowed = domain == "scene" and entity in _filtered_entities.get("scenes", [])
+        service = "turn_on"
+    if not allowed or not service:
+        raise ValueError("Home Assistant action is not allowed for this entity")
+    response = await _ha_request("POST", f"/api/services/{domain}/{service}", json_body=body)
+    return response is not None and response.status_code == 200

@@ -10,7 +10,8 @@ from aiomqtt import Client
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict
 
-from . import gateway, ha_client, settings_store
+from . import config, gateway, ha_client, settings_store
+from .cerbo import number
 from .config import DEFAULT_LOOP_INTERVAL, DEFAULT_POWER_MAX, DEFAULT_POWER_MIN
 from .version import VERSION
 
@@ -48,15 +49,22 @@ class InverterState(BaseModel):
     gt: float | int | None = None
     g1: float | int | None = None
     g2: float | int | None = None
+    g3: float | int | None = None
 
     # Consumption
     tt: float | int | None = None
     t1: float | int | None = None
     t2: float | int | None = None
+    t3: float | int | None = None
+
+    # False means unavailable, including an explicitly invalidated MQTT value.
+    telemetry_available: dict[str, bool] | None = None
+    grid_available: bool | None = None
 
     # Solar
     solar_total: float | int | None = None
     mppt_total: float | int | None = None
+    pv_inverter_total: float | int | None = None
 
     # Battery
     battery_soc: float | int | None = None
@@ -81,6 +89,20 @@ class InverterState(BaseModel):
     # Control
     dry_run: bool | str | None = None
     ess_mode: dict[str, Any] | None = None
+    limits: dict[str, float | int] | None = None
+    loop_interval: float | int | None = None
+    dvcc_limits: dict[str, Any] | None = None
+    perf: dict[str, Any] | None = None
+
+    # Controller/watchdog status remains in slim inverter/state. These are
+    # policy diagnostics, separate from native grid measurement availability.
+    grid_control_valid: bool | None = None
+    grid_control_reason: str | None = None
+    grid_loss_state: str | None = None
+    grid_loss_hold_seconds: float | int | None = None
+    grid_loss_elapsed: float | int | None = None
+    grid_loss_remaining: float | int | None = None
+    grid_loss_zero_applied: bool | None = None
 
     # Feature flags / derived
     booleans: dict[str, bool] | None = None
@@ -111,6 +133,8 @@ class InverterState(BaseModel):
     water_level: float | int | None = None
     water_valve: bool | str | None = None
     pump_switch: bool | str | None = None
+    pump_mode: float | int | None = None
+    water_valve_mode: float | int | None = None
 
     # Appliances
     dishwasher_running: bool | None = None
@@ -128,7 +152,7 @@ class InverterState(BaseModel):
 
 
 # Mutable module-level state (avoids global statements)
-_state: dict[str, Any] = {"latest_version": None, "mqtt_state": None}
+_state: dict[str, Any] = {"latest_version": None, "mqtt_state": None, "app_state": None}
 
 
 def set_latest_version(version: str | None) -> None:
@@ -141,6 +165,56 @@ def set_mqtt_state(mqtt_state):
     _state["mqtt_state"] = mqtt_state
 
 
+def set_app_state(app_state) -> None:
+    """Share current transport status without keeping a stale MQTT client."""
+    _state["app_state"] = app_state
+
+
+def _native_water_context():
+    app_state = _state.get("app_state")
+    if gateway.prefer_gateway() or getattr(app_state, "data_source", None) != "mqtt":
+        raise RuntimeError(
+            "Water mode control requires direct Cerbo MQTT; gateway control is unsupported"
+        )
+    if not getattr(app_state, "mqtt_connected", False) or app_state.mqtt_client is None:
+        raise RuntimeError("Direct Cerbo MQTT is not connected")
+    mqtt_state = app_state.mqtt_state
+    portal = getattr(mqtt_state, "_portal_id", "")
+    if (
+        not isinstance(portal, str)
+        or not portal
+        or any(c in "/+#\0" or c.isspace() for c in portal)
+    ):
+        raise RuntimeError("A valid Cerbo portal is required for water mode control")
+    return app_state.mqtt_client, mqtt_state, portal
+
+
+def _can_control_water() -> bool:
+    try:
+        _native_water_context()
+    except RuntimeError:
+        return False
+    return True
+
+
+async def _set_water_mode(data: dict[str, Any], mqtt_client: Client | None) -> None:
+    which, mode = data.get("which"), data.get("mode")
+    if which not in ("pump", "valve") or type(mode) not in (int, float) or mode not in (0, 1, 2):
+        raise ValueError("Water mode requires pump or valve and integer mode 0, 1 or 2")
+    current_client, mqtt_state, portal = _native_water_context()
+    if mqtt_client is not current_client:
+        raise RuntimeError("The direct MQTT connection changed; retry the water action")
+    instance = config.WATER_PUMP_INSTANCE if which == "pump" else config.WATER_VALVE_INSTANCE
+    if isinstance(instance, bool) or not isinstance(instance, int) or instance < 0:
+        raise RuntimeError("Water device instance is not configured")
+    leaves = dict(mqtt_state._devices("pump")).get(str(instance), {})
+    if number(leaves.get("Mode")) not in (0, 1, 2):
+        raise RuntimeError("The configured water device has no available native Mode")
+    await current_client.publish(
+        f"W/{portal}/pump/{instance}/Mode", json.dumps({"value": int(mode)}), qos=1, retain=False
+    )
+
+
 def build_payload() -> dict[str, Any]:
     """Build the canonical state payload sent to all WebSocket clients."""
     mqtt = _state["mqtt_state"]
@@ -149,16 +223,24 @@ def build_payload() -> dict[str, Any]:
     # Use Pydantic model to filter/validate - extra="ignore" drops unknown keys
     validated = InverterState(**raw_state)
 
-    # Convert to dict, excluding None values for cleaner JSON
-    filtered = validated.model_dump(exclude_none=True)
+    # Preserve explicit nulls so polling clients can clear invalidated values.
+    filtered = validated.model_dump(exclude_unset=True)
+    app_state = _state.get("app_state")
+    transport = {
+        key: getattr(app_state, key)
+        for key in ("data_source", "mqtt_connected", "gateway_connected")
+        if hasattr(app_state, key)
+    }
 
     return _with_ui_config(
         {
             **filtered,
+            **transport,
             "notifications": mqtt.get_notifications(),
             "camera_event": mqtt.camera_event,
             "dashboard_version": VERSION,
             "latest_version": _state["latest_version"],
+            "water_controls_available": _can_control_water(),
         }
     )
 
@@ -268,7 +350,16 @@ async def _acknowledge_victron_on_cerbo(app_state, mqtt_client: Client | None) -
 
 async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Client):
     """Dispatch a single WebSocket action."""
-    if action == "toggle":
+    if action == "water_mode":
+        await _set_water_mode(data, mqtt_client)
+    elif action in ("number_set", "set_cover_position", "media_player", "scene_activate"):
+        if not await ha_client.perform_action(action, data.get("entity"), data):
+            raise RuntimeError("Home Assistant action failed")
+        fresh = await ha_client.fetch_states_once()
+        if fresh.get("ha_direct_connected"):
+            ha_client.replace_overlay(fresh)
+        await broadcast_state()
+    elif action == "toggle":
         entity = data.get("entity")
         flag = _control_flag_key(entity if isinstance(entity, str) else None)
         if flag:
@@ -279,7 +370,12 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Clien
             await mqtt_publish(mqtt_client, "toggle", payload)
             return
         if entity and ha_client.is_direct_mode() and ha_client.is_toggle_allowed(entity):
-            await ha_client.toggle_entity(entity)
+            if ha_client.domain_for_press(entity):
+                succeeded = await ha_client.press_entity(entity)
+            else:
+                succeeded = await ha_client.toggle_entity(entity)
+            if not succeeded:
+                raise RuntimeError("Home Assistant action failed")
             fresh = await ha_client.fetch_states_once()
             if fresh.get("ha_direct_connected"):
                 ha_client.replace_overlay(fresh)
@@ -287,7 +383,22 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Clien
             return
         await mqtt_publish(mqtt_client, "toggle", {"entity": entity})
     elif action == "press":
-        await mqtt_publish(mqtt_client, "press", {"entity": data.get("entity")})
+        entity = data.get("entity")
+        if ha_client.is_direct_mode():
+            if (
+                not isinstance(entity, str)
+                or not ha_client.is_toggle_allowed(entity)
+                or ha_client.domain_for_press(entity) is None
+            ):
+                raise ValueError("Button is not configured for direct Home Assistant control")
+            if not await ha_client.press_entity(entity):
+                raise RuntimeError("Home Assistant button press failed")
+            fresh = await ha_client.fetch_states_once()
+            if fresh.get("ha_direct_connected"):
+                ha_client.replace_overlay(fresh)
+            await broadcast_state()
+            return
+        await mqtt_publish(mqtt_client, "press", {"entity": entity})
     elif action == "setpoint":
         await mqtt_publish(mqtt_client, "setpoint", {"value": data.get("value")})
     elif action == "dry_run":
