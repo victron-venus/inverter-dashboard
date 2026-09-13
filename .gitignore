@@ -51,3 +51,6 @@ local_config.py
 # Verified binary release archives
 release/
 /release-output/
+
+# Private deployment configuration and operational notes
+.local-private/

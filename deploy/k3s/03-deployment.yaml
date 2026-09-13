@@ -15,7 +15,7 @@ spec:
         app: inverter-dashboard
     spec:
       nodeSelector:
-        kubernetes.io/hostname: mp
+        kubernetes.io/hostname: worker-1
       containers:
         - name: dashboard
           image: alvit/inverter-dashboard:latest

@@ -50,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GATEWAY_ACCESS_CLIENT_ID` / `GATEWAY_ACCESS_CLIENT_SECRET`,
   `GATEWAY_API_TOKEN`, `GATEWAY_POLL_INTERVAL`. Coexists with Cerbo MQTT when
   both are configured (MQTT-first if reachable).
-- k3s ConfigMap on mp points at `https://victron.2560801.xyz` with
+- k3s ConfigMap supports a deployment-specific gateway endpoint with
   `MQTT_HOST=""` (IGW-only); gateway credentials come from Secret
   `inverter-dashboard-gateway`.
 
@@ -83,8 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   startup. TLS params are now only passed when `MQTT_TLS` is enabled.
 
 ### Changed
-- k3s ConfigMap: `MQTT_HOST=192.168.160.150`, `CERBO_PORTAL_ID=b827ebea1ece`
-  (Cerbo broker + portal keepalive / water+EV).
+- k3s ConfigMap supports a locally configured Cerbo broker and portal identifier
+  for portal keepalive and water/EV mapping.
 - Subscribes to `inverter/portal` and publishes `R/<portal>/keepalive`.
 
 ### Added

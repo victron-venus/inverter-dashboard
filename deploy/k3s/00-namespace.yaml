@@ -4,4 +4,4 @@ metadata:
   name: inverter-dashboard
   labels:
     app.kubernetes.io/name: inverter-dashboard
-    app.kubernetes.io/part-of: victron-home
+    app.kubernetes.io/part-of: inverter-dashboard

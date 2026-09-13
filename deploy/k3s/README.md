@@ -1,104 +1,110 @@
-# Deploy inverter-dashboard (Python) on k3s (`mp`)
+# Deploy inverter-dashboard (Python) on k3s
 
-Pinned to Mac Pro worker via `nodeSelector: kubernetes.io/hostname: mp`.
+These public manifests are examples. Replace the gateway URL, portal identifier,
+worker label and ingress host in a local copy before applying them. Keep real
+addresses, cluster contexts, operational notes and credentials under
+`.local-private/` (ignored by Git) or in a private configuration store.
 
-Image: `alvit/inverter-dashboard:latest` (Docker Hub; existing `docker-publish.yml`).
+Image: `alvit/inverter-dashboard` (Docker Hub); `kustomization.yaml` pins the tag.
+The deployment example selects `worker-1`; choose a worker in your own cluster.
+The namespace and resource names use the generic application name
+`inverter-dashboard`.
+
+## Prepare local configuration
+
+```bash
+mkdir -p .local-private/dashboard
+chmod 700 .local-private .local-private/dashboard
+cp deploy/k3s/*.yaml .local-private/dashboard/
+chmod 600 .local-private/dashboard/*.yaml
+```
+
+Edit that local copy's ConfigMap, Deployment and Ingress for your environment.
+Set `CERBO_PORTAL_ID` locally when portal-specific water/EV mapping is needed.
+The public ConfigMap leaves it empty and uses `https://gateway.example.com` as
+a documentation-only gateway address. Real configuration must stay out of commits.
+
+`02-secret.example.yaml` is deliberately excluded from the Kustomize resources.
+Create real Secrets out-of-band; never apply the placeholder Secret to production.
+Mount `inverter-dashboard-config` at `/app/config` with your private
+`local_config.py` (HA_URL / HA_TOKEN and any other local settings).
 
 ## Data source: inverter-gateway (IGW)
 
-> **Warning:** `02-secret.example.yaml` is **not** in `kustomization.yaml` resources. Apply real Secrets out-of-band; never `kubectl apply -f 02-secret.example.yaml` against prod.
+`GATEWAY_ENABLED=true` selects the gateway. `MQTT_HOST` is empty in the example,
+which keeps the dashboard IGW-only. To enable the existing MQTT-first path with
+IGW fallback, set a broker host in your private configuration. In local/dev use,
+leave `GATEWAY_ENABLED` unset or false to keep the existing direct MQTT path.
 
-**The checked-in ConfigMap uses the HTTPS IGW endpoint.**
+Choose a gateway route for your deployment:
 
-The recovered September 10, 2026 deployment draft records
-[inverter-gateway](https://github.com/victron-venus/inverter-gateway) in namespace
-`synology-apps` (Service `inverter-gateway`, port `8080`, NodePort `30150`).
-On September 13, the documented NodePort `/health` returned HTTP 200 with
-`status: ok` and `mqtt_connected: true`; the Kubernetes Service layout was not
-independently rechecked. The checked-in URL is the public HTTPS endpoint and requires Cloudflare Access
-headers plus `GATEWAY_API_TOKEN`. Operators can select a LAN route when public
-egress is unavailable; NodePort and ClusterIP use the bearer token only. All
-options share the gateway's Cerbo MQTT client.
+- HTTPS: `https://gateway.example.com`. Use the gateway bearer token and, when
+  Cloudflare Access protects the endpoint, the corresponding service-token headers.
+- In-cluster example: `http://inverter-gateway.gateway.svc.cluster.local:8080`.
+  This uses the gateway bearer token without Cloudflare Access headers.
+- NodePort example: `http://192.0.2.10:30080`. This documentation address must be
+  replaced locally. LAN HTTP sends the bearer token and telemetry without TLS;
+  use HTTPS when that network exposure is not acceptable.
 
-### GATEWAY_URL choices
+Set `GATEWAY_URL` and `GATEWAY_POLL_INTERVAL` in the local ConfigMap. Keep
+`GATEWAY_API_TOKEN`, `GATEWAY_ACCESS_CLIENT_ID` and
+`GATEWAY_ACCESS_CLIENT_SECRET` in the `inverter-dashboard-gateway` Secret.
+Leave both Access values empty for an explicitly selected route that does not
+use Cloudflare Access. Do not copy credentials into the public example.
 
-| Mode | `GATEWAY_URL` | Auth |
-|------|---------------|------|
-| LAN alternative | `http://192.168.175.130:30150` (syn NodePort) | Bearer `GATEWAY_API_TOKEN` only; leave CF Access id/secret empty |
-| ClusterIP (preferred when overlay healthy) | `http://inverter-gateway.synology-apps.svc:8080` | Bearer only |
-| **Checked-in default / off-cluster** | `https://victron.2560801.xyz` | CF Access service-token headers + bearer |
-
-**Historical diagnosis (September 10 draft):** from `mp`, ClusterIP to
-`synology-apps` on node `syn` was reported to fail
-(rising `gateway_errors`, `gateway_connected=false`) while the same `/health` and
-`/v1/snapshot` succeed from `h7` and via syn NodePort `192.168.175.130:30150`.
-The draft also reported `mp` flapping NotReady (kubelet 502), interrupting
-Ingress/`kubectl exec`. These node and overlay conditions were not revalidated. The NodePort route can be selected while diagnosing overlay/DNS from `mp`.
-LAN HTTP sends the bearer token and telemetry without TLS. Use that option only
-on a network whose exposure is acceptable; otherwise retain HTTPS and repair
-the Cloudflare Access service-token configuration. A successful `/health` request
-does not verify authenticated snapshots or connectivity from every cluster node.
-
-The same draft kept `fastapi-mqtt-gateway` on `mp` scaled to zero to avoid
-duplicate Cerbo clients. Check current deployments before changing that layout.
-
-| Env | Where | Purpose |
-|-----|-------|---------|
-| `GATEWAY_ENABLED` | ConfigMap | `true` on mp |
-| `GATEWAY_URL` | ConfigMap | HTTPS default; optional LAN routes above |
-| `GATEWAY_POLL_INTERVAL` | ConfigMap | seconds (default 2) |
-| `GATEWAY_ACCESS_CLIENT_ID` | Secret `inverter-dashboard-gateway` | CF Access (empty for NodePort/ClusterIP) |
-| `GATEWAY_ACCESS_CLIENT_SECRET` | Secret | CF Access (empty for NodePort/ClusterIP) |
-| `GATEWAY_API_TOKEN` | Secret | App bearer (`Authorization: Bearer …`) |
-| `CERBO_PORTAL_ID` | ConfigMap | water/EV instance defaults when mapping snapshot |
-| `MQTT_HOST` | ConfigMap `""` | Empty on mp (IGW-only). Set a broker host to enable dual-path MQTT-first + IGW fallback. |
-
-Create the gateway Secret from local files (never commit):
+Create that Secret from a protected local environment file:
 
 ```bash
-# HTTPS default: CF Access service token plus inverter-gateway API token
-kubectl --context k3s-heaven -n inverter-dashboard create secret generic \
+# Set these to your own context and namespace; never commit your kubeconfig.
+export KUBE_CONTEXT="my-cluster"
+export NAMESPACE="inverter-dashboard"
+
+# Create this file privately with the three GATEWAY_* credential keys above.
+chmod 600 .local-private/dashboard-gateway.env
+kubectl --context "${KUBE_CONTEXT}" apply -f .local-private/dashboard/00-namespace.yaml
+kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" create secret generic \
   inverter-dashboard-gateway \
-  --from-literal=GATEWAY_ACCESS_CLIENT_ID=… \
-  --from-literal=GATEWAY_ACCESS_CLIENT_SECRET=… \
-  --from-literal=GATEWAY_API_TOKEN=… \
-  --dry-run=client -o yaml | kubectl --context k3s-heaven apply -f -
-
-# For an explicitly selected NodePort/ClusterIP route, leave both
-# GATEWAY_ACCESS_CLIENT_ID and GATEWAY_ACCESS_CLIENT_SECRET empty.
+  --from-env-file=.local-private/dashboard-gateway.env \
+  --dry-run=client -o yaml | kubectl --context "${KUBE_CONTEXT}" apply -f -
 ```
 
-Local/dev: leave `GATEWAY_ENABLED` unset/false and set `MQTT_HOST` to the Cerbo
-broker as before. Dual-path (both `MQTT_HOST` and IGW): MQTT wins when the broker
-accepts TCP; otherwise IGW, with recovery probes while on IGW.
+The command creates the namespace before its Secrets. Check your existing
+gateway deployments before starting another MQTT client for the same device.
 
-## Ingress / DNS
+## Ingress and apply
 
-Uses **Traefik on mp** (`ingressClassName: traefik-mp`, externalIP
-`192.168.151.107`). See `4alvit/k3s-self-healing` → `deployments/00-traefik-mp/`.
-
-- Host: `http://inverter-dashboard.mp.2560801.xyz` (full project name)
-- OpenWRT (one line): `address=/mp.2560801.xyz/192.168.151.107`
-
-## Apply
+The public ingress uses `dashboard.example.com` and the generic `traefik` class.
+Set the real host, ingress class and optional TLS configuration in your local
+copy, and configure DNS through your own infrastructure.
 
 ```bash
-# Replace placeholder Secret with a real local_config.py (HA_TOKEN etc.) before prod use
-kubectl --context k3s-heaven apply -k deploy/k3s
-kubectl --context k3s-heaven -n inverter-dashboard get pods,ingress -o wide
-# expect NODE=mp, class traefik-mp, host inverter-dashboard.mp.2560801.xyz
+# Apply only after configuring the local manifests and creating both Secrets.
+kubectl --context "${KUBE_CONTEXT}" apply -k .local-private/dashboard
+kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get pods,ingress -o wide
 ```
 
-Do **not** confuse with `inverter-dashboard-go` (Cerbo-oriented). This Python image is the multi-arch NAS/k3s path.
+This Python image is the multi-arch NAS/k3s path. It is distinct from the
+Cerbo-oriented `victron-venus/inverter-dashboard-node-red` image.
 
-## Smoke (SPA + IGW)
+## Smoke checks
+
+Set these variables to your local deployment values:
 
 ```bash
-curl -sS http://inverter-dashboard.mp.2560801.xyz/ | grep -E 'id="app"|/assets/'
-curl -sS http://inverter-dashboard.mp.2560801.xyz/api/state
-# expect data_source=igw, gateway_connected=true (native MQTT may remain disconnected in IGW-only mode); measured zero values are valid
-kubectl --context k3s-heaven -n inverter-dashboard logs deploy/inverter-dashboard --tail=50
-# expect: IGW connected to the selected GATEWAY_URL
+export GATEWAY_URL="https://gateway.example.com"
+export DASHBOARD_URL="https://dashboard.example.com"
+
+curl -fsS "${GATEWAY_URL}/health"
+curl -fsS "${DASHBOARD_URL}/" | grep -E 'id="app"|/assets/'
+curl -fsS "${DASHBOARD_URL}/api/state"
+kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" \
+  logs deploy/inverter-dashboard --tail=50
 ```
 
-Server accepts both layouts: `static/dist/index.html` (export_dist.sh) and flat `static/index.html` + `static/assets/` (docker-publish image). Vite assets are mounted at `/assets`.
+A successful health request does not establish authenticated snapshot access or
+connectivity from every worker. In IGW-only mode, verify `data_source=igw` and
+`gateway_connected=true`; native MQTT may remain disconnected. Measured zero
+values are valid. Keep deployment-specific results and diagnosis in private notes.
+
+The server accepts both layouts: `frontend/dist` (Dockerfile) and flat `static/`
+plus `templates/` (docker-publish image). Vite assets are mounted at `/assets`.
