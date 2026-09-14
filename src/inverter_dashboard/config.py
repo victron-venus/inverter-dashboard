@@ -2,14 +2,52 @@
 Configuration for Inverter Dashboard using pydantic-settings
 """
 
-from pydantic import field_validator
+from urllib.parse import urlsplit
+
+import httpx
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def validate_gateway_url(value: str) -> str:
+    """Accept only an unambiguous HTTPS origin before attaching IGW credentials."""
+    error = "GATEWAY_URL must be an HTTPS origin without userinfo, path, query, or fragment"
+    if not value or any(character.isspace() or ord(character) < 32 for character in value):
+        raise ValueError(error)
+    if any(character in value for character in ("\\", "?", "#", "@")):
+        raise ValueError(error)
+    try:
+        url = httpx.URL(value)
+        raw_path = urlsplit(value).path
+    except (httpx.InvalidURL, ValueError):
+        raise ValueError(error) from None
+    if url.scheme != "https" or not url.is_absolute_url or not url.host:
+        raise ValueError(error)
+    if (
+        url.userinfo
+        or raw_path not in ("", "/")
+        or (url.port is not None and not 1 <= url.port <= 65535)
+    ):
+        raise ValueError(error)
+    return str(url).rstrip("/")
+
+
+def validate_gateway_access_pair(client_id: str, client_secret: str) -> tuple[str, str]:
+    """Native HTTPS needs no Access pair; public Access requires both fields."""
+    client_id, client_secret = client_id.strip(), client_secret.strip()
+    if bool(client_id) != bool(client_secret):
+        raise ValueError(
+            "GATEWAY_ACCESS_CLIENT_ID and GATEWAY_ACCESS_CLIENT_SECRET must be set together"
+        )
+    return client_id, client_secret
 
 
 class Config(BaseSettings):
     """Application configuration loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True
+    )
 
     # MQTT settings (Cerbo-direct / local-dev). Set "" for IGW-only (mp).
     # May coexist with GATEWAY_*; see gateway.choose_startup_source precedence.
@@ -33,6 +71,20 @@ class Config(BaseSettings):
     GATEWAY_ACCESS_CLIENT_SECRET: str = ""
     GATEWAY_API_TOKEN: str = ""
     GATEWAY_POLL_INTERVAL: float = 2.0
+
+    @field_validator("GATEWAY_URL")
+    @classmethod
+    def _validate_gateway_url(cls, value: str) -> str:
+        return validate_gateway_url(value) if value else ""
+
+    @model_validator(mode="after")
+    def _validate_gateway_settings(self):
+        if self.GATEWAY_ENABLED and not self.GATEWAY_URL:
+            raise ValueError("GATEWAY_ENABLED requires an HTTPS GATEWAY_URL")
+        validate_gateway_access_pair(
+            self.GATEWAY_ACCESS_CLIENT_ID, self.GATEWAY_ACCESS_CLIENT_SECRET
+        )
+        return self
 
     # Web server settings
     HOST: str = "127.0.0.1"

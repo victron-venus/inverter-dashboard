@@ -184,6 +184,7 @@ def test_low_tank_level_stays_percentage(ms):
 
 
 def test_build_headers_includes_cf_and_bearer(monkeypatch):
+    monkeypatch.setattr(config, "GATEWAY_URL", "https://gateway.example.com")
     monkeypatch.setattr(config, "GATEWAY_ACCESS_CLIENT_ID", "cid")
     monkeypatch.setattr(config, "GATEWAY_ACCESS_CLIENT_SECRET", "csec")
     monkeypatch.setattr(config, "GATEWAY_API_TOKEN", "tok")

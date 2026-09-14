@@ -62,6 +62,13 @@ Venus MQTT** (same path as [inverter-desktop](https://github.com/victron-venus/i
 **and/or** remote **[inverter-gateway](https://github.com/victron-venus/inverter-gateway)**
 (`GATEWAY_ENABLED` + `GATEWAY_URL` → poll `/v1/snapshot`).
 
+IGW connections require a verified HTTPS origin, for example
+`https://gateway.example.com:9151` for native HTTPS. Snapshot and command requests
+reject redirects, so configure the final URL directly. Native HTTPS accepts the
+gateway bearer token alone; Cloudflare Access credentials are optional and must
+be supplied as a complete pair when used. Private CA bundles can be supplied via
+`SSL_CERT_FILE` or `SSL_CERT_DIR` while retaining certificate and hostname checks.
+
 **Data-source precedence** (exclusive live path, desktop-aligned):
 
 1. Only `MQTT_HOST` → Cerbo MQTT client.
@@ -298,9 +305,9 @@ placeholders; keep real broker addresses out of commits.
 | `MQTT_HOST` | `Cerbo` | Cerbo/LAN MQTT broker. Empty/`""` disables MQTT (IGW-only). May coexist with IGW. |
 | `MQTT_PORT` | `1883` | MQTT broker port |
 | `GATEWAY_ENABLED` | `false` | Enable remote inverter-gateway snapshot polling (coexists with MQTT; see precedence above) |
-| `GATEWAY_URL` | _(empty)_ | IGW base URL, e.g. `https://gateway.example.com` |
-| `GATEWAY_ACCESS_CLIENT_ID` | _(empty)_ | Cloudflare Access service-token client id |
-| `GATEWAY_ACCESS_CLIENT_SECRET` | _(empty)_ | Cloudflare Access service-token client secret |
+| `GATEWAY_URL` | _(empty)_ | HTTPS IGW origin, e.g. `https://gateway.example.com:9151`; HTTP, URL credentials, path prefixes, queries and fragments are rejected |
+| `GATEWAY_ACCESS_CLIENT_ID` | _(empty)_ | Optional Cloudflare Access service-token client id; set both Access fields or neither |
+| `GATEWAY_ACCESS_CLIENT_SECRET` | _(empty)_ | Optional Cloudflare Access service-token client secret; leave both empty for native HTTPS |
 | `GATEWAY_API_TOKEN` | _(empty)_ | Bearer token (`Authorization: Bearer …`) matching gateway `GATEWAY_API_TOKEN` |
 | `GATEWAY_POLL_INTERVAL` | `2` | Seconds between `/v1/snapshot` polls |
 | `WEB_PORT` | `8080` | Web server port (inside the container) |

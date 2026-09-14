@@ -5,9 +5,9 @@ metadata:
   labels:
     app: inverter-dashboard
 data:
-  # Example endpoint; set the real gateway URL in an ignored local overlay.
+  # Native HTTPS example; use the certificate's DNS name in a private overlay.
   GATEWAY_ENABLED: "true"
-  GATEWAY_URL: "https://gateway.example.com"
+  GATEWAY_URL: "https://gateway.example.com:9151"
   GATEWAY_POLL_INTERVAL: "2"
   # Explicit empty: pydantic default is "Cerbo"; blank keeps this example IGW-only
   # (dual-path would probe MQTT when both are set). Optional: set a real

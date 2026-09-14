@@ -1,5 +1,7 @@
 """Tests for root-page authentication and MQTT reconnect bookkeeping."""
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -40,6 +42,21 @@ def test_index_open_when_no_secret_configured(monkeypatch):
     monkeypatch.setattr(server, "DASHBOARD_SECRET", "")
     resp = TestClient(server.app).get("/")
     assert resp.status_code not in (401, 403)
+
+
+def test_embedded_spa_asset_references_are_served(client):
+    response = client.get("/", headers={"Authorization": "Bearer s3cret"})
+    assert response.status_code == 200
+    assets = re.findall(r'(?:src|href)="(/assets/[^\"]+)"', response.text)
+    assert assets
+    assert any(path.endswith(".js") for path in assets)
+    assert any(path.endswith(".css") for path in assets)
+    for path in assets:
+        asset = client.get(path)
+        assert asset.status_code == 200, path
+        assert asset.content, path
+        expected_type = "javascript" if path.endswith(".js") else "text/css"
+        assert expected_type in asset.headers["content-type"], path
 
 
 def test_api_state_reports_mqtt_health(client):
