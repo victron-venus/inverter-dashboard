@@ -24,5 +24,41 @@
   "repository": "victron-venus/inverter-dashboard",
   "mode": "release",
   "default_branch": "main",
-  "visibility": "public"
+  "visibility": "public",
+  "versioning": {
+    "schema": 1,
+    "promotion": "promote-bytes",
+    "files": [
+      {
+        "path": "VERSION",
+        "format": "text",
+        "value": "package"
+      },
+      {
+        "path": "src/inverter_dashboard/VERSION",
+        "format": "text",
+        "value": "package"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "inverter-dashboard-*.zip",
+        "format": "zip-json",
+        "value": "package",
+        "member": "build-info.json",
+        "field": "version"
+      },
+      {
+        "path": "inverter-dashboard-container.oci.tar",
+        "format": "oci",
+        "field": [
+          "config",
+          "Labels",
+          "org.opencontainers.image.version"
+        ],
+        "value": "package"
+      }
+    ],
+    "toolkit_revision": "5671b9a05817576a8ae6bd69cacfb3202c60ad0a"
+  }
 }

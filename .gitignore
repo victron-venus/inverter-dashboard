@@ -57,3 +57,7 @@ release/
 
 # Local coverage databases may contain absolute filesystem paths
 .coverage.*
+# Frozen release overlays and final build staging
+.release-plan.json
+.release-inputs.json
+release-assets/
