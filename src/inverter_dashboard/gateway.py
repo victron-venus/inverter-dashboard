@@ -136,9 +136,11 @@ def apply_snapshot(ms: Any, snap: dict[str, Any]) -> None:
 
 def build_headers() -> dict[str, str]:
     """CF Access service-token + optional GATEWAY_API_TOKEN bearer."""
+    config.validate_gateway_url(config.GATEWAY_URL)
     headers = {"User-Agent": "inverter-dashboard/gateway"}
-    cid = (config.GATEWAY_ACCESS_CLIENT_ID or "").strip()
-    csec = (config.GATEWAY_ACCESS_CLIENT_SECRET or "").strip()
+    cid, csec = config.validate_gateway_access_pair(
+        config.GATEWAY_ACCESS_CLIENT_ID or "", config.GATEWAY_ACCESS_CLIENT_SECRET or ""
+    )
     if cid:
         headers["CF-Access-Client-Id"] = cid
     if csec:
@@ -151,9 +153,9 @@ def build_headers() -> dict[str, str]:
 
 async def fetch_snapshot(client: httpx.AsyncClient) -> dict[str, Any]:
     """GET /v1/snapshot; raises httpx.HTTPStatusError on non-2xx."""
-    base = config.GATEWAY_URL.rstrip("/")
+    base = config.validate_gateway_url(config.GATEWAY_URL)
     url = f"{base}/v1/snapshot"
-    resp = await client.get(url, headers=build_headers())
+    resp = await client.get(url, headers=build_headers(), follow_redirects=False)
     resp.raise_for_status()
     data = resp.json()
     if not isinstance(data, dict):
@@ -163,11 +165,17 @@ async def fetch_snapshot(client: httpx.AsyncClient) -> dict[str, Any]:
 
 async def post_command(name: str, body: dict[str, Any] | None = None) -> None:
     """POST /v1/commands/{name} (whitelist only on the gateway)."""
-    base = config.GATEWAY_URL.rstrip("/")
+    base = config.validate_gateway_url(config.GATEWAY_URL)
     url = f"{base}/v1/commands/{name.strip('/')}"
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECS) as client:
-        resp = await client.post(url, headers=build_headers(), json=body or {})
+    headers = build_headers()
+    async with _new_gateway_client() as client:
+        resp = await client.post(url, headers=headers, json=body or {}, follow_redirects=False)
         resp.raise_for_status()
+
+
+def _new_gateway_client() -> httpx.AsyncClient:
+    """Keep TLS verification and redirect refusal explicit for every IGW operation."""
+    return httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECS, verify=True, follow_redirects=False)
 
 
 async def gateway_poll_loop(app_state, mqtt_state_emit, status_emit=None) -> None:
@@ -179,7 +187,7 @@ async def gateway_poll_loop(app_state, mqtt_state_emit, status_emit=None) -> Non
     """
     delay = max(config.GATEWAY_POLL_INTERVAL, 0.5)
     logged_ok = False
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECS) as client:
+    async with _new_gateway_client() as client:
         while True:
             try:
                 snap = await fetch_snapshot(client)

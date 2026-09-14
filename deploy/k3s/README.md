@@ -21,7 +21,7 @@ chmod 600 .local-private/dashboard/*.yaml
 
 Edit that local copy's ConfigMap, Deployment and Ingress for your environment.
 Set `CERBO_PORTAL_ID` locally when portal-specific water/EV mapping is needed.
-The public ConfigMap leaves it empty and uses `https://gateway.example.com` as
+The public ConfigMap leaves it empty and uses `https://gateway.example.com:9151` as
 a documentation-only gateway address. Real configuration must stay out of commits.
 
 `02-secret.example.yaml` is deliberately excluded from the Kustomize resources.
@@ -38,19 +38,32 @@ leave `GATEWAY_ENABLED` unset or false to keep the existing direct MQTT path.
 
 Choose a gateway route for your deployment:
 
-- HTTPS: `https://gateway.example.com`. Use the gateway bearer token and, when
+- Native HTTPS: `https://gateway.example.com:9151`. Use the certificate's DNS name
+  resolving to the gateway service and the gateway bearer token. Leave both
+  Cloudflare Access fields empty for this direct connection.
+- Public HTTPS: `https://gateway.example.com`. Use the gateway bearer token and, when
   Cloudflare Access protects the endpoint, the corresponding service-token headers.
-- In-cluster example: `http://inverter-gateway.gateway.svc.cluster.local:8080`.
-  This uses the gateway bearer token without Cloudflare Access headers.
-- NodePort example: `http://192.0.2.10:30080`. This documentation address must be
-  replaced locally. LAN HTTP sends the bearer token and telemetry without TLS;
-  use HTTPS when that network exposure is not acceptable.
+- HTTPS NodePort: `https://gateway.example.com:30151`. Its DNS name must resolve
+  to a reachable node and match the gateway certificate.
+
+HTTP gateway URLs are rejected, including LAN and in-cluster addresses. Use an
+HTTPS origin without a path prefix, query, fragment or embedded credentials.
+Snapshot polling and commands refuse all redirects, including same-origin
+redirects, before a second request can receive credentials. Configure the final
+HTTPS endpoint directly. The gateway may still keep its HTTP listener for other
+clients awaiting migration; this dashboard no longer uses it.
+
+Certificate chain and hostname verification remain enabled. Public certificates
+use HTTPX's default CA bundle. For a private CA, mount the trusted PEM bundle and
+set `SSL_CERT_FILE` (or `SSL_CERT_DIR`) in the dashboard environment; never disable
+certificate verification. Ensure the chosen DNS name resolves inside the pod.
 
 Set `GATEWAY_URL` and `GATEWAY_POLL_INTERVAL` in the local ConfigMap. Keep
 `GATEWAY_API_TOKEN`, `GATEWAY_ACCESS_CLIENT_ID` and
 `GATEWAY_ACCESS_CLIENT_SECRET` in the `inverter-dashboard-gateway` Secret.
-Leave both Access values empty for an explicitly selected route that does not
-use Cloudflare Access. Do not copy credentials into the public example.
+Leave both Access values empty for a route that does not use Cloudflare Access.
+A partial Access pair is rejected before any request. Do not copy credentials
+into the public example.
 
 Create that Secret from a protected local environment file:
 
@@ -91,7 +104,7 @@ Cerbo-oriented `victron-venus/inverter-dashboard-node-red` image.
 Set these variables to your local deployment values:
 
 ```bash
-export GATEWAY_URL="https://gateway.example.com"
+export GATEWAY_URL="https://gateway.example.com:9151"
 export DASHBOARD_URL="https://dashboard.example.com"
 
 curl -fsS "${GATEWAY_URL}/health"
