@@ -135,6 +135,7 @@ class InverterState(BaseModel):
     pv_inverters: list[dict[str, Any]] | None = None
     batteries: list[dict[str, Any]] | None = None
     loads: dict[str, float | int] | None = None
+    load_names: dict[str, str] | None = None
     ui_config: dict[str, Any] | None = None
     daily_stats: dict[str, Any] | None = None
 
@@ -160,6 +161,7 @@ class InverterState(BaseModel):
     water_valve: bool | str | None = None
     pump_switch: bool | str | None = None
     pump_mode: float | int | None = None
+    water_pump_mode: float | int | None = None
     water_valve_mode: float | int | None = None
 
     # Appliances
@@ -196,15 +198,23 @@ def set_app_state(app_state) -> None:
     _state["app_state"] = app_state
 
 
-def _native_water_context():
+def _water_context():
     app_state = _state.get("app_state")
-    if gateway.prefer_gateway() or getattr(app_state, "data_source", None) != "mqtt":
-        raise RuntimeError(
-            "Water mode control requires direct Cerbo MQTT; gateway control is unsupported"
-        )
+    mqtt_state = getattr(app_state, "mqtt_state", None)
+    if mqtt_state is None:
+        raise RuntimeError("Native water state is unavailable")
+    if gateway.prefer_gateway():
+        if getattr(app_state, "data_source", None) != "igw" or not getattr(
+            app_state, "gateway_connected", False
+        ):
+            raise RuntimeError("The gateway connection is unavailable")
+        if mqtt_state.gateway_capabilities.get("water_mode") is not True:
+            raise RuntimeError("This gateway does not advertise native water mode control")
+        return None, mqtt_state, None
+    if getattr(app_state, "data_source", None) != "mqtt":
+        raise RuntimeError("Direct Cerbo MQTT is not selected")
     if not getattr(app_state, "mqtt_connected", False) or app_state.mqtt_client is None:
         raise RuntimeError("Direct Cerbo MQTT is not connected")
-    mqtt_state = app_state.mqtt_state
     portal = getattr(mqtt_state, "_portal_id", "")
     if (
         not isinstance(portal, str)
@@ -215,29 +225,49 @@ def _native_water_context():
     return app_state.mqtt_client, mqtt_state, portal
 
 
-def _can_control_water() -> bool:
+def _water_instance(which: str) -> int:
+    instance = config.WATER_PUMP_INSTANCE if which == "pump" else config.WATER_VALVE_INSTANCE
+    if isinstance(instance, bool) or not isinstance(instance, int) or instance < 0:
+        raise RuntimeError("Water device instance is not configured")
+    return instance
+
+
+def _water_device_available(mqtt_state, which: str) -> bool:
+    leaves = dict(mqtt_state._devices("pump")).get(str(_water_instance(which)), {})
+    return number(leaves.get("Mode")) in (0, 1, 2)
+
+
+def _can_control_water(which: str | None = None) -> bool:
     try:
-        _native_water_context()
+        _, mqtt_state, _ = _water_context()
+        return any(
+            _water_device_available(mqtt_state, device)
+            for device in ((which,) if which else ("pump", "valve"))
+        )
     except RuntimeError:
         return False
-    return True
 
 
 async def _set_water_mode(data: dict[str, Any], mqtt_client: Client | None) -> None:
     which, mode = data.get("which"), data.get("mode")
-    if which not in ("pump", "valve") or type(mode) not in (int, float) or mode not in (0, 1, 2):
+    if (
+        which not in ("pump", "valve")
+        or isinstance(mode, bool)
+        or not isinstance(mode, int)
+        or mode not in (0, 1, 2)
+    ):
         raise ValueError("Water mode requires pump or valve and integer mode 0, 1 or 2")
-    current_client, mqtt_state, portal = _native_water_context()
-    if mqtt_client is not current_client:
+    current_client, mqtt_state, portal = _water_context()
+    if portal is not None and mqtt_client is not current_client:
         raise RuntimeError("The direct MQTT connection changed; retry the water action")
-    instance = config.WATER_PUMP_INSTANCE if which == "pump" else config.WATER_VALVE_INSTANCE
-    if isinstance(instance, bool) or not isinstance(instance, int) or instance < 0:
-        raise RuntimeError("Water device instance is not configured")
-    leaves = dict(mqtt_state._devices("pump")).get(str(instance), {})
-    if number(leaves.get("Mode")) not in (0, 1, 2):
+    instance = _water_instance(which)
+    if not _water_device_available(mqtt_state, which):
         raise RuntimeError("The configured water device has no available native Mode")
+    if portal is None:
+        await gateway.post_command("water_mode", {"instance": instance, "mode": mode})
+        return
     await current_client.publish(
-        f"W/{portal}/pump/{instance}/Mode", json.dumps({"value": int(mode)}), qos=1, retain=False
+        f"W/{portal}/pump/{instance}/Mode", json.dumps({"value": int(mode)}), qos=0, retain=False
     )
 
 
@@ -257,6 +287,13 @@ def build_payload() -> dict[str, Any]:
         for key in ("data_source", "mqtt_connected", "gateway_connected")
         if hasattr(app_state, key)
     }
+    source = transport.get("data_source")
+    if source in ("mqtt", "igw"):
+        transport["native_connected"] = bool(
+            transport.get("mqtt_connected" if source == "mqtt" else "gateway_connected")
+        )
+        if hasattr(mqtt, "native_telemetry"):
+            transport["telemetry"] = mqtt.native_telemetry(source, transport["native_connected"])
 
     return _with_ui_config(
         {
@@ -267,6 +304,8 @@ def build_payload() -> dict[str, Any]:
             "dashboard_version": VERSION,
             "latest_version": _state["latest_version"],
             "water_controls_available": _can_control_water(),
+            "water_pump_controls_available": _can_control_water("pump"),
+            "water_valve_controls_available": _can_control_water("valve"),
             "controller_controls_available": mqtt.controller_available(),
         }
     )

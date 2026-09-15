@@ -21,10 +21,10 @@ def _ms():
 def test_slim_inverter_state_does_not_clear_cerbo_loads(ms):
     assert ms._handle_acload("N/p1/acload/81/Ac/Power", _msg(420)) is True
     assert ms._handle_acload("N/p1/acload/81/CustomName", _msg("Oven")) is True
-    assert ms.current_state["loads"]["Oven"] == 420.0
+    assert ms.current_state["loads"]["81"] == 420.0
 
     ms._merge_daemon_state({"daily_stats": {"solar": 12.5}, "version": "9.9.9"})
-    assert ms.current_state["loads"]["Oven"] == 420.0
+    assert ms.current_state["loads"]["81"] == 420.0
     assert ms.current_state["daily_stats"]["solar"] == 12.5
     assert ms.current_state["version"] == "9.9.9"
 
@@ -33,7 +33,7 @@ def test_acload_power_updates_existing_entry(ms):
     ms._handle_acload("N/p1/acload/81/Ac/Power", _msg(100))
     ms._handle_acload("N/p1/acload/81/CustomName", _msg("Oven"))
     ms._handle_acload("N/p1/acload/81/Ac/Power", _msg(455))
-    assert ms.current_state["loads"]["Oven"] == 455.0
+    assert ms.current_state["loads"]["81"] == 455.0
 
 
 def test_systemcalc_grid_and_consumption(ms):
@@ -53,15 +53,16 @@ def test_systemcalc_grid_and_consumption(ms):
     assert ms.current_state["daily_stats"]["battery_out"] == 3.1
 
 
-def test_battery_measured_soc_without_voltage_guess(ms):
+def test_battery_voltage_soc_ignores_reported_counter(ms):
     assert ms._handle_cerbo_device("N/p1/battery/512/ProductName", _msg("SmartShunt 500A")) is True
     assert ms._handle_cerbo_device("N/p1/battery/512/Dc/0/Voltage", _msg(47.2)) is True
     assert ms._handle_cerbo_device("N/p1/battery/512/Dc/0/Current", _msg(-12.5)) is True
     # This equals the existing voltage/current-derived value; no state emit is needed.
     ms._handle_cerbo_device("N/p1/battery/512/Dc/0/Power", _msg(-590))
-    assert "battery_soc" not in ms.current_state
+    assert ms.current_state["battery_soc"] == 50
     ms._handle_cerbo_device("N/p1/battery/512/Soc", _msg(73))
-    assert ms.current_state["battery_soc"] == 73.0
+    assert ms.current_state["battery_soc"] == 50
+    assert ms.current_state["batteries"][0]["soc"] == 73
     assert ms.current_state["battery_voltage"] == 47.2
     assert ms.current_state["battery_current"] == -12.5
     assert ms.current_state["battery_power"] == -590.0
@@ -100,7 +101,7 @@ def test_on_message_slim_state_preserves_loads_and_emits():
         )
 
     asyncio.run(run())
-    assert ms.current_state["loads"]["Dryer"] == 90.0
+    assert ms.current_state["loads"]["81"] == 90.0
     assert ms.current_state["daily_stats"]["solar"] == 1.0
     assert len(fired) >= 2
 

@@ -18,7 +18,7 @@ def transport_context(monkeypatch):
     monkeypatch.setitem(websocket_handler._state, "mqtt_state", mqtt)
     monkeypatch.setattr(ha_client, "merge_overlay", lambda value: value)
     monkeypatch.setattr(ha_client, "ui_config_patch", dict)
-    monkeypatch.setattr(websocket_handler, "_can_control_water", lambda: False)
+    monkeypatch.setattr(websocket_handler, "_can_control_water", lambda *_: False)
 
 
 @pytest.mark.parametrize(
@@ -38,11 +38,15 @@ def test_payload_reports_current_source_health(
     assert payload["data_source"] == source
     assert payload["mqtt_connected"] is mqtt_connected
     assert payload["gateway_connected"] is gateway_connected
+    assert payload["native_connected"] is (
+        mqtt_connected if source == "mqtt" else gateway_connected
+    )
     app.mqtt_connected = False
     app.gateway_connected = False
     disconnected = websocket_handler.build_payload()
     assert disconnected["mqtt_connected"] is False
     assert disconnected["gateway_connected"] is False
+    assert disconnected["native_connected"] is False
 
 
 @pytest.mark.parametrize("app", [None, SimpleNamespace()])

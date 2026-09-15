@@ -123,6 +123,8 @@ def apply_snapshot(ms: Any, snap: dict[str, Any]) -> None:
 
     ``ms`` is an MqttState (duck-typed to avoid circular imports).
     """
+    capabilities = snap.get("capabilities")
+    ms.gateway_capabilities = capabilities if isinstance(capabilities, dict) else {}
     # Older gateways omit this field; omission must not erase a controller
     # observation. New gateways explicitly send null for absent/stale state.
     if "inverter" in snap:
@@ -201,7 +203,7 @@ async def gateway_poll_loop(app_state, mqtt_state_emit, status_emit=None) -> Non
             try:
                 snap = await fetch_snapshot(client)
                 app_state.gateway_connected = True
-                app_state.mqtt_connected = True
+                app_state.mqtt_connected = False
                 await mqtt_state_emit(snap)
                 app_state.gateway_polls += 1
                 if not logged_ok:

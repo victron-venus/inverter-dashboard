@@ -42,7 +42,7 @@ async def test_water_mode_publishes_native_configured_target(water_context, whic
     args, kwargs = water_context.mqtt_client.publish.call_args
     assert args[0] == f"W/site-a/pump/{instance}/Mode"
     assert json.loads(args[1]) == {"value": mode}
-    assert kwargs == {"qos": 1, "retain": False}
+    assert kwargs == {"qos": 0, "retain": False}
     assert water_context.mqtt_state.get_state() == before
     water_context.mqtt_publish.assert_not_called()
     assert websocket_handler.build_payload()["water_controls_available"] is True
