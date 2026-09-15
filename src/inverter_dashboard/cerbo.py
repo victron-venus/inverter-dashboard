@@ -595,7 +595,8 @@ class CerboOverlayMixin:
         vehicle = self._selected_ev("ev", config.EV_INSTANCE)
         charger = self._selected_ev("evcharger", config.EVCHARGER_INSTANCE)
         if "Soc" in vehicle or "Soc" in charger:
-            out["car_soc"] = _first_number(vehicle.get("Soc"), charger.get("Soc"))
+            fallback_soc = charger.get("Soc") if config.EV_INSTANCE is None else None
+            out["car_soc"] = _first_number(vehicle.get("Soc"), fallback_soc)
         if "Ac/Power" in vehicle:
             out["ev_power"] = number(vehicle["Ac/Power"])
         if "Ac/Power" in charger:

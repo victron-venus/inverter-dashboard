@@ -95,9 +95,11 @@ async def test_auto_selection_is_numeric_and_order_independent(state, transport,
 @pytest.mark.parametrize("transport", ["mqtt", "igw"])
 async def test_explicit_zero_pin_does_not_fall_back_to_another_car(state, transport, monkeypatch):
     monkeypatch.setattr(config, "EV_INSTANCE", 0)
-    await deliver(state, {"ev": {"0/Soc": 30, "8/Soc": 80}}, transport)
+    await deliver(state, {"ev": {"0/Soc": 30, "8/Soc": 80}, "evcharger": {"40/Soc": 60}}, transport)
     assert state.current_state["car_soc"] == 30
-    await deliver(state, {"ev": {"0/Connected": 0, "8/Soc": 81}}, transport)
+    await deliver(
+        state, {"ev": {"0/Connected": 0, "8/Soc": 81}, "evcharger": {"40/Soc": 61}}, transport
+    )
     assert state.current_state["car_soc"] is None
     assert state.current_state["ev_present"] is False
 
