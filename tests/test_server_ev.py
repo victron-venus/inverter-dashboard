@@ -43,10 +43,16 @@ def test_other_portal_ignored(portal_cfg):
     assert portal_cfg.current_state == {}
 
 
-def test_unrelated_instances_ignored(portal_cfg):
+def test_unrelated_instances_discovered_without_overriding_pinned_readings(portal_cfg):
     portal_cfg.handle_ev(f"N/{PORTAL}/ev/99/Soc", _msg(50.0))
     portal_cfg.handle_ev(f"N/{PORTAL}/evcharger/77/Ac/Power", _msg(1000))
-    assert portal_cfg.current_state == {}
+    assert portal_cfg.current_state.get("car_soc") is None
+    assert portal_cfg.current_state.get("ev_charging_kw") is None
+    assert portal_cfg.current_state["ev_present"] is False
+    assert [device["instance"] for device in portal_cfg.current_state["discovered_water_ev"]] == [
+        99,
+        77,
+    ]
 
 
 def test_disabled_without_portal(monkeypatch):

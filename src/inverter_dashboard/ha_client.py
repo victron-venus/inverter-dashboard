@@ -103,7 +103,7 @@ def _ha_owns_field(key: str, entity: str = "") -> bool:
     return (
         isinstance(entity, str)
         and key not in _MQTT_OWNED_KEYS
-        and entity.rsplit(".", 1)[-1] not in CONTROL_FLAG_KEYS
+        and entity.strip().removeprefix("input_boolean.") not in CONTROL_FLAG_KEYS
     )
 
 

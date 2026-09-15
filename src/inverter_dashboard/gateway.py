@@ -123,6 +123,15 @@ def apply_snapshot(ms: Any, snap: dict[str, Any]) -> None:
 
     ``ms`` is an MqttState (duck-typed to avoid circular imports).
     """
+    # Older gateways omit this field; omission must not erase a controller
+    # observation. New gateways explicitly send null for absent/stale state.
+    if "inverter" in snap:
+        if isinstance(snap["inverter"], dict):
+            # This is a complete retained controller object, not a slim tick.
+            ms.clear_daemon_state()
+            ms._merge_daemon_state(snap["inverter"])
+        elif snap["inverter"] is None:
+            ms.clear_daemon_state()
     ms.replace_cerbo_snapshot(snap)
 
     # Alert banners (desktop parity): Venus-platform GUIv2 slots from IGW

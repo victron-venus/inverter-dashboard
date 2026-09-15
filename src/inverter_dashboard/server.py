@@ -14,6 +14,7 @@ import fnmatch
 import json
 import logging
 import os
+import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from .cerbo import (
     CERBO_KINDS,
     CERBO_OWNED_KEYS,
     KEEPALIVE_INTERVAL_SECS,
+    NATIVE_EV_KEYS,
     CerboOverlayMixin,
     number,
 )
@@ -97,6 +99,8 @@ class MqttState(CerboOverlayMixin):
         self._vebus: dict[str, dict[str, Any]] = {}
         self._portal_id: str = config.CERBO_PORTAL_ID or ""
         self._init_cerbo()
+        self._daemon_keys: set[str] = set()
+        self._daemon_received_at: float | None = None
         self._alarm_values: dict[str, int] = {}
         # Venus-platform GUIv2 notification slots (desktop parity)
         self._platform_slots: dict[tuple[str, int], dict[str, Any]] = {}
@@ -123,28 +127,46 @@ class MqttState(CerboOverlayMixin):
     def _merge_daemon_state(self, incoming: dict[str, Any]) -> None:
         """Non-destructive merge of slim inverter/state into current_state.
 
+        EV observations always belong to native Cerbo services. Other
         Cerbo-owned live tiles are never taken from the daemon once we have
         Cerbo overlays (or when the slim payload simply omits them). Missing
         keys must not clear previously known values — that caused Active Loads
         to flash then disappear.
         """
+        self._daemon_received_at = time.monotonic()
+        self._daemon_keys.update(incoming.keys() - NATIVE_EV_KEYS)
         for key, value in incoming.items():
+            if key in NATIVE_EV_KEYS:
+                continue
             if key in CERBO_OWNED_KEYS and self._cerbo_has_overlay(key):
                 continue
-            if key == "booleans" and isinstance(value, dict):
-                coerced: dict[str, bool] = {}
+            if key == "booleans":
+                if not isinstance(value, dict):
+                    self.current_state[key] = None
+                    continue
+                coerced = dict(self.current_state.get("booleans") or {})
                 for bk, bv in value.items():
-                    if isinstance(bv, str):
-                        coerced[bk] = bv.lower() in ("true", "1", "on")
-                    elif isinstance(bv, (int, float)):
-                        coerced[bk] = bv != 0
-                    else:
-                        coerced[bk] = bool(bv)
+                    coerced[bk] = websocket_handler.control_boolean(bv)
                 self.current_state[key] = coerced
                 continue
             self.current_state[key] = value
         # Re-apply durable Cerbo maps so slim ticks cannot blank live tiles.
         self._apply_cerbo_overlays()
+
+    def clear_daemon_state(self) -> None:
+        """Invalidate controller observations without inventing disabled flags."""
+        for key in self._daemon_keys:
+            self.current_state[key] = None
+        self._daemon_received_at = None
+        self._apply_cerbo_overlays()
+
+    def controller_available(self) -> bool:
+        if self._daemon_received_at is None:
+            return False
+        if time.monotonic() - self._daemon_received_at > 120:
+            self.clear_daemon_state()
+            return False
+        return True
 
     def _cerbo_has_overlay(self, key: str) -> bool:
         return key in self._cerbo_claimed_keys
@@ -186,7 +208,10 @@ class MqttState(CerboOverlayMixin):
                 if parts[1] != self._portal_id:
                     return
             if topic == "inverter/state":
-                data = json.loads(payload.decode())
+                data = json.loads(payload.decode()) if payload else None
+                if data is None:
+                    self.clear_daemon_state()
+                    await self._emit()
                 if isinstance(data, dict):
                     self._merge_daemon_state(data)
                     await self._emit()
@@ -314,6 +339,7 @@ class MqttState(CerboOverlayMixin):
 
     def get_state(self) -> dict[str, Any]:
         """Get current state"""
+        self.controller_available()
         return self.current_state
 
     def get_notifications(self) -> list[dict[str, Any]]:
@@ -467,8 +493,14 @@ def _start_gateway_client():
             gateway.apply_snapshot(ms, snap)
             await ms._emit()
 
+    async def _status_and_emit() -> None:
+        ms = _app_state.mqtt_state
+        if ms is not None and not _app_state.gateway_connected:
+            ms.clear_daemon_state()
+        await websocket_handler.broadcast_state()
+
     task = asyncio.create_task(
-        gateway.gateway_poll_loop(_app_state, _apply_and_emit, websocket_handler.broadcast_state)
+        gateway.gateway_poll_loop(_app_state, _apply_and_emit, _status_and_emit)
     )
     _app_state.mqtt_tasks.append(task)
 
@@ -499,6 +531,7 @@ def _start_mqtt_client():
                             await _subscribe_portal_topics(client, portal)
 
                     ms.set_portal_callback(_on_portal)
+                    ms.clear_daemon_state()
                     ms.clear_cerbo_state()
                     await _subscribe_topics(_app_state.mqtt_client, ms._portal_id or None)
                     logger.info("Subscribed to MQTT topics")
@@ -534,6 +567,7 @@ def _start_mqtt_client():
             finally:
                 _app_state.mqtt_connected = False
                 if _app_state.mqtt_state is not None:
+                    _app_state.mqtt_state.clear_daemon_state()
                     _app_state.mqtt_state.clear_cerbo_state()
                     await _app_state.mqtt_state._emit()
                 if keepalive_task is not None:

@@ -18,8 +18,30 @@ from .version import VERSION
 logger = logging.getLogger(__name__)
 
 
+def _gateway_command_body(action: str, payload: dict[str, Any] | None) -> dict[str, Any]:
+    body = payload or {}
+    if action == "toggle":
+        flag = _control_flag_key(body.get("entity"))
+        value = control_boolean(body.get("state"))
+        if flag is None or value is None:
+            raise ValueError("Gateway toggles require a controller flag and explicit state")
+        return {"entity": flag, "state": "on" if value else "off"}
+    if action == "dry_run":
+        if not isinstance(body.get("value"), bool):
+            raise ValueError("Gateway dry run requires an explicit boolean value")
+        return body
+    if action == "ess_mode":
+        if body:
+            raise ValueError("ESS mode takes an empty command body")
+        return body
+    raise ValueError("This action is not supported by the gateway")
+
+
 async def mqtt_publish(client: Client, action: str, payload: dict[str, Any] | None = None) -> None:
     """Publish command to inverter-control using aiomqtt Client."""
+    if gateway.prefer_gateway():
+        await gateway.post_command(action, _gateway_command_body(action, payload))
+        return
     if client is None:
         logger.warning("Cannot publish: MQTT client not connected")
         return
@@ -105,7 +127,7 @@ class InverterState(BaseModel):
     grid_loss_zero_applied: bool | None = None
 
     # Feature flags / derived
-    booleans: dict[str, bool] | None = None
+    booleans: dict[str, bool | None] | None = None
     features: dict[str, bool] | None = None
     mppt_individual: list[float | int] | None = None
     mppt_chargers: list[dict[str, Any]] | None = None
@@ -128,6 +150,10 @@ class InverterState(BaseModel):
     ev_charging_kw: float | int | None = None
     ev_power: float | int | None = None
     car_soc: float | int | None = None
+    ev_charging_power: float | int | None = None
+    ev_present: bool | None = None
+    evcharger_present: bool | None = None
+    discovered_water_ev: list[dict[str, Any]] | None = None
 
     # Water
     water_level: float | int | None = None
@@ -241,6 +267,7 @@ def build_payload() -> dict[str, Any]:
             "dashboard_version": VERSION,
             "latest_version": _state["latest_version"],
             "water_controls_available": _can_control_water(),
+            "controller_controls_available": mqtt.controller_available(),
         }
     )
 
@@ -310,13 +337,28 @@ _CONTROL_FLAG_KEYS = frozenset(
 )
 
 
+def control_boolean(value: Any) -> bool | None:
+    """Preserve unknown controller values rather than showing them as off."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "on"):
+            return True
+        if normalized in ("false", "0", "off"):
+            return False
+    if type(value) in (int, float) and value in (0, 1):
+        return bool(value)
+    return None
+
+
 def _control_flag_key(entity: str | None) -> str | None:
     if not entity or not isinstance(entity, str):
         return None
     raw = entity.strip()
     if not raw:
         return None
-    key = raw.split(".")[-1] if "." in raw else raw
+    key = raw.removeprefix("input_boolean.")
     return key if key in _CONTROL_FLAG_KEYS else None
 
 
@@ -402,7 +444,8 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Clien
     elif action == "setpoint":
         await mqtt_publish(mqtt_client, "setpoint", {"value": data.get("value")})
     elif action == "dry_run":
-        await mqtt_publish(mqtt_client, "dry_run", {})
+        payload = {"value": data["value"]} if "value" in data else {}
+        await mqtt_publish(mqtt_client, "dry_run", payload)
     elif action == "limits":
         await mqtt_publish(
             mqtt_client,

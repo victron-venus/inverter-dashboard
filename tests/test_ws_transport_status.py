@@ -12,6 +12,7 @@ def transport_context(monkeypatch):
     mqtt = SimpleNamespace(
         get_state=lambda: {"mqtt_connected": True, "gateway_connected": True},
         get_notifications=list,
+        controller_available=lambda: False,
         camera_event=None,
     )
     monkeypatch.setitem(websocket_handler._state, "mqtt_state", mqtt)

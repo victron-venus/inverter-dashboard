@@ -41,10 +41,15 @@ def test_other_portal_ignored(portal_cfg):
     assert portal_cfg.current_state == {}
 
 
-def test_unrelated_instances_ignored(portal_cfg):
+def test_unrelated_instances_discovered_without_overriding_pinned_readings(portal_cfg):
     portal_cfg.handle_water(f"N/{PORTAL}/tank/9/Level", _msg(10))
     portal_cfg.handle_water(f"N/{PORTAL}/pump/startstop3/State", _msg(1))
-    assert portal_cfg.current_state == {}
+    assert portal_cfg.current_state.get("water_level") is None
+    assert portal_cfg.current_state.get("pump_switch") is None
+    assert [device["instance"] for device in portal_cfg.current_state["discovered_water_ev"]] == [
+        9,
+        "startstop3",
+    ]
 
 
 def test_disabled_without_portal(monkeypatch):
