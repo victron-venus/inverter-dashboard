@@ -18,25 +18,29 @@ from .version import VERSION
 logger = logging.getLogger(__name__)
 
 
+def _gateway_command_body(action: str, payload: dict[str, Any] | None) -> dict[str, Any]:
+    body = payload or {}
+    if action == "toggle":
+        flag = _control_flag_key(body.get("entity"))
+        value = control_boolean(body.get("state"))
+        if flag is None or value is None:
+            raise ValueError("Gateway toggles require a controller flag and explicit state")
+        return {"entity": flag, "state": "on" if value else "off"}
+    if action == "dry_run":
+        if not isinstance(body.get("value"), bool):
+            raise ValueError("Gateway dry run requires an explicit boolean value")
+        return body
+    if action == "ess_mode":
+        if body:
+            raise ValueError("ESS mode takes an empty command body")
+        return body
+    raise ValueError("This action is not supported by the gateway")
+
+
 async def mqtt_publish(client: Client, action: str, payload: dict[str, Any] | None = None) -> None:
     """Publish command to inverter-control using aiomqtt Client."""
     if gateway.prefer_gateway():
-        body = payload or {}
-        if action == "toggle":
-            flag = _control_flag_key(body.get("entity"))
-            value = control_boolean(body.get("state"))
-            if flag is None or value is None:
-                raise ValueError("Gateway toggles require a controller flag and explicit state")
-            body = {"entity": flag, "state": "on" if value else "off"}
-        elif action == "dry_run":
-            if not isinstance(body.get("value"), bool):
-                raise ValueError("Gateway dry run requires an explicit boolean value")
-        elif action == "ess_mode":
-            if body:
-                raise ValueError("ESS mode takes an empty command body")
-        else:
-            raise ValueError("This action is not supported by the gateway")
-        await gateway.post_command(action, body)
+        await gateway.post_command(action, _gateway_command_body(action, payload))
         return
     if client is None:
         logger.warning("Cannot publish: MQTT client not connected")
@@ -354,7 +358,7 @@ def _control_flag_key(entity: str | None) -> str | None:
     raw = entity.strip()
     if not raw:
         return None
-    key = raw.split(".")[-1] if "." in raw else raw
+    key = raw.removeprefix("input_boolean.")
     return key if key in _CONTROL_FLAG_KEYS else None
 
 

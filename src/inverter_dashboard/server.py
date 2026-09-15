@@ -32,6 +32,7 @@ from .cerbo import (
     CERBO_KINDS,
     CERBO_OWNED_KEYS,
     KEEPALIVE_INTERVAL_SECS,
+    NATIVE_EV_KEYS,
     CerboOverlayMixin,
     number,
 )
@@ -126,14 +127,17 @@ class MqttState(CerboOverlayMixin):
     def _merge_daemon_state(self, incoming: dict[str, Any]) -> None:
         """Non-destructive merge of slim inverter/state into current_state.
 
+        EV observations always belong to native Cerbo services. Other
         Cerbo-owned live tiles are never taken from the daemon once we have
         Cerbo overlays (or when the slim payload simply omits them). Missing
         keys must not clear previously known values — that caused Active Loads
         to flash then disappear.
         """
         self._daemon_received_at = time.monotonic()
-        self._daemon_keys.update(incoming)
+        self._daemon_keys.update(incoming.keys() - NATIVE_EV_KEYS)
         for key, value in incoming.items():
+            if key in NATIVE_EV_KEYS:
+                continue
             if key in CERBO_OWNED_KEYS and self._cerbo_has_overlay(key):
                 continue
             if key == "booleans":
@@ -489,8 +493,14 @@ def _start_gateway_client():
             gateway.apply_snapshot(ms, snap)
             await ms._emit()
 
+    async def _status_and_emit() -> None:
+        ms = _app_state.mqtt_state
+        if ms is not None and not _app_state.gateway_connected:
+            ms.clear_daemon_state()
+        await websocket_handler.broadcast_state()
+
     task = asyncio.create_task(
-        gateway.gateway_poll_loop(_app_state, _apply_and_emit, websocket_handler.broadcast_state)
+        gateway.gateway_poll_loop(_app_state, _apply_and_emit, _status_and_emit)
     )
     _app_state.mqtt_tasks.append(task)
 

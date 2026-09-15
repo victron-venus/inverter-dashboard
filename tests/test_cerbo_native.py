@@ -51,7 +51,7 @@ def test_metadata_does_not_claim_other_legacy_measurements(ms):
     assert ms.current_state["g1"] == 13
     assert ms.current_state["battery_soc"] == 49
     assert ms.current_state["mppt_total"] == 56
-    assert ms.current_state["car_soc"] == 11
+    assert ms.current_state.get("car_soc") is None
 
 
 def test_null_before_first_native_number_invalidates_legacy(ms):
@@ -222,7 +222,7 @@ def test_water_percent_units_modes_and_independent_ev_fields(ms):
     assert ms.current_state["water_valve_mode"] == 2
     assert ms.current_state["water_valve"] is True
     assert ms.current_state["ev_charging_kw"] == pytest.approx(7.2)
-    assert ms.current_state["car_soc"] == 35
+    assert ms.current_state.get("car_soc") is None
 
 
 class Broker:

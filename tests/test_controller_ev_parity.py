@@ -1,6 +1,7 @@
 """Controller and native EV contracts shared by direct MQTT and IGW."""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -282,3 +283,67 @@ def test_ev_config_defaults_auto_and_explicit_instance():
     assert config.Config(_env_file=None, EV_INSTANCE="0").EV_INSTANCE == 0
     with pytest.raises(ValueError):
         config.Config(_env_file=None, EV_INSTANCE=-1)
+
+
+@pytest.mark.parametrize("transport", ["mqtt", "igw"])
+async def test_daemon_ev_mirrors_cannot_supply_first_native_reading(state, transport):
+    mirrors = {
+        "car_soc": 99,
+        "ev_power": 9000,
+        "car_charging_power": 8000,
+        "ev_charging_kw": 9,
+        "ev_charging_power": 9000,
+        "ev_present": True,
+        "evcharger_present": True,
+        "discovered_water_ev": [{"kind": "ev", "instance": 999}],
+    }
+    await deliver(state, {"inverter": {**mirrors, "booleans": {"no_feed": False}}}, transport)
+    assert all(state.current_state.get(key) is None for key in mirrors)
+    assert state.current_state["booleans"]["no_feed"] is False
+    await deliver(state, {"ev": {"72/Soc": 0}}, transport)
+    assert state.current_state["car_soc"] == 0
+    assert state.current_state.get("ev_power") is None
+
+
+@pytest.mark.parametrize("entity", ["switch.no_feed", "binary_sensor.no_feed", "sensor.no_feed"])
+def test_controller_key_recognition_does_not_claim_other_ha_domains(entity):
+    assert ws._control_flag_key(entity) is None
+    assert ha_client._ha_owns_field("independent_relay", entity)
+    assert ws._control_flag_key("no_feed") == "no_feed"
+    assert ws._control_flag_key("input_boolean.no_feed") == "no_feed"
+
+
+async def test_configured_same_name_ha_switch_uses_ha_without_controller(state, monkeypatch):
+    monkeypatch.setattr(ha_client, "_configured", True)
+    monkeypatch.setattr(ha_client, "_direct", True)
+    monkeypatch.setattr(ha_client, "_switch_entities", {"independent_relay": "switch.no_feed"})
+    toggle = AsyncMock(return_value=True)
+    publish = AsyncMock()
+    monkeypatch.setattr(ha_client, "toggle_entity", toggle)
+    monkeypatch.setattr(ha_client, "fetch_states_once", AsyncMock(return_value={}))
+    monkeypatch.setattr(ws, "mqtt_publish", publish)
+    monkeypatch.setattr(ws, "broadcast_state", AsyncMock())
+    await ws._dispatch_action("toggle", {"entity": "switch.no_feed"}, None)
+    toggle.assert_awaited_once_with("switch.no_feed")
+    publish.assert_not_awaited()
+
+
+async def test_gateway_connection_loss_immediately_clears_controller_state(monkeypatch):
+    app = SimpleNamespace(mqtt_tasks=[], gateway_connected=True)
+    monkeypatch.setattr(server, "_app_state", app)
+    monkeypatch.setattr(ws, "set_mqtt_state", lambda value: None)
+    broadcast = AsyncMock()
+    monkeypatch.setattr(ws, "broadcast_state", broadcast)
+
+    async def poll(app_state, apply_snapshot, status_emit):
+        await apply_snapshot({"inverter": {"booleans": {"only_charging": True}}})
+        assert app_state.mqtt_state.controller_available()
+        app_state.gateway_connected = False
+        await status_emit()
+        assert not app_state.mqtt_state.controller_available()
+        assert app_state.mqtt_state.current_state["booleans"] is None
+
+    monkeypatch.setattr(gateway, "gateway_poll_loop", poll)
+    server._start_gateway_client()
+    await app.mqtt_tasks[0]
+    assert broadcast.await_count == 2

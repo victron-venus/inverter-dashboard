@@ -27,6 +27,18 @@ CERBO_KINDS = (
     "settings",
 )
 KEEPALIVE_INTERVAL_SECS = 45
+NATIVE_EV_KEYS = frozenset(
+    {
+        "car_soc",
+        "ev_power",
+        "car_charging_power",
+        "ev_charging_kw",
+        "ev_charging_power",
+        "ev_present",
+        "evcharger_present",
+        "discovered_water_ev",
+    }
+)
 CERBO_OWNED_KEYS = frozenset(
     {
         "g1",
@@ -592,6 +604,13 @@ class CerboOverlayMixin:
         if (value := number(tank.get("Level"))) is not None:
             # Victron tank Level is percent, including legitimate 0..1%.
             out["water_level"] = value
+        self._apply_ev(out)
+        inventory = self._water_ev_inventory()
+        if inventory or "discovered_water_ev" in self._cerbo_claimed_keys:
+            out["discovered_water_ev"] = inventory
+        self._apply_pumps(out)
+
+    def _apply_ev(self, out) -> None:
         vehicle = self._selected_ev("ev", config.EV_INSTANCE)
         charger = self._selected_ev("evcharger", config.EVCHARGER_INSTANCE)
         if "Soc" in vehicle or "Soc" in charger:
@@ -606,17 +625,24 @@ class CerboOverlayMixin:
         for kind, selected in (("ev", vehicle), ("evcharger", charger)):
             if kind in self._cerbo_devices or f"{kind}_present" in self._cerbo_claimed_keys:
                 out[f"{kind}_present"] = bool(selected)
+
+    def _water_ev_inventory(self) -> list[dict[str, Any]]:
         inventory = []
         for kind in ("tank", "pump", "ev", "evcharger"):
             for instance, leaves in self._devices(kind):
-                item = {"kind": kind, **_identity(instance, leaves)}
-                item["instance"] = int(instance) if instance.isdigit() else instance
-                for field, path in (("soc", "Soc"), ("power", "Ac/Power")):
-                    if (value := number(leaves.get(path))) is not None:
-                        item[field] = value
-                inventory.append(item)
-        if inventory or "discovered_water_ev" in self._cerbo_claimed_keys:
-            out["discovered_water_ev"] = inventory
+                inventory.append(self._water_ev_device(kind, instance, leaves))
+        return inventory
+
+    @staticmethod
+    def _water_ev_device(kind: str, instance: str, leaves: dict[str, Any]) -> dict[str, Any]:
+        item = {"kind": kind, **_identity(instance, leaves)}
+        item["instance"] = int(instance) if instance.isdigit() else instance
+        for field, path in (("soc", "Soc"), ("power", "Ac/Power")):
+            if (value := number(leaves.get(path))) is not None:
+                item[field] = value
+        return item
+
+    def _apply_pumps(self, out) -> None:
         for instance, key, mode_key in (
             (config.WATER_VALVE_INSTANCE, "water_valve", "water_valve_mode"),
             (config.WATER_PUMP_INSTANCE, "pump_switch", "pump_mode"),
@@ -636,7 +662,11 @@ class CerboOverlayMixin:
             for _, leaves in devices
             if any(number(leaves.get(path)) is not None for path in ("Soc", "Ac/Power"))
         ]
-        return usable[0] if usable else (devices[0][1] if devices else {})
+        if usable:
+            return usable[0]
+        if devices:
+            return devices[0][1]
+        return {}
 
     def _apply_ess(self, out) -> None:
         settings = self._devices("settings")

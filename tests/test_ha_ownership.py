@@ -16,7 +16,7 @@ def configured_ha(monkeypatch):
         "_boolean_entities",
         {
             "only_charging": "input_boolean.only_charging",
-            "legacy_alias": "binary_sensor.no_feed",
+            "legacy_alias": "input_boolean.no_feed",
             "holiday": "input_boolean.holiday",
         },
     )
@@ -114,7 +114,7 @@ async def test_poll_skips_old_cerbo_mirrors_but_keeps_appliances(configured_ha, 
     assert overlay["washer_power"] is True
     assert overlay["room_temperature"] == 21.5
     assert not ha_client.is_toggle_allowed("input_boolean.only_charging")
-    assert not ha_client.is_toggle_allowed("binary_sensor.no_feed")
+    assert not ha_client.is_toggle_allowed("input_boolean.no_feed")
     assert not ha_client.is_toggle_allowed("switch.old_pump")
     assert ha_client.is_toggle_allowed("light.kitchen")
 
