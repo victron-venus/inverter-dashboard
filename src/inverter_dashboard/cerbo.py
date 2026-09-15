@@ -24,6 +24,7 @@ CERBO_KINDS = (
     "pump",
     "ev",
     "evcharger",
+    "settings",
 )
 KEEPALIVE_INTERVAL_SECS = 45
 CERBO_OWNED_KEYS = frozenset(
@@ -62,6 +63,11 @@ CERBO_OWNED_KEYS = frozenset(
         "ev_power",
         "car_soc",
         "ev_charging_kw",
+        "ev_charging_power",
+        "ev_present",
+        "evcharger_present",
+        "discovered_water_ev",
+        "ess_mode",
         "water_level",
         "water_valve",
         "pump_switch",
@@ -79,7 +85,11 @@ COLLECTION_DEFAULTS = {
     "pv_inverter_powers": [],
     "loads": {},
     "load_names": {},
+    "discovered_water_ev": [],
+    "ev_present": False,
+    "evcharger_present": False,
 }
+ESS_PATHS = ("Settings/CGwacs/Hub4Mode", "Settings/CGwacs/BatteryLife/State")
 INVERTER_STATES = {
     0: "Off",
     1: "Low Power",
@@ -198,7 +208,12 @@ class CerboOverlayMixin:
                 if not isinstance(key, str) or "/" not in key:
                     continue
                 instance, path = key.split("/", 1)
-                if not instance or not path or not self._valid_path_value(kind, path, value):
+                if (
+                    not instance
+                    or not path
+                    or not self._valid_path_value(kind, path, value)
+                    or not self._known_path(kind, path)
+                ):
                     continue
                 devices.setdefault(kind, {}).setdefault(instance, {})[path] = value
                 if value is None:
@@ -268,7 +283,11 @@ class CerboOverlayMixin:
             "ev": config.EV_INSTANCE,
             "evcharger": config.EVCHARGER_INSTANCE,
         }
-        if kind in selected_instances and instance != str(selected_instances[kind]):
+        if (
+            kind in selected_instances
+            and selected_instances[kind] is not None
+            and instance != str(selected_instances[kind])
+        ):
             return
         if kind in ("grid", "vebus"):
             for i in (1, 2, 3):
@@ -320,11 +339,14 @@ class CerboOverlayMixin:
         for service, leaf, fields in (
             ("ev", "Soc", ("car_soc",)),
             ("ev", "Ac/Power", ("ev_power",)),
-            ("evcharger", "Ac/Power", ("ev_charging_kw",)),
+            ("evcharger", "Ac/Power", ("ev_charging_kw", "ev_charging_power")),
+            ("evcharger", "Soc", ("car_soc",)),
             ("tank", "Level", ("water_level",)),
         ):
             if kind == service and path == leaf:
                 keys.update(fields)
+        if kind == "settings" and path in ESS_PATHS:
+            keys.add("ess_mode")
         self._cerbo_claimed_keys.update(keys)
 
     @staticmethod
@@ -353,6 +375,8 @@ class CerboOverlayMixin:
             return path == "Level"
         if kind == "pump":
             return path in ("State", "Status", "Mode")
+        if kind == "settings":
+            return path in ESS_PATHS
         return path in ("Soc", "Ac/Power")
 
     def _devices(self, kind: str):
@@ -372,6 +396,7 @@ class CerboOverlayMixin:
         self._apply_solar(overlay, system)
         self._apply_loads(overlay)
         self._apply_ev_water(overlay)
+        self._apply_ess(overlay)
         setpoints = [vebus.get(f"Hub4/L{i}/AcPowerSetpoint") for i in (1, 2, 3)]
         if (value := _sum_known(setpoints)) is not None:
             overlay["setpoint"] = value
@@ -563,16 +588,34 @@ class CerboOverlayMixin:
             out["load_names"] = names
 
     def _apply_ev_water(self, out) -> None:
-        for kind, instance, path, key, scale in (
-            ("tank", config.WATER_TANK_INSTANCE, "Level", "water_level", 1),
-            ("ev", config.EV_INSTANCE, "Soc", "car_soc", 1),
-            ("ev", config.EV_INSTANCE, "Ac/Power", "ev_power", 1),
-            ("evcharger", config.EVCHARGER_INSTANCE, "Ac/Power", "ev_charging_kw", 0.001),
-        ):
-            leaves = dict(self._devices(kind)).get(str(instance), {})
-            if (value := number(leaves.get(path))) is not None:
-                # Victron tank Level is percent, including legitimate 0..1%.
-                out[key] = value * scale
+        tank = dict(self._devices("tank")).get(str(config.WATER_TANK_INSTANCE), {})
+        if (value := number(tank.get("Level"))) is not None:
+            # Victron tank Level is percent, including legitimate 0..1%.
+            out["water_level"] = value
+        vehicle = self._selected_ev("ev", config.EV_INSTANCE)
+        charger = self._selected_ev("evcharger", config.EVCHARGER_INSTANCE)
+        if "Soc" in vehicle or "Soc" in charger:
+            out["car_soc"] = _first_number(vehicle.get("Soc"), charger.get("Soc"))
+        if "Ac/Power" in vehicle:
+            out["ev_power"] = number(vehicle["Ac/Power"])
+        if "Ac/Power" in charger:
+            power = number(charger["Ac/Power"])
+            out["ev_charging_power"] = power
+            out["ev_charging_kw"] = power / 1000 if power is not None else None
+        for kind, selected in (("ev", vehicle), ("evcharger", charger)):
+            if kind in self._cerbo_devices or f"{kind}_present" in self._cerbo_claimed_keys:
+                out[f"{kind}_present"] = bool(selected)
+        inventory = []
+        for kind in ("tank", "pump", "ev", "evcharger"):
+            for instance, leaves in self._devices(kind):
+                item = {"kind": kind, **_identity(instance, leaves)}
+                item["instance"] = int(instance) if instance.isdigit() else instance
+                for field, path in (("soc", "Soc"), ("power", "Ac/Power")):
+                    if (value := number(leaves.get(path))) is not None:
+                        item[field] = value
+                inventory.append(item)
+        if inventory or "discovered_water_ev" in self._cerbo_claimed_keys:
+            out["discovered_water_ev"] = inventory
         for instance, key, mode_key in (
             (config.WATER_VALVE_INSTANCE, "water_valve", "water_valve_mode"),
             (config.WATER_PUMP_INSTANCE, "pump_switch", "pump_mode"),
@@ -582,3 +625,45 @@ class CerboOverlayMixin:
                 out[key] = bool(value)
             if (mode := number(leaves.get("Mode"))) in (0, 1, 2):
                 out[mode_key] = int(mode)
+
+    def _selected_ev(self, kind: str, configured: int | None) -> dict[str, Any]:
+        devices = self._devices(kind)
+        if configured is not None:
+            return dict(devices).get(str(configured), {})
+        usable = [
+            leaves
+            for _, leaves in devices
+            if any(number(leaves.get(path)) is not None for path in ("Soc", "Ac/Power"))
+        ]
+        return usable[0] if usable else (devices[0][1] if devices else {})
+
+    def _apply_ess(self, out) -> None:
+        settings = self._devices("settings")
+        leaves = dict(settings).get("0", settings[0][1] if settings else {})
+        if not any(path in leaves for path in ESS_PATHS):
+            return
+        hub4, battery_life = (number(leaves.get(path)) for path in ESS_PATHS)
+        if (
+            hub4 is None
+            or not hub4.is_integer()
+            or (hub4 == 1 and (battery_life is None or not battery_life.is_integer()))
+        ):
+            out["ess_mode"] = None
+            return
+        mode = int(hub4)
+        name = f"Unknown ({mode})"
+        if mode == 3:
+            name = "External control"
+        elif mode == 1:
+            if battery_life in (0, 10):
+                name = "Optimized without BatteryLife"
+            elif battery_life == 9:
+                name = "Keep batteries charged"
+            else:
+                name = "Optimized (BatteryLife)"
+        out["ess_mode"] = {
+            "hub4_mode": mode,
+            "battery_life_state": int(battery_life) if battery_life is not None else None,
+            "mode_name": name,
+            "is_external": mode == 3,
+        }

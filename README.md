@@ -137,10 +137,21 @@ Gateway-only and public views remain read-only for water controls. Home Assistan
 switches and controller commands are not used for these overrides; automation
 continues to run in dbus-pump.
 
-Vehicle SoC and power come from `ev/<EV_INSTANCE>` (default 22), and wallbox power
-from `evcharger/<EVCHARGER_INSTANCE>` (default 40). Vehicle power is watts;
-`ev_charging_kw` is kilowatts. These fields do not require a Home Assistant relay
-or a full `inverter/state` payload.
+Vehicle SoC and power come directly from native `ev` services, and wallbox power
+from `evcharger`. Each defaults to automatic discovery: the lowest connected
+numeric instance with usable telemetry wins, independently of message order.
+Set `EV_INSTANCE` or `EVCHARGER_INSTANCE` to pin a specific instance, including 0;
+an unavailable pinned device never falls back to another instance. Leave these
+variables unset or set them to `auto` to resume discovery. Legacy vehicle SoC
+published under `evcharger` is supported as a fallback. Vehicle power and
+`ev_charging_power` are watts; `ev_charging_kw` is kilowatts. Zero is a valid
+reading. Null leaves, removed services and disconnected devices invalidate old
+values. `discovered_water_ev` includes device identities and available SoC/power.
+These fields work identically through native MQTT and IGW snapshots, without HA.
+
+ESS status comes from `inverter/state.ess_mode` until native settings are observed.
+Native `Settings/CGwacs/Hub4Mode` and `Settings/CGwacs/BatteryLife/State` then take
+precedence. Optimized mode remains unknown until both settings are available.
 
 ## Home Assistant integration
 
@@ -152,9 +163,23 @@ from HA. `HA_DIRECT_CONTROLS=True` additionally enables explicitly configured HA
 switches and buttons. Use only entities owned by HA; controller policy flags and
 native Cerbo power, battery, EV and water readings keep their own sources.
 
-HA is optional for native energy monitoring. IGW snapshots contain live device
-telemetry; controller-only history and forecasts are unavailable through IGW unless
-a separate source supplies them.
+HA is optional for native monitoring and the seven inverter-control flags:
+`only_charging`, `no_feed`, `house_support`, `charge_battery`,
+`do_not_supply_charger`, `set_limit_to_ev_charger`, and `minimize_charging`.
+Their values and header metadata come from the controller, not HA mirrors.
+Unknown flags are unavailable rather than false. Direct MQTT accepts slim
+controller updates; new IGW snapshots carry the complete retained object as
+`inverter`, including controller history, forecasts and UI metadata. An omitted
+`inverter` field from an older gateway preserves prior observations; explicit
+null clears them. Controller observations expire after 120 seconds without a
+controller update on direct MQTT; IGW enforces the same expiry at its broker.
+
+IGW forwards only whitelisted controller actions: a known flag with an explicit
+on/off state, `dry_run` with an explicit boolean value, and `ess_mode` with an
+empty object (the controller's existing ESS toggle). Failed commands are reported
+without retries. Other controller actions require direct MQTT; water actions
+retain their separate direct-MQTT restriction. Production IGW-only deployments
+must keep `MQTT_HOST=""`; discovery does not enable another transport.
 
 ## Deploy to k3s (node `worker-1`)
 

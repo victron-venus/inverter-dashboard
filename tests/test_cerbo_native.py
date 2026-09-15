@@ -18,6 +18,8 @@ def sample(ms, kind, path, value, instance="0"):
 @pytest.fixture
 def ms(monkeypatch):
     monkeypatch.setattr(config, "CERBO_PORTAL_ID", "site")
+    monkeypatch.setattr(config, "EV_INSTANCE", 22)
+    monkeypatch.setattr(config, "EVCHARGER_INSTANCE", 40)
     return MqttState()
 
 
