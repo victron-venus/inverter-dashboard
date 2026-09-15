@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from typing import Any
 
 from . import config
@@ -27,6 +28,7 @@ CERBO_KINDS = (
     "settings",
 )
 KEEPALIVE_INTERVAL_SECS = 45
+NATIVE_FRESHNESS_SECS = 120
 NATIVE_EV_KEYS = frozenset(
     {
         "car_soc",
@@ -37,6 +39,19 @@ NATIVE_EV_KEYS = frozenset(
         "ev_present",
         "evcharger_present",
         "discovered_water_ev",
+    }
+)
+NATIVE_SECTION_KEYS = NATIVE_EV_KEYS | frozenset(
+    {
+        "battery_soc",
+        "loads",
+        "load_names",
+        "water_level",
+        "water_valve",
+        "pump_switch",
+        "water_valve_mode",
+        "pump_mode",
+        "water_pump_mode",
     }
 )
 CERBO_OWNED_KEYS = frozenset(
@@ -85,6 +100,7 @@ CERBO_OWNED_KEYS = frozenset(
         "pump_switch",
         "water_valve_mode",
         "pump_mode",
+        "water_pump_mode",
     }
 )
 COLLECTION_DEFAULTS = {
@@ -141,6 +157,12 @@ def number(value: Any) -> float | None:
         if math.isfinite(value):
             return value
     return None
+
+
+def voltage_soc(voltage: float) -> int:
+    """Desktop bank SoC: 40–54.4 V, clamped, with Rust's half-up rounding."""
+    percent = min(100.0, max(0.0, (voltage - 40.0) / (54.4 - 40.0) * 100.0))
+    return math.floor(percent + 0.5)
 
 
 def parse_cerbo_payload(payload: bytes) -> Any:
@@ -203,10 +225,38 @@ class CerboOverlayMixin:
         self._cerbo_devices: dict[str, dict[str, dict[str, Any]]] = {}
         self._cerbo_claimed_keys: set[str] = set()
         self._cerbo_overlay: dict[str, Any] = {}
+        self._native_observations: dict[str, tuple[float, float]] = {}
+        self._native_last_emit: float | None = None
+        self._native_invalidated: set[str] = set()
+
+    def _note_native_observation(self, source: str) -> None:
+        """Record transport receipt, not the sensor's measurement time."""
+        self._native_observations[source] = (time.time(), time.monotonic())
+        self._native_invalidated.discard(source)
+
+    def native_telemetry(self, source: str, connected: bool) -> dict[str, Any]:
+        """Describe native transport freshness independently of controller ticks."""
+        observation = self._native_observations.get(source)
+        quality = "unknown"
+        if observation is not None:
+            quality = (
+                "live"
+                if connected
+                and source not in self._native_invalidated
+                and time.monotonic() - observation[1] <= NATIVE_FRESHNESS_SECS
+                else "stale"
+            )
+        return {
+            "source": source,
+            "observed_at": round(observation[0] * 1000) if observation is not None else None,
+            "timestamp_source": "local_receipt",
+            "quality": quality,
+        }
 
     def clear_cerbo_state(self) -> None:
         """Invalidate observations after disconnect; await a fresh full publish."""
         self._cerbo_devices.clear()
+        self._native_invalidated.update(self._native_observations)
         self._apply_cerbo_overlays()
 
     def replace_cerbo_snapshot(self, snapshot: dict[str, Any]) -> None:
@@ -231,10 +281,14 @@ class CerboOverlayMixin:
                 if value is None:
                     self._claim_invalid_leaf(kind, instance, path)
         self._cerbo_devices = devices
+        self._note_native_observation("igw")
         self._apply_cerbo_overlays()
 
     @staticmethod
     def _valid_path_value(kind: str, path: str, value: Any) -> bool:
+        # Invalid connection flags must invalidate an earlier connected device.
+        if path == "Connected":
+            return True
         if value is None or number(value) is not None:
             return True
         return isinstance(value, str) and path in (
@@ -284,8 +338,16 @@ class CerboOverlayMixin:
             if value is None:
                 self._claim_invalid_leaf(kind, instance, path)
         before = dict(self.current_state)
+        self._note_native_observation("mqtt")
         self._apply_cerbo_overlays()
-        return self.current_state != before
+        now = time.monotonic()
+        # Refresh the footer for unchanged valid notifications, at most once
+        # per second unless a measurement itself changed.
+        changed = self.current_state != before
+        if changed or self._native_last_emit is None or now - self._native_last_emit >= 1:
+            self._native_last_emit = now
+            return True
+        return False
 
     def _claim_invalid_leaf(self, kind: str, instance: str, path: str) -> None:
         """An explicit unknown is authoritative even before the first sample."""
@@ -309,7 +371,9 @@ class CerboOverlayMixin:
                 keys.add("gt")
         if kind == "pump":
             if instance == str(config.WATER_PUMP_INSTANCE):
-                keys.update(("pump_mode",) if path == "Mode" else ("pump_switch",))
+                keys.update(
+                    ("pump_mode", "water_pump_mode") if path == "Mode" else ("pump_switch",)
+                )
             elif instance == str(config.WATER_VALVE_INSTANCE):
                 keys.update(("water_valve_mode",) if path == "Mode" else ("water_valve",))
         if kind == "system":
@@ -327,6 +391,8 @@ class CerboOverlayMixin:
             if path.startswith("Ac/PvOn") and path.endswith("/Power"):
                 keys.update(("pv_inverter_total", "solar_total"))
         if kind in ("battery", "system"):
+            if path == ("Dc/Battery/Voltage" if kind == "system" else "Dc/0/Voltage"):
+                keys.add("battery_soc")
             prefix = "Dc/Battery/" if kind == "system" else "Dc/0/"
             for field, leaf, alias in (
                 ("soc", "Soc", None),
@@ -394,7 +460,9 @@ class CerboOverlayMixin:
     def _devices(self, kind: str):
         values = self._cerbo_devices.get(kind, {})
         return [
-            (i, values[i]) for i in sorted(values, key=_sort_key) if values[i].get("Connected") != 0
+            (i, values[i])
+            for i in sorted(values, key=_sort_key)
+            if "Connected" not in values[i] or number(values[i]["Connected"]) == 1
         ]
 
     def _apply_cerbo_overlays(self) -> None:
@@ -510,7 +578,6 @@ class CerboOverlayMixin:
         if (instance := number(system.get("Dc/Battery/Instance"))) is not None:
             selected = self._batteries.get(str(int(instance)), {})
         for field, path in (
-            ("soc", "Soc"),
             ("voltage", "Voltage"),
             ("current", "Current"),
             ("power", "Power"),
@@ -518,6 +585,18 @@ class CerboOverlayMixin:
             value = _first_number(system.get(f"Dc/Battery/{path}"), selected.get(field))
             if value is not None:
                 out[f"battery_{field}"] = value
+        # The shunt's reported SoC counter is not the main bank percentage.
+        # Keep real device SoCs in batteries, and derive the bank tile locally.
+        shunts = [entry for entry in batteries if "shunt" in entry.get("name", "").lower()]
+        shunt = next((entry for entry in shunts if "voltage" in entry), shunts[0] if shunts else {})
+        bank_voltage = _first_number(shunt.get("voltage"), system.get("Dc/Battery/Voltage"))
+        if bank_voltage is not None:
+            out["battery_soc"] = voltage_soc(bank_voltage)
+            out["battery_voltage"] = bank_voltage
+        if shunt:
+            for field in ("current", "power"):
+                if field in shunt:
+                    out[f"battery_{field}"] = shunt[field]
         for field, alias in (("voltage", "bv"), ("current", "bc"), ("power", "bp")):
             if f"battery_{field}" in out:
                 out[alias] = out[f"battery_{field}"]
@@ -589,10 +668,7 @@ class CerboOverlayMixin:
                 continue
             name = _text(leaves.get("CustomName")) or _text(leaves.get("ProductName"))
             names[instance] = name or f"AC Load {instance}"
-            key = name or f"ac_load_{instance}"
-            if key in loads:
-                key = f"{key}_{instance}"
-            loads[key] = power
+            loads[instance] = power
             self._acload_powers[instance] = power
             self._acload_names[instance] = names[instance]
         if loads:
@@ -648,10 +724,13 @@ class CerboOverlayMixin:
             (config.WATER_PUMP_INSTANCE, "pump_switch", "pump_mode"),
         ):
             leaves = dict(self._devices("pump")).get(str(instance), {})
-            if (value := _first_number(leaves.get("State"), leaves.get("Status"))) is not None:
-                out[key] = bool(value)
+            value = number(leaves.get("State" if "State" in leaves else "Status"))
+            if value is not None:
+                out[key] = value >= 0.5
             if (mode := number(leaves.get("Mode"))) in (0, 1, 2):
                 out[mode_key] = int(mode)
+                if mode_key == "pump_mode":
+                    out["water_pump_mode"] = int(mode)
 
     def _selected_ev(self, kind: str, configured: int | None) -> dict[str, Any]:
         devices = self._devices(kind)

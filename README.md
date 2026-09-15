@@ -108,15 +108,21 @@ The same reducer handles MQTT notifications and complete IGW snapshots:
   meter and connected VE.Bus input fallbacks when native source identity is mains
   or shore power. Generator input is not grid. VE.Bus output alone is not total
   consumption; systemcalc consumption is required to account for the site topology.
-- Battery headline readings prefer systemcalc's selected battery measurements.
-  The explicitly selected battery instance, or a single unambiguous battery service,
-  provides a fallback. Measured SoC is used;
-  it is never guessed from a fixed pack voltage range. Per-device tiles include
-  identity, temperature, time remaining and cell-voltage diagnostics when available.
+- Main Battery SoC follows inverter-desktop: `round(clamp((V - 40) / (54.4 - 40) * 100, 0, 100))`,
+  with half-up rounding. Valid SmartShunt voltage takes priority over
+  `system/0/Dc/Battery/Voltage`; without either, the main percentage is unknown.
+  Reported BMS/shunt SoC counters remain on their actual device tiles and never
+  replace the main percentage. Device tiles include identity, temperature, time
+  remaining and cell-voltage diagnostics; no synthetic Bank device is added.
 - Solar combines DC MPPT and AC PV, without counting device and system totals twice.
   Published totals, including zero, take priority over summed phase powers.
-- AC loads use native device names, with instance suffixes for duplicate names.
+- AC loads are native `acload` readings keyed by instance in `loads`, with
+  independent display names in `load_names`. Renames and duplicate names cannot
+  change device identity or combine unrelated loads. Zero and signed watts are preserved.
 - Null values, service removal and snapshot omissions invalidate affected readings.
+  Missing `Connected` is accepted for older producers; only numeric `1` is
+  connected when the leaf exists. A null, invalid or other numeric value makes
+  the device unavailable, including its controls.
   Invalid JSON and nonnumeric measurements are ignored. `telemetry_available`
   distinguishes missing readings from measured zero; stale controller mirrors
   cannot restore a native reading that became unavailable.
@@ -133,9 +139,17 @@ With direct Cerbo MQTT connected, the dashboard can set the configured pump or
 valve to Auto (0), forced on (1), or forced off (2) through its native writable
 `W/<portal>/pump/<instance>/Mode` path. Controls are enabled only after that
 device's Mode is available; the displayed state changes when Cerbo confirms it.
-Gateway-only and public views remain read-only for water controls. Home Assistant
-switches and controller commands are not used for these overrides; automation
-continues to run in dbus-pump.
+Writes use QoS 0 and are nonretained, avoiding broker redelivery of overrides.
+IGW supports the same controls when its snapshot advertises
+`capabilities.water_mode: true`: the dashboard posts
+`/v1/commands/water_mode` with `{instance, mode}` using the configured write token.
+The gateway requires a connected broker and an observed valid Mode for the exact
+native pump; inverter-control state is not required. Older gateways keep Water
+read-only. `water_pump_controls_available` and `water_valve_controls_available`
+report each target separately. Explicit instance `0` is valid. Commands are not
+retried, and failures never optimistically change the displayed state.
+Home Assistant switches and controller commands are not used for these overrides;
+automation continues to run in dbus-pump. Public views remain read-only.
 
 Vehicle SoC and power come directly from native `ev` services, and wallbox power
 from `evcharger`. Each defaults to automatic discovery: the lowest connected
@@ -177,9 +191,24 @@ controller update on direct MQTT; IGW enforces the same expiry at its broker.
 IGW forwards only whitelisted controller actions: a known flag with an explicit
 on/off state, `dry_run` with an explicit boolean value, and `ess_mode` with an
 empty object (the controller's existing ESS toggle). Failed commands are reported
-without retries. Other controller actions require direct MQTT; water actions
-retain their separate direct-MQTT restriction. Production IGW-only deployments
+without retries. Other controller actions require direct MQTT; native Water uses
+its separate capability-gated gateway endpoint described above. Production IGW-only deployments
 must keep `MQTT_HOST=""`; discovery does not enable another transport.
+
+The HTTP and WebSocket payloads expose the actual `data_source` (`mqtt` or `igw`),
+`mqtt_connected`, `gateway_connected`, and selected-source `native_connected`.
+IGW success never marks the dashboard's direct MQTT connection as connected.
+IGW `/v1/snapshot` returns 503 when its broker is disconnected or not ready, so a
+successful snapshot establishes broker readiness at receipt time.
+
+`telemetry` reports `source`, `observed_at` (epoch milliseconds),
+`timestamp_source: "local_receipt"`, and `quality` (`unknown`, `live`, or `stale`).
+A valid native MQTT notification or successful complete IGW snapshot advances
+this receipt timestamp; controller/HA updates do not. Quality is unknown before
+an observation and stale after 120 seconds or a transport disconnect. For IGW this
+is snapshot receipt freshness, not proof that every sensor was sampled recently;
+upstream currently supplies no measurement timestamp. Readings keep their separate
+`telemetry_available` flags, and sensor values are not erased merely for being unchanged.
 
 ## Deploy to k3s (node `worker-1`)
 
@@ -427,7 +456,7 @@ The dashboard sends read-only `R/<portal>/keepalive` requests to maintain native
 notifications. Control actions remain separate from telemetry subscription.
 
 ### Published (commands)
-- `W/<portal>/pump/<configured-instance>/Mode` — explicit water Auto/on/off overrides (`{"value":0|1|2}`), direct MQTT only
+- `W/<portal>/pump/<configured-instance>/Mode` — explicit water Auto/on/off overrides (`{"value":0|1|2}`), direct MQTT or the IGW native water endpoint
 - `inverter/cmd/toggle` - Toggle boolean entities
 - `inverter/cmd/press` - Press button entities
 - `inverter/cmd/setpoint` - Set power setpoint

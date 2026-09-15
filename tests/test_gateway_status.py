@@ -41,7 +41,7 @@ async def test_gateway_reports_connect_disconnect_and_recovery_before_emit(monke
     with pytest.raises(asyncio.CancelledError):
         await gateway.gateway_poll_loop(app, state_emit, status_emit)
 
-    assert events == [(initial, True, True), (None, False, False), (recovered, True, True)]
+    assert events == [(initial, True, False), (None, False, False), (recovered, True, False)]
     assert app.gateway_polls == 2
     assert app.gateway_errors == 2
 

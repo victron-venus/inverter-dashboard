@@ -23,20 +23,19 @@ def ms(monkeypatch):
     return MqttState()
 
 
-def test_native_battery_soc_and_system_priority(ms):
+def test_native_battery_soc_uses_voltage_and_system_power_priority(ms):
     sample(ms, "battery", "ProductName", "48 V LiFePO4", "512")
     sample(ms, "battery", "Soc", 62, "512")
     sample(ms, "battery", "Dc/0/Voltage", 52, "512")
     sample(ms, "battery", "Dc/0/Power", -250, "512")
-    assert ms.current_state["battery_soc"] == 62
+    assert ms.current_state.get("battery_soc") is None
+    sample(ms, "system", "Dc/Battery/Voltage", 47.2)
     sample(ms, "system", "Dc/Battery/Soc", 77)
     sample(ms, "system", "Dc/Battery/Power", 0)
     sample(ms, "battery", "Soc", 63, "512")
-    assert ms.current_state["battery_soc"] == 77
+    assert ms.current_state["battery_soc"] == 50
     assert ms.current_state["battery_power"] == ms.current_state["bp"] == 0
-    sample(ms, "system", "Dc/Battery/Soc", None)
-    assert ms.current_state["battery_soc"] == 63
-    sample(ms, "battery", "Soc", None, "512")
+    sample(ms, "system", "Dc/Battery/Voltage", None)
     assert ms.current_state["battery_soc"] is None
     assert ms.current_state["telemetry_available"]["battery_soc"] is False
 
@@ -49,7 +48,7 @@ def test_metadata_does_not_claim_other_legacy_measurements(ms):
     sample(ms, "ev", "Ac/Power", 1200, str(config.EV_INSTANCE))
     ms._merge_daemon_state({"g1": 13, "battery_soc": 49, "mppt_total": 56, "car_soc": 11})
     assert ms.current_state["g1"] == 13
-    assert ms.current_state["battery_soc"] == 49
+    assert ms.current_state.get("battery_soc") is None
     assert ms.current_state["mppt_total"] == 56
     assert ms.current_state.get("car_soc") is None
 
@@ -170,12 +169,13 @@ def test_acload_phases_and_duplicate_names_are_stable(ms):
     sample(ms, "acload", "Ac/L3/Power", 30, "81")
     sample(ms, "acload", "CustomName", "Heater", "82")
     sample(ms, "acload", "Ac/Power", 0, "82")
-    assert ms.current_state["loads"] == {"Heater": 60, "Heater_82": 0}
+    assert ms.current_state["loads"] == {"81": 60, "82": 0}
     sample(ms, "acload", "Ac/Power", 40, "81")
     sample(ms, "acload", "Ac/L1/Power", 500, "81")
-    assert ms.current_state["loads"]["Heater"] == 40
+    assert ms.current_state["loads"]["81"] == 40
     sample(ms, "acload", "CustomName", "", "81")
-    assert ms.current_state["loads"]["Product"] == 40
+    assert ms.current_state["loads"]["81"] == 40
+    assert ms.current_state["load_names"]["81"] == "Product"
 
 
 def test_battery_diagnostics_and_custom_name_priority(ms):
@@ -220,7 +220,7 @@ def test_water_percent_units_modes_and_independent_ev_fields(ms):
     assert ms.current_state["pump_mode"] == 0
     assert ms.current_state["pump_switch"] is False
     assert ms.current_state["water_valve_mode"] == 2
-    assert ms.current_state["water_valve"] is True
+    assert ms.current_state.get("water_valve") is None
     assert ms.current_state["ev_charging_kw"] == pytest.approx(7.2)
     assert ms.current_state.get("car_soc") is None
 
@@ -339,15 +339,17 @@ def test_unknown_or_generator_source_does_not_assume_grid(ms, source):
     assert ms.current_state.get("tt") is None
 
 
-def test_selected_battery_instance_wins_over_name_heuristics(ms):
+def test_selected_battery_reported_soc_cannot_override_voltage_formula(ms):
     sample(ms, "battery", "Soc", 80, "1")
     sample(ms, "battery", "CustomName", "SmartShunt", "1")
     sample(ms, "battery", "Soc", 20, "2")
     assert ms.current_state.get("battery_soc") is None
     sample(ms, "system", "Dc/Battery/Instance", 2)
-    assert ms.current_state["battery_soc"] == 20
+    sample(ms, "system", "Dc/Battery/Voltage", 47.2)
+    assert ms.current_state["battery_soc"] == 50
     sample(ms, "system", "Dc/Battery/Soc", 0)
-    assert ms.current_state["battery_soc"] == 0
+    sample(ms, "battery", "Dc/0/Voltage", 51.2, "1")
+    assert ms.current_state["battery_soc"] == 78
 
 
 @pytest.mark.asyncio

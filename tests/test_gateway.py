@@ -167,13 +167,13 @@ def test_apply_snapshot_maps_live_tiles(ms):
     assert ms.current_state["g1"] == 10.0
     assert ms.current_state["gt"] == 15.0
     assert ms.current_state["tt"] == 120.0
-    assert ms.current_state["battery_soc"] == 61.0
+    assert ms.current_state["battery_soc"] == 50
     assert ms.current_state["battery_power"] == -590.0
     assert ms.current_state["mppt_total"] == 300.0
     assert ms.current_state["solar_total"] == 500.0
     assert ms.current_state["setpoint"] == -500.0
     assert ms.current_state["inverter_state"] == "Inverting"
-    assert ms.current_state["loads"]["Oven"] == 420.0
+    assert ms.current_state["loads"]["81"] == 420.0
     assert ms.current_state["water_level"] == 91.0
     assert ms.current_state["ev_charging_kw"] == 1.5
 

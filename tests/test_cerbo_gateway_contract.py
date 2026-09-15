@@ -16,6 +16,7 @@ async def test_gateway_matches_live_cerbo_and_preserves_zero():
             "0/Ac/Grid/L2/Power": 200,
             "0/Ac/Grid/L3/Power": -300,
             "0/Dc/Battery/Soc": 0,
+            "0/Dc/Battery/Voltage": 40,
         },
         "solarcharger": {"2/Yield/Power": 0, "2/Dc/0/Power": 900},
         "pvinverter": {"3/Ac/Power": 0, "3/Ac/L1/Power": 800},
@@ -45,7 +46,13 @@ async def test_gateway_matches_live_cerbo_and_preserves_zero():
 
 def test_snapshot_removal_and_api_nulls_clear_previous_measurements(monkeypatch):
     ms = MqttState()
-    gateway.apply_snapshot(ms, {"system": {"0/Ac/Grid/L3/Power": 77}, "battery": {"1/Soc": 42}})
+    gateway.apply_snapshot(
+        ms,
+        {
+            "system": {"0/Ac/Grid/L3/Power": 77, "0/Dc/Battery/Voltage": 40},
+            "battery": {"1/Soc": 42},
+        },
+    )
     gateway.apply_snapshot(ms, {})
     monkeypatch.setitem(websocket_handler._state, "mqtt_state", ms)
     monkeypatch.setattr(websocket_handler.ha_client, "merge_overlay", lambda state: state)
@@ -62,7 +69,7 @@ async def test_http_fallback_preserves_complete_websocket_contract(monkeypatch):
     gateway.apply_snapshot(
         ms,
         {
-            "system": {"0/Ac/Grid/L3/Power": 77},
+            "system": {"0/Ac/Grid/L3/Power": 77, "0/Dc/Battery/Voltage": 40},
             "battery": {"1/Soc": 0},
             "ev": {"22/Ac/Power": 3200},
         },

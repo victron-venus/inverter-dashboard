@@ -32,7 +32,7 @@ from .cerbo import (
     CERBO_KINDS,
     CERBO_OWNED_KEYS,
     KEEPALIVE_INTERVAL_SECS,
-    NATIVE_EV_KEYS,
+    NATIVE_SECTION_KEYS,
     CerboOverlayMixin,
     number,
 )
@@ -99,6 +99,7 @@ class MqttState(CerboOverlayMixin):
         self._vebus: dict[str, dict[str, Any]] = {}
         self._portal_id: str = config.CERBO_PORTAL_ID or ""
         self._init_cerbo()
+        self.gateway_capabilities: dict[str, Any] = {}
         self._daemon_keys: set[str] = set()
         self._daemon_received_at: float | None = None
         self._alarm_values: dict[str, int] = {}
@@ -127,16 +128,16 @@ class MqttState(CerboOverlayMixin):
     def _merge_daemon_state(self, incoming: dict[str, Any]) -> None:
         """Non-destructive merge of slim inverter/state into current_state.
 
-        EV observations always belong to native Cerbo services. Other
+        EV, water, Active Loads and bank SoC always belong to native Cerbo. Other
         Cerbo-owned live tiles are never taken from the daemon once we have
         Cerbo overlays (or when the slim payload simply omits them). Missing
         keys must not clear previously known values — that caused Active Loads
         to flash then disappear.
         """
         self._daemon_received_at = time.monotonic()
-        self._daemon_keys.update(incoming.keys() - NATIVE_EV_KEYS)
+        self._daemon_keys.update(incoming.keys() - NATIVE_SECTION_KEYS)
         for key, value in incoming.items():
-            if key in NATIVE_EV_KEYS:
+            if key in NATIVE_SECTION_KEYS:
                 continue
             if key in CERBO_OWNED_KEYS and self._cerbo_has_overlay(key):
                 continue
