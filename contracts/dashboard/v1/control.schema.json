@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/victron-venus/integration-tests/contracts/dashboard/v1/control.schema.json",
+  "title": "Absolute inverter flag command v1.0.0",
+  "type": "object",
+  "required": [
+    "topic",
+    "payload"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "topic": {
+      "const": "inverter/cmd/toggle"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "entity",
+        "state"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "entity": {
+          "enum": [
+            "only_charging",
+            "no_feed",
+            "house_support",
+            "charge_battery",
+            "do_not_supply_charger",
+            "set_limit_to_ev_charger",
+            "minimize_charging"
+          ]
+        },
+        "state": {
+          "enum": [
+            "on",
+            "off"
+          ]
+        }
+      }
+    }
+  }
+}

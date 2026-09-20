@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "source": "victron-venus/integration-tests",
+  "revision": "ec9685180a3593b8df9c12554c8c250a10c414cc",
+  "sha256": {
+    "control.schema.json": "86553cc5ed91db8b003f035b0245b99f81b32cc38226d81378c0dc7bb211d2fc",
+    "fixtures.json": "2026e2a887a146fedddf382f50d31986992e287d4d95fed72e77999272869a1d",
+    "telemetry.schema.json": "e9347e6f8e849137a9f3a0f81b8fd51959e8af69d40108f947e666821962f729"
+  }
+}
