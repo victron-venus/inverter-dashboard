@@ -1,0 +1,232 @@
+{
+  "version": "1.0.0",
+  "flag_keys": [
+    "only_charging",
+    "no_feed",
+    "house_support",
+    "charge_battery",
+    "do_not_supply_charger",
+    "set_limit_to_ev_charger",
+    "minimize_charging"
+  ],
+  "key_cases": [
+    {
+      "input": "only_charging",
+      "expected": "only_charging"
+    },
+    {
+      "input": "no_feed",
+      "expected": "no_feed"
+    },
+    {
+      "input": "house_support",
+      "expected": "house_support"
+    },
+    {
+      "input": "charge_battery",
+      "expected": "charge_battery"
+    },
+    {
+      "input": "do_not_supply_charger",
+      "expected": "do_not_supply_charger"
+    },
+    {
+      "input": "set_limit_to_ev_charger",
+      "expected": "set_limit_to_ev_charger"
+    },
+    {
+      "input": "minimize_charging",
+      "expected": "minimize_charging"
+    },
+    {
+      "input": " input_boolean.no_feed ",
+      "expected": "no_feed"
+    },
+    {
+      "input": "switch.no_feed",
+      "expected": null
+    },
+    {
+      "input": "guest_mode",
+      "expected": null
+    },
+    {
+      "input": "input_boolean.input_boolean.no_feed",
+      "expected": null
+    },
+    {
+      "input": "",
+      "expected": null
+    }
+  ],
+  "boolean_cases": [
+    {
+      "input": true,
+      "expected": true
+    },
+    {
+      "input": false,
+      "expected": false
+    },
+    {
+      "input": 1,
+      "expected": true
+    },
+    {
+      "input": 0,
+      "expected": false
+    },
+    {
+      "input": 1.0,
+      "expected": true
+    },
+    {
+      "input": 0.0,
+      "expected": false
+    },
+    {
+      "input": "on",
+      "expected": true
+    },
+    {
+      "input": " OFF ",
+      "expected": false
+    },
+    {
+      "input": " True ",
+      "expected": true
+    },
+    {
+      "input": "0",
+      "expected": false
+    },
+    {
+      "input": null,
+      "expected": null
+    },
+    {
+      "input": 2,
+      "expected": null
+    },
+    {
+      "input": -1,
+      "expected": null
+    },
+    {
+      "input": "",
+      "expected": null
+    },
+    {
+      "input": "unknown",
+      "expected": null
+    },
+    {
+      "input": [],
+      "expected": null
+    },
+    {
+      "input": {},
+      "expected": null
+    }
+  ],
+  "commands": [
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "only_charging",
+        "state": "on"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "only_charging",
+        "state": "off"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "no_feed",
+        "state": "on"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "no_feed",
+        "state": "off"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "house_support",
+        "state": "on"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "house_support",
+        "state": "off"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "charge_battery",
+        "state": "on"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "charge_battery",
+        "state": "off"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "do_not_supply_charger",
+        "state": "on"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "do_not_supply_charger",
+        "state": "off"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "set_limit_to_ev_charger",
+        "state": "on"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "set_limit_to_ev_charger",
+        "state": "off"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "minimize_charging",
+        "state": "on"
+      }
+    },
+    {
+      "topic": "inverter/cmd/toggle",
+      "payload": {
+        "entity": "minimize_charging",
+        "state": "off"
+      }
+    }
+  ]
+}

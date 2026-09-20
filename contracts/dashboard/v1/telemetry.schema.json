@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/victron-venus/integration-tests/contracts/dashboard/v1/telemetry.schema.json",
+  "title": "Dashboard controller telemetry v1.0.0",
+  "type": "object",
+  "properties": {
+    "booleans": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "only_charging": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "no_feed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "house_support": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "charge_battery": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "do_not_supply_charger": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "set_limit_to_ev_charger": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "minimize_charging": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "dry_run": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "uptime": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "grid_control_valid": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "grid_loss_zero_applied": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "grid_loss_state": {
+      "enum": [
+        "normal",
+        "holding",
+        "zero_pending",
+        "zero",
+        "recovering",
+        "disabled",
+        null
+      ]
+    },
+    "perf": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "ev_charging_power": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Watts. Missing/null is unknown; zero is measured zero."
+    },
+    "car_charging_power": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Watts. Missing/null is unknown; zero is measured zero."
+    },
+    "ev_power": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Watts. Missing/null is unknown; zero is measured zero."
+    },
+    "ev_charging_kw": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Legacy wallbox kilowatts; convert once to W."
+    },
+    "car_soc": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Percent, missing/null is unknown."
+    }
+  },
+  "additionalProperties": true
+}
