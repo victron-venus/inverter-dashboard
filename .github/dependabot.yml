@@ -28,10 +28,6 @@ updates:
       - dependency-name: "python"
 
   - package-ecosystem: "github-actions"
-    groups:
-      codeql:
-        patterns:
-          - "github/codeql-action/*"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -40,3 +36,7 @@ updates:
       prefix: "ci"
     labels:
       - "ci"
+    groups:
+      codeql:
+        patterns:
+          - github/codeql-action/*
