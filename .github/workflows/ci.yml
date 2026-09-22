@@ -2,17 +2,6 @@ name: CI
 
 on:
   workflow_call: {}
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-  pull_request:
-    branches: ['**']
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-
 permissions:
   contents: read
 
@@ -129,3 +118,4 @@ jobs:
             -f integration-tests/docker-compose.test.yml \
             -f "$GITHUB_WORKSPACE/.github/compose.integration.override.yml" \
             down -v
+    timeout-minutes: 30
