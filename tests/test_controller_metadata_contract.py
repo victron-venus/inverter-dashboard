@@ -48,7 +48,10 @@ async def test_slim_controller_metadata_survives_websocket_and_http_payloads(mon
         "inverter/state",
         json.dumps({**controller, "grid_loss_internal": "not public"}).encode(),
     )
-    for payload in (websocket_handler.build_payload(), await server.api_state(Request({"type": "http", "headers": []}))):
+    for payload in (
+        websocket_handler.build_payload(),
+        await server.api_state(Request({"type": "http", "headers": []})),
+    ):
         for key, expected in controller.items():
             assert payload[key] == expected, key
         assert "grid_loss_internal" not in payload
@@ -80,6 +83,9 @@ async def test_recovery_nulls_clear_previous_controller_status(monkeypatch):
         "dvcc_limits": None,
     }
     await ms.on_message("inverter/state", json.dumps(recovery).encode())
-    for payload in (websocket_handler.build_payload(), await server.api_state(Request({"type": "http", "headers": []}))):
+    for payload in (
+        websocket_handler.build_payload(),
+        await server.api_state(Request({"type": "http", "headers": []})),
+    ):
         for key, expected in recovery.items():
             assert payload[key] == expected, key
