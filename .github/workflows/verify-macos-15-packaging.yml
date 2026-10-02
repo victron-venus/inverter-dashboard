@@ -1,0 +1,49 @@
+name: Verify macOS 15 packaging
+run-name: Verify macOS 15 packaging · ${{ github.sha }}
+
+on:
+  push:
+    branches:
+      - chore/verify-macos-15-packaging-20261002
+
+permissions:
+  contents: read
+
+jobs:
+  packaging:
+    name: Package and smoke-test macOS ARM64
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.13'
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: 0.12.7
+      - name: Verify the runner architecture
+        run: |
+          sw_vers
+          test "$(uname -m)" = arm64
+      - name: Build, smoke-test, and package the committed application
+        run: bash scripts/release-build.sh "$(cat VERSION)" rc
+      - name: Preserve verification artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: verification-macos-arm64
+          path: release-output/*
+          if-no-files-found: error
+          retention-days: 14
