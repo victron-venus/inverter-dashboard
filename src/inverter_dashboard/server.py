@@ -410,6 +410,16 @@ def _verify_secret(request: Request, token: str | None = None) -> None:
     raise HTTPException(status_code=403, detail="invalid secret")
 
 
+def _secret_authorized(request: Request, token: str | None = None) -> bool:
+    """Return True when DASHBOARD_SECRET is unset or the request presents it."""
+    if not DASHBOARD_SECRET:
+        return True
+    if token and token == DASHBOARD_SECRET:
+        return True
+    auth = request.headers.get("authorization", "")
+    return bool(auth.startswith("Bearer ") and auth[7:] == DASHBOARD_SECRET)
+
+
 def _make_mqtt_client() -> Client:
     """Create a fresh MQTT client from config (a closed client cannot be reused)."""
     # NB: tls_insecure must not be passed without an SSL context - paho raises
@@ -868,21 +878,17 @@ async def api_settings_post(request: Request):
 
 
 @app.get("/api/state")
-async def api_state():
-    """Health + live Cerbo/IGW tiles for monitoring and SPA HTTP fallback."""
+async def api_state(request: Request, token: str | None = None):
+    """Health always; live Cerbo/IGW tiles only when authorized (or secret unset).
+
+    Unauthenticated probes (Docker HEALTHCHECK) get connectivity fields only.
+    SPA HTTP fallback must pass ?token= or Authorization when DASHBOARD_SECRET is set.
+    """
     raw = _app_state.mqtt_state.get_state() if _app_state.mqtt_state else {}
-    # Prefer the same filtered payload WS clients get (HA overlay + allowlist).
-    live: dict[str, Any] = {}
-    if _app_state.mqtt_state is not None:
-        try:
-            live = websocket_handler.build_payload()
-        except Exception:  # pylint: disable=broad-except
-            live = {}
-    out: dict[str, Any] = {
-        **live,
+    health: dict[str, Any] = {
         "ok": True,
         "dashboard_version": VERSION,
-        "control_version": raw.get("version") or live.get("version"),
+        "control_version": raw.get("version"),
         "has_mqtt_state": bool(raw),
         "data_source": _app_state.data_source,
         "mqtt_connected": _app_state.mqtt_connected,
@@ -892,7 +898,18 @@ async def api_state():
         "gateway_errors": _app_state.gateway_errors,
         "gateway_url": (config.GATEWAY_URL or "").rstrip("/") or None,
     }
-    return out
+    if not _secret_authorized(request, token):
+        return health
+
+    # Prefer the same filtered payload WS clients get (HA overlay + allowlist).
+    live: dict[str, Any] = {}
+    if _app_state.mqtt_state is not None:
+        try:
+            live = websocket_handler.build_payload()
+        except Exception:  # pylint: disable=broad-except
+            live = {}
+    health["control_version"] = raw.get("version") or live.get("version")
+    return {**live, **health}
 
 
 @app.post(

@@ -151,3 +151,47 @@ async def test_mqtt_loop_reconnects_after_broker_error(monkeypatch):
         server._app_state.mqtt_tasks.extend(old_tasks)
         server._app_state.mqtt_connected = False
         server._app_state.mqtt_client = None
+
+
+def test_api_state_unauthenticated_omits_live_tiles(monkeypatch):
+    """INVDASH-1: with secret set, unauthenticated /api/state is health-only."""
+    monkeypatch.setattr(server, "DASHBOARD_SECRET", "s3cret")
+
+    class _Mqtt:
+        def get_state(self):
+            return {"version": "9.9.9", "setpoint": 1234, "ess_mode": "Optimized"}
+
+    monkeypatch.setattr(server._app_state, "mqtt_state", _Mqtt())
+
+    def _fake_payload():
+        return {"setpoint": 1234, "ess_mode": "Optimized", "notifications": [{"id": 1}]}
+
+    monkeypatch.setattr(server.websocket_handler, "build_payload", _fake_payload)
+    client = TestClient(server.app)
+    data = client.get("/api/state").json()
+    assert data["ok"] is True
+    assert data["mqtt_connected"] is False
+    assert "setpoint" not in data
+    assert "ess_mode" not in data
+    assert "notifications" not in data
+
+
+def test_api_state_authenticated_includes_live_tiles(monkeypatch):
+    """Authorized /api/state still merges the live WS payload."""
+    monkeypatch.setattr(server, "DASHBOARD_SECRET", "s3cret")
+
+    class _Mqtt:
+        def get_state(self):
+            return {"version": "9.9.9"}
+
+    monkeypatch.setattr(server._app_state, "mqtt_state", _Mqtt())
+    monkeypatch.setattr(
+        server.websocket_handler,
+        "build_payload",
+        lambda: {"setpoint": 42, "ess_mode": "KeepBatteriesCharged"},
+    )
+    client = TestClient(server.app)
+    data = client.get("/api/state", headers={"Authorization": "Bearer s3cret"}).json()
+    assert data["ok"] is True
+    assert data["setpoint"] == 42
+    assert data["ess_mode"] == "KeepBatteriesCharged"
