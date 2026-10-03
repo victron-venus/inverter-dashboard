@@ -75,15 +75,14 @@ def convert(report: dict, tool_version: str) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("report", type=Path)
-    parser.add_argument("output", type=Path)
-    args = parser.parse_args()
-    if args.report.resolve() == args.output.resolve():
-        parser.error("input and output must be different files")
+    parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
+    report = root / "bandit-results.json"
+    output = root / "bandit-results.sarif"
     # A failed rerun must not leave a previous successful scan ready for upload.
-    args.output.unlink(missing_ok=True)
-    sarif = convert(json.loads(args.report.read_text()), version("bandit"))
-    args.output.write_text(json.dumps(sarif, indent=2) + "\n")
+    output.unlink(missing_ok=True)
+    sarif = convert(json.loads(report.read_text()), version("bandit"))
+    output.write_text(json.dumps(sarif, indent=2) + "\n")
 
 
 if __name__ == "__main__":

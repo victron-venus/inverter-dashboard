@@ -36,7 +36,7 @@ jobs:
         run: |
           # Exit 1 means findings; any other failure must fail the job.
           bandit -c .github/bandit.yml -r . -f json -o bandit-results.json || test "$?" -eq 1
-          python3 scripts/bandit_sarif.py bandit-results.json bandit-results.sarif
+          python3 scripts/bandit_sarif.py
 
       - name: Enforce high-severity Bandit findings
         run: bandit -c .github/bandit.yml -r . -lll

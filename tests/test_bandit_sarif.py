@@ -2,6 +2,7 @@
 
 import copy
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -73,3 +74,24 @@ def test_accepts_complete_clean_scan():
     report = complete_report()
     report["results"] = []
     assert converter.convert(report, "1.9.4")["runs"][0]["results"] == []
+
+
+def test_failed_rerun_removes_stale_report(monkeypatch, tmp_path):
+    monkeypatch.setattr(converter, "__file__", str(tmp_path / "scripts" / "bandit_sarif.py"))
+    monkeypatch.setattr("sys.argv", ["bandit_sarif.py"])
+    monkeypatch.setattr(converter, "version", lambda name: "1.9.4")
+    (tmp_path / "bandit-results.json").write_text(json.dumps({"errors": ["scan failed"]}))
+    output = tmp_path / "bandit-results.sarif"
+    output.write_text("stale scan")
+    with pytest.raises(ValueError, match="incomplete"):
+        converter.main()
+    assert not output.exists()
+
+
+def test_cli_rejects_custom_paths_without_touching_files(monkeypatch, tmp_path):
+    output = tmp_path / "untouched.txt"
+    output.write_text("keep")
+    monkeypatch.setattr("sys.argv", ["bandit_sarif.py", "report.json", str(output)])
+    with pytest.raises(SystemExit):
+        converter.main()
+    assert output.read_text() == "keep"
