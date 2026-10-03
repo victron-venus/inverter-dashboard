@@ -7,8 +7,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_ROOT="${SCRIPT_DIR}/build"
-PYINSTALLER_VERSION="6.11.1"
-PYINSTALLER_URL="https://github.com/pyinstaller/pyinstaller/releases/download/v${PYINSTALLER_VERSION}/pyinstaller-${PYINSTALLER_VERSION}.tar.gz"
 
 LOCAL="${1:-}"
 
@@ -21,18 +19,15 @@ trap cleanup EXIT
 mkdir -p "${BUILD_ROOT}"
 
 echo "=== Building Python venv ==="
-python3 -m venv "${BUILD_ROOT}/venv"
-# shellcheck source=/dev/null
-source "${BUILD_ROOT}/venv/bin/activate"
-
-pip install --quiet --only-binary :all: pyinstaller==${PYINSTALLER_VERSION}
-pip install --quiet --only-binary :all: -r "${SCRIPT_DIR}/requirements.txt"
+# uv.lock records versions and artifact hashes for runtime and packaging dependencies.
+UV_PROJECT_ENVIRONMENT="${BUILD_ROOT}/venv" uv sync --project "${SCRIPT_DIR}" \
+    --locked --group packaging --no-dev --no-install-project --no-build
 
 cd "${SCRIPT_DIR}"
 
 echo "=== Building binaries ==="
 # shellcheck disable=SC2046
-PYTHON=$(pwd)/"${BUILD_ROOT}/venv/bin/python"
+PYTHON="${BUILD_ROOT}/venv/bin/python"
 
 # --- macOS x86_64 ---
 if [[ "$(uname)" == "Darwin" ]]; then
@@ -40,7 +35,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
     MACOSX_DEPLOYMENT_TARGET=11.0 \
         CFLAGS="-arch x86_64" \
         LDFLAGS="-arch x86_64" \
-        ${PYTHON} -m PyInstaller --target-arch x86_64 inverter-dashboard.spec \
+        "${PYTHON}" -m PyInstaller --target-arch x86_64 inverter-dashboard.spec \
         --distpath "${BUILD_ROOT}/dist/macos-x86_64" \
         --workpath "${BUILD_ROOT}/build/macos-x86_64"
 
@@ -48,14 +43,14 @@ if [[ "$(uname)" == "Darwin" ]]; then
     MACOSX_DEPLOYMENT_TARGET=11.0 \
         CFLAGS="-arch arm64" \
         LDFLAGS="-arch arm64" \
-        ${PYTHON} -m PyInstaller --target-arch arm64 inverter-dashboard.spec \
+        "${PYTHON}" -m PyInstaller --target-arch arm64 inverter-dashboard.spec \
         --distpath "${BUILD_ROOT}/dist/macos-arm64" \
         --workpath "${BUILD_ROOT}/build/macos-arm64"
 fi
 
 # --- Linux x86_64 ---
 echo ">>> Linux x86_64"
-${PYTHON} -m PyInstaller --target-arch x86_64 inverter-dashboard.spec \
+"${PYTHON}" -m PyInstaller --target-arch x86_64 inverter-dashboard.spec \
     --distpath "${BUILD_ROOT}/dist/linux-x86_64" \
     --workpath "${BUILD_ROOT}/build/linux-x86_64"
 
