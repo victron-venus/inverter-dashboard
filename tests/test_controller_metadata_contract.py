@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from fastapi import Response
 from starlette.requests import Request
 
 from inverter_dashboard import server, websocket_handler
@@ -50,7 +51,7 @@ async def test_slim_controller_metadata_survives_websocket_and_http_payloads(mon
     )
     for payload in (
         websocket_handler.build_payload(),
-        await server.api_state(Request({"type": "http", "headers": []})),
+        await server.api_state(Request({"type": "http", "headers": []}), Response()),
     ):
         for key, expected in controller.items():
             assert payload[key] == expected, key
@@ -85,7 +86,7 @@ async def test_recovery_nulls_clear_previous_controller_status(monkeypatch):
     await ms.on_message("inverter/state", json.dumps(recovery).encode())
     for payload in (
         websocket_handler.build_payload(),
-        await server.api_state(Request({"type": "http", "headers": []})),
+        await server.api_state(Request({"type": "http", "headers": []}), Response()),
     ):
         for key, expected in recovery.items():
             assert payload[key] == expected, key

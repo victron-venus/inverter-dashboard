@@ -23,7 +23,7 @@ from typing import Any
 
 import uvicorn
 from aiomqtt import Client, MqttError, TLSParameters
-from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -878,12 +878,14 @@ async def api_settings_post(request: Request):
 
 
 @app.get("/api/state")
-async def api_state(request: Request, token: str | None = None):
+async def api_state(request: Request, response: Response, token: str | None = None):
     """Health always; live Cerbo/IGW tiles only when authorized (or secret unset).
 
     Unauthenticated probes (Docker HEALTHCHECK) get connectivity fields only.
     SPA HTTP fallback must pass ?token= or Authorization when DASHBOARD_SECRET is set.
     """
+    # The same URL can return health-only or authenticated live state.
+    response.headers["Cache-Control"] = "no-store"
     raw = _app_state.mqtt_state.get_state() if _app_state.mqtt_state else {}
     health: dict[str, Any] = {
         "ok": True,

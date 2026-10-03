@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from fastapi import Response
 from starlette.requests import Request
 
 from inverter_dashboard import gateway, server, websocket_handler
@@ -80,7 +81,7 @@ async def test_http_fallback_preserves_complete_websocket_contract(monkeypatch):
     monkeypatch.setattr(server._app_state, "mqtt_state", ms)
     monkeypatch.setitem(websocket_handler._state, "mqtt_state", ms)
     monkeypatch.setattr(websocket_handler.ha_client, "merge_overlay", lambda state: state)
-    response = await server.api_state(Request({"type": "http", "headers": []}))
+    response = await server.api_state(Request({"type": "http", "headers": []}), Response())
     assert response["g3"] == 77
     assert response["ev_power"] == 3200
     assert response["battery_soc"] == 0
