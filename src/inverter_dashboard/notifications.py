@@ -12,6 +12,7 @@ Sources:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 PLATFORM_FIELDS = frozenset(
@@ -71,14 +72,21 @@ def _event_datetime(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
     try:
-        numeric = float(value)
-        if not numeric.is_integer() or numeric <= 0:
+        # A near-integer string must not round into a different valid event and
+        # clear its dismissal. Validate it exactly before converting to seconds.
+        numeric = Decimal(value)
+        if (
+            not numeric.is_finite()
+            or numeric <= 0
+            or numeric > 253_402_300_799  # 9999-12-31T23:59:59Z, RFC3339's upper bound
+            or numeric != numeric.to_integral_value()
+        ):
             return None
         seconds = int(numeric)
         # Also reject dates outside the RFC3339 range supported by our clients.
         datetime.fromtimestamp(seconds, tz=UTC)
         return seconds
-    except (TypeError, ValueError, OverflowError, OSError):
+    except (InvalidOperation, TypeError, ValueError, OverflowError, OSError):
         return None
 
 

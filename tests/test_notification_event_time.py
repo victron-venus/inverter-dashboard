@@ -77,7 +77,24 @@ async def test_late_datetime_is_broadcast_without_waiting_for_other_telemetry(mo
 
 @pytest.mark.parametrize(
     "value",
-    [None, "invalid", "", 0, -1, True, False, 1.5, "1.5", "NaN", "Infinity", 2**63 - 1, [], {}],
+    [
+        None,
+        "invalid",
+        "",
+        0,
+        -1,
+        True,
+        False,
+        1.5,
+        "1.5",
+        "1791226080.00000001",
+        "1e999999999",
+        "NaN",
+        "Infinity",
+        2**63 - 1,
+        [],
+        {},
+    ],
 )
 async def test_invalid_datetime_is_unknown_and_does_not_keep_a_stale_time(native_events, value):
     state, publish = native_events
@@ -90,7 +107,10 @@ async def test_invalid_datetime_is_unknown_and_does_not_keep_a_stale_time(native
     assert state.get_notifications()[0]["ts"] == EVENT_TIME
 
 
-@pytest.mark.parametrize("value", [EVENT_SECONDS, float(EVENT_SECONDS), str(EVENT_SECONDS)])
+@pytest.mark.parametrize(
+    "value",
+    [EVENT_SECONDS, float(EVENT_SECONDS), str(EVENT_SECONDS), "1791226020.0", "1.79122602e9"],
+)
 async def test_integral_native_datetime_encodings_are_compatible(native_events, value):
     state, publish = native_events
     await publish(Description="Internal failure", DateTime=value)
@@ -107,7 +127,7 @@ async def test_incomplete_replay_does_not_resurrect_a_dismissed_event(native_eve
     state, publish = native_events
     await publish(Description="Internal failure", DateTime=EVENT_SECONDS)
     state.dismiss_notification(SLOT_ID)
-    for value in (0, None, "invalid", EVENT_SECONDS):
+    for value in (0, None, "invalid", "1791226080.00000001", EVENT_SECONDS):
         await publish(DateTime=value, DeviceName="JBD Battery Chain 1")
         assert state.get_notifications() == []
     # Only a different valid event time makes this a fresh slot event.
