@@ -205,11 +205,11 @@ async def test_gateway_roundtrip_cancels_slow_selection_without_post(runtime, mo
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             cancelled.set()
-            # Even a transport swallowing cancellation cannot pass generation.
-            return {
-                "capabilities": {"set_ess_mode": True},
-                "inverter": {"ess_mode": STATUS, "dry_run": False},
-            }
+        # Even a transport swallowing cancellation cannot pass generation.
+        return {
+            "capabilities": {"set_ess_mode": True},
+            "inverter": {"ess_mode": STATUS, "dry_run": False},
+        }
 
     monkeypatch.setattr(gateway, "fetch_snapshot", delayed_snapshot)
     post = AsyncMock()
@@ -224,6 +224,40 @@ async def test_gateway_roundtrip_cancels_slow_selection_without_post(runtime, mo
         await asyncio.wait_for(task, 1)
     assert cancelled.is_set()
     post.assert_not_awaited()
+
+
+@pytest.mark.parametrize("source_replaced", [False, True])
+async def test_selection_preserves_external_cancellation_and_cleans_child(runtime, source_replaced):
+    entered = asyncio.Event()
+    cleaned = asyncio.Event()
+
+    async def operation():
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
+
+    task = asyncio.create_task(gateway.run_ess_selection(gateway.source_generation(), operation))
+    await asyncio.wait_for(entered.wait(), 1)
+    if source_replaced:
+        gateway.invalidate_ess_commands()
+    else:
+        task.cancel()
+    error = ValueError if source_replaced else asyncio.CancelledError
+    with pytest.raises(error):
+        await asyncio.wait_for(task, 1)
+    assert cleaned.is_set()
+    assert not gateway._ess_command_tasks
+
+
+async def test_selection_propagates_operation_failure(runtime):
+    async def fail():
+        raise RuntimeError("synthetic transport failure")
+
+    with pytest.raises(RuntimeError, match="synthetic transport failure"):
+        await gateway.run_ess_selection(gateway.source_generation(), fail)
+    assert not gateway._ess_command_tasks
 
 
 async def test_source_change_during_post_client_entry_never_posts(monkeypatch):
