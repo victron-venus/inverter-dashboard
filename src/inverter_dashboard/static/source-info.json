@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "repository": "https://github.com/victron-venus/inverter-dashboard-vue",
-  "source_commit": "d393ad3e1fa2abaafaad93a7a0b38b69d1695903",
+  "source_commit": "43f8f0ef269d839f6c757342ce4fc01ffd351995",
   "package_version": "2.2.7",
   "package_lock_sha256": "53bc7a8cca9e8ec435b5927307622422368db89abe62fa2d135fcd8eda85cf7c",
   "build_command": "npm run build:all",
@@ -14,8 +14,8 @@
       "size": 1049
     },
     {
-      "path": "assets/IntervalEnergy-DznDRuS9.js",
-      "sha256": "c4969cafb839e7ce9cba7fa425922744808cd4d39dd27a48ab9d0807a110d07b",
+      "path": "assets/IntervalEnergy-ZY8wOE4x.js",
+      "sha256": "1ca53890c3fb1eef063c1dab26dd320be98ee81279ae40a540b0a4ec66d04c5a",
       "size": 10293
     },
     {
@@ -24,8 +24,8 @@
       "size": 122734
     },
     {
-      "path": "assets/TariffEditor-X1NeL55v.js",
-      "sha256": "4b99c14c89fc6385d0947b38e0810d724708cd2755ea3fda79cdc5f6b0fdc3b6",
+      "path": "assets/TariffEditor-D65WmMKK.js",
+      "sha256": "093aa0b4be84c5a7cdb474810ce9ddad38ae955da3f5f03452807e9bc5e7bb17",
       "size": 6622117
     },
     {
@@ -209,9 +209,9 @@
       "size": 31217
     },
     {
-      "path": "assets/index-CqSiJShz.js",
-      "sha256": "46398144fa768deb390863e3822163c98f10e5810050e78d08c37d89e31a293e",
-      "size": 182832
+      "path": "assets/index-CiFoFLYo.js",
+      "sha256": "b68701a47dda16dc6c72c400453fb2de80847608bf79675520c13a1988c4dd60",
+      "size": 183063
     },
     {
       "path": "assets/is-BT8UVRze-DWEBuJpb.js",
@@ -440,7 +440,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "1d004fb874ca3598764b0bd8b53d99600c04a17c819a3c004d324b986759e79e",
+      "sha256": "97ffbc5f336489b63030f671eb0d42f724ffd7315eb55e7dc7be470093933186",
       "size": 958
     }
   ]
