@@ -3,6 +3,7 @@
 import json
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 
 from inverter_dashboard import gateway, server, websocket_handler
@@ -166,3 +167,52 @@ async def test_foreign_platform_time_cannot_modify_selected_portal_event(native_
     await publish(Description="Internal failure", DateTime=EVENT_SECONDS)
     await state.on_message("N/foreign/platform/0/Notifications/1/DateTime", b'{"value":1}')
     assert state.get_notifications()[0]["ts"] == EVENT_TIME
+
+
+@pytest.mark.parametrize("transport", ["mqtt", "igw-flat", "igw-wrapped"])
+@pytest.mark.parametrize("token", ["1791226080.00000001", "1.79122608000000001e9"])
+async def test_fractional_json_wire_times_stay_unknown_and_cannot_undo_dismissal(
+    monkeypatch, transport, token
+):
+    """JSON number decoding must not round a fractional event into a fresh integer."""
+    monkeypatch.setattr(server.config, "CERBO_PORTAL_ID", "site")
+    monkeypatch.setattr(gateway.config, "GATEWAY_URL", "https://gateway.example")
+    monkeypatch.setattr(gateway, "build_headers", dict)
+    state = server.MqttState()
+
+    async def publish(raw_number):
+        if transport == "mqtt":
+            await state.on_message(
+                "N/site/platform/0/Notifications/1/Description", b'{"value":"Internal failure"}'
+            )
+            await state.on_message(
+                "N/site/platform/0/Notifications/1/DateTime",
+                ('{"value":' + raw_number + "}").encode(),
+            )
+        else:
+            raw_value = '{"value":' + raw_number + "}" if transport == "igw-wrapped" else raw_number
+            response = (
+                '{"platform":{"0/Notifications/1/Description":"Internal failure",'
+                '"0/Notifications/1/DateTime":' + raw_value + "},"
+                '"system":{"0/Dc/Battery/Voltage":51.25}}'
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda _: httpx.Response(200, content=response))
+            ) as client:
+                snapshot = await gateway.fetch_snapshot(client)
+            # Precision handling for DateTime must leave telemetry as JSON numbers.
+            assert type(snapshot["system"]["0/Dc/Battery/Voltage"]) is float
+            json.dumps(snapshot)
+            gateway.apply_snapshot(state, snapshot)
+
+    await publish(str(EVENT_SECONDS))
+    assert state.get_notifications()[0]["ts"] == EVENT_TIME
+    await publish(token)
+    assert state.get_notifications()[0]["ts"] == ""
+    await publish("1791226020.0")
+    assert state.get_notifications()[0]["ts"] == EVENT_TIME
+    state.dismiss_notification(SLOT_ID)
+    await publish(token)
+    assert state.get_notifications() == []
+    await publish("1.79122602e9")
+    assert state.get_notifications() == []

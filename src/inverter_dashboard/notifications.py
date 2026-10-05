@@ -375,7 +375,7 @@ def mqtt_handle_platform_notification(ms: Any, topic: str, payload: bytes) -> bo
     field = parts[6]
     key = f"{inst}/Notifications/{slot_n}/{field}"
     try:
-        raw = json.loads(payload.decode())
+        raw = json.loads(payload.decode(), parse_float=str if field == "DateTime" else float)
     except (ValueError, UnicodeDecodeError):
         return False
     value = raw.get("value") if isinstance(raw, dict) else raw
