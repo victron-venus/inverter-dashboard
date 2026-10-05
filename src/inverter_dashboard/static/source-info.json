@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "repository": "https://github.com/victron-venus/inverter-dashboard-vue",
-  "source_commit": "0eb03e7232cfb4439f735cc63d0090c9176ff261",
+  "source_commit": "064f4aec422976c4f32441f9fde36f0fb3d13cde",
   "package_version": "2.2.5",
   "package_lock_sha256": "28611e00ff5dd261358c9a98a14d52789a46e0a0f07179c87b78556c26014622",
   "build_command": "npm ci --ignore-scripts --no-audit --no-fund && npm run build:all",
@@ -9,8 +9,8 @@
   "npm_version": "11.19.1",
   "files": [
     {
-      "path": "assets/IntervalEnergy-BhSqNnaP.js",
-      "sha256": "88793d587396c39709d9de08818047de68eafe32e91c3a796078f612f258e98d",
+      "path": "assets/IntervalEnergy-BniMtCCH.js",
+      "sha256": "188c65ce2f7506a4f1d37fed841fb53b9331bca1e6d47c18ac58f2a9fdbe8e09",
       "size": 10288
     },
     {
@@ -24,8 +24,8 @@
       "size": 122734
     },
     {
-      "path": "assets/TariffEditor-FCmKeGoX.js",
-      "sha256": "eace93cae67409386bfcd1888de0288b49349fae0d3bd97ecd7a84f01a9924a4",
+      "path": "assets/TariffEditor-Dx0UTofW.js",
+      "sha256": "15a9291978b9a2801701c95709fe5e03c188f000b9acda552087fcfda7a4980c",
       "size": 6622122
     },
     {
@@ -204,14 +204,14 @@
       "size": 2434
     },
     {
-      "path": "assets/index-B6yhhtn9.js",
-      "sha256": "fb5f6061d0cf8348626051276ab161e19d0e55ce8f1292debd603dc288542034",
-      "size": 172473
-    },
-    {
       "path": "assets/index-BTZPxu0l.css",
       "sha256": "9dd55d33ce5ad858a77f42e9c22fe1b01939a763fb74b9ee128fcfe51c02b4fc",
       "size": 28356
+    },
+    {
+      "path": "assets/index-Bc7OqX69.js",
+      "sha256": "fcc535a868e9e197ed8476ac8a26167b4f9578a77fa406049ad7ed12c4fea9fe",
+      "size": 172436
     },
     {
       "path": "assets/is-BT8UVRze-DWEBuJpb.js",
@@ -440,7 +440,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "0bb3b48a5a5b4e717f972c89b1fea6edf044f77aea787e215819dee09a60a23e",
+      "sha256": "098efe365ea624a5087af218e962bf6b163d62ef2a0a1412ad1de37d894de9fd",
       "size": 958
     }
   ]

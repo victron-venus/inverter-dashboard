@@ -5,7 +5,7 @@ The Python package serves the reviewed Vue SPA committed under
 frontend source; do not edit the minified JavaScript.
 
 The current source is
-[`inverter-dashboard-vue` at `0eb03e7232cfb4439f735cc63d0090c9176ff261`](https://github.com/victron-venus/inverter-dashboard-vue/tree/0eb03e7232cfb4439f735cc63d0090c9176ff261).
+[`inverter-dashboard-vue` at `064f4aec422976c4f32441f9fde36f0fb3d13cde`](https://github.com/victron-venus/inverter-dashboard-vue/tree/064f4aec422976c4f32441f9fde36f0fb3d13cde).
 That source carries the page's `token` into both the WebSocket URL and the
 `/api/state` fallback, preserving live telemetry when `DASHBOARD_SECRET` is set.
 Notifications use their source event time, refresh relative age while idle and
