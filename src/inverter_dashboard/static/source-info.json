@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "repository": "https://github.com/victron-venus/inverter-dashboard-vue",
-  "source_commit": "064f4aec422976c4f32441f9fde36f0fb3d13cde",
-  "package_version": "2.2.5",
-  "package_lock_sha256": "28611e00ff5dd261358c9a98a14d52789a46e0a0f07179c87b78556c26014622",
+  "source_commit": "e79054130cca49f919c89e6491bb67769882f3ba",
+  "package_version": "2.2.6",
+  "package_lock_sha256": "3f73fc8e24de7660f262f33904846ff777d5b6359bf567832f038dc15b24fa1f",
   "build_command": "npm ci --ignore-scripts --no-audit --no-fund && npm run build:all",
   "node_version": "v26.8.2",
   "npm_version": "11.19.1",
