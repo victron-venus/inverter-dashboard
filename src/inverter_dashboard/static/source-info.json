@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "repository": "https://github.com/victron-venus/inverter-dashboard-vue",
-  "source_commit": "53a4fd12f387b98b6a624b84d5216cb223098145",
+  "source_commit": "d393ad3e1fa2abaafaad93a7a0b38b69d1695903",
   "package_version": "2.2.7",
   "package_lock_sha256": "53bc7a8cca9e8ec435b5927307622422368db89abe62fa2d135fcd8eda85cf7c",
   "build_command": "npm run build:all",
@@ -9,24 +9,24 @@
   "npm_version": "11.19.1",
   "files": [
     {
-      "path": "assets/IntervalEnergy-DYuADtkF.js",
-      "sha256": "b2d399ebba137710bb0efe736dcf5d529596244cb8512baad510b2f80b947d95",
-      "size": 10293
-    },
-    {
       "path": "assets/IntervalEnergy-DZnd1PxA.css",
       "sha256": "e7f34ba776c8465c821faeccfd40203716db53f77b6724a27b6b1a34d943e6e6",
       "size": 1049
     },
     {
-      "path": "assets/TariffEditor-29ZdrsaT.js",
-      "sha256": "3d0d547d6693d3b61b197c33f3d1a02913e6b1769d88690d40ac821b9baeb145",
-      "size": 6622117
+      "path": "assets/IntervalEnergy-DznDRuS9.js",
+      "sha256": "c4969cafb839e7ce9cba7fa425922744808cd4d39dd27a48ab9d0807a110d07b",
+      "size": 10293
     },
     {
       "path": "assets/TariffEditor-BO5kDYMX.css",
       "sha256": "da8d36a6d5f19db14033cc91657ff5edcd96c748c4383a6e2167d8cb641b456c",
       "size": 122734
+    },
+    {
+      "path": "assets/TariffEditor-X1NeL55v.js",
+      "sha256": "4b99c14c89fc6385d0947b38e0810d724708cd2755ea3fda79cdc5f6b0fdc3b6",
+      "size": 6622117
     },
     {
       "path": "assets/af-DK_CjRn6-CZxsvT2y.js",
@@ -209,9 +209,9 @@
       "size": 31217
     },
     {
-      "path": "assets/index-P_lHo0FM.js",
-      "sha256": "c56c98105baf0a165c043101909f5d19cdf1c370de84e3f7397ccebd39f849b6",
-      "size": 182480
+      "path": "assets/index-CqSiJShz.js",
+      "sha256": "46398144fa768deb390863e3822163c98f10e5810050e78d08c37d89e31a293e",
+      "size": 182832
     },
     {
       "path": "assets/is-BT8UVRze-DWEBuJpb.js",
@@ -440,7 +440,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "e29f6040ffd84cb5cd97fe72bbebce763153282042e1724eb6c69697182bb7af",
+      "sha256": "1d004fb874ca3598764b0bd8b53d99600c04a17c819a3c004d324b986759e79e",
       "size": 958
     }
   ]
