@@ -27,7 +27,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, gateway, ha_client, notifications, settings_store, websocket_handler
+from . import config, ess_mode, gateway, ha_client, notifications, settings_store, websocket_handler
 from .cerbo import (
     CERBO_KINDS,
     CERBO_OWNED_KEYS,
@@ -102,6 +102,8 @@ class MqttState(CerboOverlayMixin):
         self.gateway_capabilities: dict[str, Any] = {}
         self._daemon_keys: set[str] = set()
         self._daemon_received_at: float | None = None
+        self._controller_ess_mode: dict[str, Any] | None = None
+        self._ess_mode_observed_at: float | None = None
         self._alarm_values: dict[str, int] = {}
         # Venus-platform GUIv2 notification slots (desktop parity)
         self._platform_slots: dict[tuple[str, int], dict[str, Any]] = {}
@@ -125,7 +127,7 @@ class MqttState(CerboOverlayMixin):
         if self._on_state_update:
             await self._on_state_update()
 
-    def _merge_daemon_state(self, incoming: dict[str, Any]) -> None:
+    def _merge_daemon_state(self, incoming: dict[str, Any], *, retained: bool = False) -> None:
         """Non-destructive merge of slim inverter/state into current_state.
 
         EV, water, Active Loads and bank SoC always belong to native Cerbo. Other
@@ -135,9 +137,15 @@ class MqttState(CerboOverlayMixin):
         to flash then disappear.
         """
         self._daemon_received_at = time.monotonic()
-        self._daemon_keys.update(incoming.keys() - NATIVE_SECTION_KEYS)
+        self._daemon_keys.update(incoming.keys() - NATIVE_SECTION_KEYS - ess_mode.SERVER_FIELDS)
+        if "ess_mode" in incoming:
+            mode = incoming["ess_mode"]
+            self._controller_ess_mode = dict(mode) if isinstance(mode, dict) else None
+            self._ess_mode_observed_at = (
+                time.time() if isinstance(mode, dict) and not retained else None
+            )
         for key, value in incoming.items():
-            if key in NATIVE_SECTION_KEYS:
+            if key in NATIVE_SECTION_KEYS or key in ess_mode.SERVER_FIELDS:
                 continue
             if key in CERBO_OWNED_KEYS and self._cerbo_has_overlay(key):
                 continue
@@ -159,6 +167,8 @@ class MqttState(CerboOverlayMixin):
         for key in self._daemon_keys:
             self.current_state[key] = None
         self._daemon_received_at = None
+        self._controller_ess_mode = None
+        self._ess_mode_observed_at = None
         self._apply_cerbo_overlays()
 
     def controller_available(self) -> bool:
@@ -185,7 +195,7 @@ class MqttState(CerboOverlayMixin):
         self._portal_id = portal
         logger.info("Discovered Cerbo portal ID: %s", portal)
 
-    async def on_message(self, topic: str, payload: bytes) -> None:
+    async def on_message(self, topic: str, payload: bytes, *, retained: bool = False) -> None:
         """Process incoming MQTT message"""
         try:
             if topic.startswith("N/"):
@@ -214,7 +224,7 @@ class MqttState(CerboOverlayMixin):
                     self.clear_daemon_state()
                     await self._emit()
                 if isinstance(data, dict):
-                    self._merge_daemon_state(data)
+                    self._merge_daemon_state(data, retained=retained)
                     await self._emit()
 
             elif topic == "inverter/portal":
@@ -341,7 +351,17 @@ class MqttState(CerboOverlayMixin):
     def get_state(self) -> dict[str, Any]:
         """Get current state"""
         self.controller_available()
-        return self.current_state
+        result = dict(self.current_state)
+        if (
+            self._controller_ess_mode is not None
+            and self._controller_ess_mode.get("selection_supported") is True
+        ):
+            # Controller status carries the explicit selection and request ack;
+            # the simpler native Hub4 display must not discard these fields.
+            result["ess_mode"] = dict(self._controller_ess_mode)
+        if result:
+            result["ess_mode_observed_at"] = self._ess_mode_observed_at
+        return result
 
     def get_notifications(self) -> list[dict[str, Any]]:
         """Get notification list (inverter-control pushes + alarm transitions)."""
@@ -556,7 +576,9 @@ def _start_mqtt_client():
                     )
                     delay = max(config.MQTT_RECONNECT_MIN, 0.1)
                     async for message in _app_state.mqtt_client.messages:
-                        await ms.on_message(message.topic.value, message.payload)
+                        await ms.on_message(
+                            message.topic.value, message.payload, retained=bool(message.retain)
+                        )
             except asyncio.CancelledError:
                 raise
             except MqttError:
@@ -612,6 +634,7 @@ def _start_version_check():
 
 async def _shutdown_tasks(ha_task, version_task=None):
     """Cancel and await all background tasks."""
+    gateway.invalidate_ess_commands()
     tasks = [task for task in (ha_task, version_task) if task is not None]
     tasks.extend(_app_state.mqtt_tasks)
     _app_state.mqtt_tasks.clear()
@@ -639,6 +662,7 @@ async def _cancel_data_source_tasks() -> None:
     Skips ``asyncio.current_task()`` so a dual-path failover/recovery coroutine
     can replace sibling transports without cancelling itself.
     """
+    gateway.invalidate_ess_commands()
     current = asyncio.current_task()
     tasks = [t for t in _app_state.mqtt_tasks if t is not current]
     _app_state.mqtt_tasks.clear()
