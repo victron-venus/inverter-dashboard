@@ -445,7 +445,6 @@ async def test_water_commands_require_current_nonretained_mode(state, case):
     elif case == "future":
         state._water_mode_observations["7"] = time.monotonic() + 1
     elif case == "malformed":
-        state._water_mode_observations["7"] = time.monotonic() - 31
         await state.on_message("N/site/pump/7/Mode", b'{"value":"1"}')
     elif case == "retired":
         state.clear_cerbo_state()
@@ -453,6 +452,39 @@ async def test_water_commands_require_current_nonretained_mode(state, case):
     with pytest.raises(RuntimeError):
         await ws._dispatch_action("water_mode", {"which": "pump", "mode": 1}, client)
     client.publish.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"{",
+        b"[]",
+        b"{}",
+        b'{"value":"1"}',
+        b'{"value":true}',
+        b'{"value":null}',
+        b'{"value":0.5}',
+        b'{"value":3}',
+        b'{"value":NaN}',
+        b'{"value":Infinity}',
+    ],
+)
+async def test_invalid_current_water_mode_revokes_until_valid_observation(state, payload):
+    await state.on_message("N/site/pump/7/Mode", b'{"value":0}')
+    assert state.water_mode_fresh("7")
+    # A foreign source cannot revoke this source's authority.
+    await state.on_message("N/other-site/pump/7/Mode", payload)
+    assert state.water_mode_fresh("7")
+    await state.on_message("N/site/pump/9/Mode", payload)
+    assert state.water_mode_fresh("7")
+    await state.on_message("N/site/pump/7/State", payload)
+    assert state.water_mode_fresh("7")
+    await state.on_message("N/site/pump/7/Mode", payload)
+    assert not state.water_mode_fresh("7")
+    await state.on_message("N/site/pump/7/Mode", b'{"value":1}', retained=True)
+    assert not state.water_mode_fresh("7")
+    await state.on_message("N/site/pump/7/Mode", b'{"value":1}')
+    assert state.water_mode_fresh("7")
 
 
 @pytest.mark.parametrize(

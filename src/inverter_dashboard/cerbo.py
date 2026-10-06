@@ -322,6 +322,10 @@ class CerboOverlayMixin:
         if kind not in CERBO_KINDS:
             return False
         path = "/".join(parts[4:])
+        if kind == "pump" and path == "Mode":
+            # Any current-source report supersedes the old command authority;
+            # only a valid nonretained Mode below can establish it again.
+            self._water_mode_observations.pop(instance, None)
         if not payload:
             devices = self._cerbo_devices.get(kind, {})
             if instance not in devices:
