@@ -242,7 +242,9 @@ def _new_gateway_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECS, verify=True, follow_redirects=False)
 
 
-async def gateway_poll_loop(app_state, mqtt_state_emit, status_emit=None) -> None:
+async def gateway_poll_loop(
+    app_state, mqtt_state_emit, status_emit=None, *, is_current=lambda: True
+) -> None:
     """Background poller: fetch snapshot → apply → emit.
 
     ``app_state`` is the server AppState duck-type (gateway_* / mqtt_connected).
@@ -252,12 +254,16 @@ async def gateway_poll_loop(app_state, mqtt_state_emit, status_emit=None) -> Non
     delay = max(config.GATEWAY_POLL_INTERVAL, 0.5)
     logged_ok = False
     async with _new_gateway_client() as client:
-        while True:
+        while is_current():
             try:
                 snap = await fetch_snapshot(client)
+                if not is_current():
+                    return
                 app_state.gateway_connected = True
                 app_state.mqtt_connected = False
                 await mqtt_state_emit(snap)
+                if not is_current():
+                    return
                 app_state.gateway_polls += 1
                 if not logged_ok:
                     logger.info(
@@ -270,6 +276,8 @@ async def gateway_poll_loop(app_state, mqtt_state_emit, status_emit=None) -> Non
                 logger.info("IGW poller stopped")
                 raise
             except Exception as e:  # pylint: disable=broad-except
+                if not is_current():
+                    return
                 app_state.gateway_errors += 1
                 was = app_state.gateway_connected
                 app_state.gateway_connected = False
