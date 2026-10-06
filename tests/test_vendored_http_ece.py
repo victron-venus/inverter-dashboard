@@ -39,3 +39,19 @@ def test_uv_lock_and_docker_bind_exact_reviewed_wheel():
         "COPY vendor/http-ece/http_ece-1.2.1-py2.py3-none-any.whl ./vendor/http-ece/"
         in (ROOT / "Dockerfile").read_text()
     )
+
+
+def test_rebuild_output_confined_to_fixed_build_directory(tmp_path, monkeypatch):
+    import pytest
+
+    from scripts import rebuild_http_ece_wheel as rebuild
+
+    monkeypatch.setattr(rebuild, "ROOT", tmp_path)
+    assert rebuild.output_directory("review-2") == tmp_path / "build/vendor-wheels/review-2"
+    for name in ("", "../escape", "/tmp/escape", "nested/name", "..", "a" * 65, "a\\b"):
+        with pytest.raises(ValueError):
+            rebuild.output_directory(name)
+    (tmp_path / "build").symlink_to(tmp_path / "outside", target_is_directory=True)
+    with pytest.raises(ValueError):
+        rebuild.output_directory("review-2")
+    assert not (tmp_path / "outside").exists()

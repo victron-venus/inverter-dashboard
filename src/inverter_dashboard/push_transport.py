@@ -29,6 +29,10 @@ IPV6_SPECIAL = tuple(
 )
 
 
+UNSUPPORTED_ENDPOINT = "Unsupported push endpoint"
+INVALID_KEY = "Invalid push subscription key"
+
+
 def endpoint_host(endpoint: str) -> str:
     """Endpoint authority is never allowed to select a local or arbitrary server."""
     if (
@@ -37,14 +41,14 @@ def endpoint_host(endpoint: str) -> str:
         or any(ord(c) <= 32 or ord(c) >= 127 for c in endpoint)
         or "\\" in endpoint
     ):
-        raise ValueError("Unsupported push endpoint")
+        raise ValueError(UNSUPPORTED_ENDPOINT)
     try:
         parts = urlsplit(endpoint)
         host, port = parts.hostname, parts.port
     except ValueError:
-        raise ValueError("Unsupported push endpoint") from None
+        raise ValueError(UNSUPPORTED_ENDPOINT) from None
     if parts.username is not None or parts.password is not None:
-        raise ValueError("Unsupported push endpoint")
+        raise ValueError(UNSUPPORTED_ENDPOINT)
     if (
         parts.scheme != "https"
         or not host
@@ -52,7 +56,7 @@ def endpoint_host(endpoint: str) -> str:
         or not parts.path.startswith("/")
         or any((parts.fragment, host.endswith(".")))
     ):
-        raise ValueError("Unsupported push endpoint")
+        raise ValueError(UNSUPPORTED_ENDPOINT)
     if host not in EXACT_PUSH_HOSTS and not any(
         host.endswith(suffix) and re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*", host[: -len(suffix)])
         for suffix in PUSH_SUFFIXES
@@ -63,13 +67,13 @@ def endpoint_host(endpoint: str) -> str:
 
 def _decode_key(value: object, size: int) -> bytes:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]+={0,2}", value):
-        raise ValueError("Invalid push subscription key")
+        raise ValueError(INVALID_KEY)
     try:
         decoded = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
     except ValueError:
-        raise ValueError("Invalid push subscription key") from None
+        raise ValueError(INVALID_KEY) from None
     if len(decoded) != size:
-        raise ValueError("Invalid push subscription key")
+        raise ValueError(INVALID_KEY)
     return decoded
 
 
@@ -87,7 +91,7 @@ def validate_subscription(value: object) -> dict:
     try:
         ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), public)
     except ValueError:
-        raise ValueError("Invalid push subscription key") from None
+        raise ValueError(INVALID_KEY) from None
     return {
         "endpoint": endpoint,
         "keys": {key: keys[key].rstrip("=") for key in ("p256dh", "auth")},
@@ -180,11 +184,14 @@ class PushTransport:
                 "Urgency": "normal",
             }
         )
+        tls = ssl.create_default_context()
+        tls.verify_mode = ssl.CERT_REQUIRED
+        tls.check_hostname = True
         connector = aiohttp.TCPConnector(
             resolver=PublicPushResolver(),
             use_dns_cache=False,
             limit=1,
-            ssl=ssl.create_default_context(),
+            ssl=tls,
             force_close=True,
         )
         timeout = aiohttp.ClientTimeout(total=10, connect=3, sock_read=3)

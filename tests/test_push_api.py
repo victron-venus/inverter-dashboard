@@ -231,3 +231,18 @@ async def test_browser_subscription_expiration_time_null_is_accepted(api):
         json={"subscription": sub, "preferences": DEFAULT_PREFERENCES},
     )
     assert response.status_code == 200 and response.json()["registered"] is True
+
+
+def test_openapi_documents_notification_error_contract():
+    from fastapi import FastAPI
+
+    from inverter_dashboard.push_api import ERROR_RESPONSES, install_push_api
+
+    app = FastAPI()
+    install_push_api(app, lambda: None, lambda request: None)
+    schema = app.openapi()
+    for path, methods in schema["paths"].items():
+        assert path.startswith("/api/notifications/")
+        for operation in methods.values():
+            assert {str(code) for code in ERROR_RESPONSES} <= set(operation["responses"])
+    assert "202" in schema["paths"]["/api/notifications/test"]["post"]["responses"]

@@ -17,6 +17,8 @@ from typing import Any
 MAX_SUBSCRIPTIONS = 64
 MAX_EVENTS = 4096
 MAX_DELIVERIES = 1024
+DELIVERY_COUNT_SQL = "SELECT COUNT(*) FROM deliveries"
+EXPIRE_DELIVERIES_SQL = "DELETE FROM deliveries WHERE expires_at<=?"
 
 
 class SubscriptionConflict(ValueError):
@@ -128,7 +130,7 @@ class PushStore:
         if (
             self.count() > MAX_SUBSCRIPTIONS
             or self.db.execute("SELECT COUNT(*) FROM events").fetchone()[0] > MAX_EVENTS
-            or self.db.execute("SELECT COUNT(*) FROM deliveries").fetchone()[0] > MAX_DELIVERIES
+            or self.db.execute(DELIVERY_COUNT_SQL).fetchone()[0] > MAX_DELIVERIES
         ):
             raise ValueError("Push store exceeds limits")
         self.db.execute("SELECT key,value FROM metadata").fetchall()
@@ -230,8 +232,8 @@ class PushStore:
 
     def has_delivery_capacity(self, now: float) -> bool:
         with self.db:
-            self.db.execute("DELETE FROM deliveries WHERE expires_at<=?", (now,))
-        return self.db.execute("SELECT COUNT(*) FROM deliveries").fetchone()[0] < MAX_DELIVERIES
+            self.db.execute(EXPIRE_DELIVERIES_SQL, (now,))
+        return self.db.execute(DELIVERY_COUNT_SQL).fetchone()[0] < MAX_DELIVERIES
 
     def enqueue(
         self, event_id: str, payload: dict, targets: list[str], now: float, epoch: str = "test"
@@ -241,12 +243,10 @@ class PushStore:
         if len(encoded.encode()) > 3072:
             raise ValueError("Push payload exceeds limit")
         with self.db:
-            self.db.execute("DELETE FROM deliveries WHERE expires_at<=?", (now,))
+            self.db.execute(EXPIRE_DELIVERIES_SQL, (now,))
             if not self._remember(event_id, now):
                 return False
-            available = (
-                MAX_DELIVERIES - self.db.execute("SELECT COUNT(*) FROM deliveries").fetchone()[0]
-            )
+            available = MAX_DELIVERIES - self.db.execute(DELIVERY_COUNT_SQL).fetchone()[0]
             for identifier in targets[: max(0, available)]:
                 self.db.execute(
                     "INSERT OR IGNORE INTO deliveries VALUES (?,?,?,?,?,0,?)",
@@ -267,7 +267,7 @@ class PushStore:
 
     def next_delivery(self, now: float, *, claim: bool = False) -> dict[str, Any] | None:
         with self.db:
-            self.db.execute("DELETE FROM deliveries WHERE expires_at<=?", (now,))
+            self.db.execute(EXPIRE_DELIVERIES_SQL, (now,))
         row = self.db.execute(
             "SELECT * FROM deliveries WHERE next_at<=? ORDER BY next_at LIMIT 1", (now,)
         ).fetchone()

@@ -13,6 +13,8 @@ from .cerbo import number
 from .push_events import MQTT_PRIMING_SECONDS
 from .push_service import PushService
 
+EV_POWER = "Ac/Power"
+
 
 @dataclass(frozen=True)
 class Sample:
@@ -77,16 +79,16 @@ def selected_samples(ms) -> dict[str, Sample]:
         )
     else:
         selected = next(
-            (item for item in chargers if number(item[1].get("Ac/Power")) is not None), None
+            (item for item in chargers if number(item[1].get(EV_POWER)) is not None), None
         )
     if selected is not None:
         identifier, leaves = selected
-        power = number(leaves.get("Ac/Power"))
+        power = number(leaves.get(EV_POWER))
         samples["ev"] = Sample(
             "ev",
             f"evcharger:{identifier}",
             power > 10 if power is not None else None,
-            ("evcharger", identifier, "Ac/Power"),
+            ("evcharger", identifier, EV_POWER),
         )
     soc = _soc_sample(ms)
     if soc is not None:
@@ -182,17 +184,19 @@ class PushObserver:
             incoming = None
         valid_measurement = isinstance(incoming, dict) and number(incoming.get("value")) is not None
         for sample in self._selection(ms).values():
-            if sample.value is None or (
-                leaf[:2] == sample.leaf[:2] and leaf[2] in ("", "Connected")
-            ):
-                processor.sample(sample.kind, sample.identifier, None, now)
-            elif leaf == sample.leaf:
-                self.service.queue(
-                    processor.sample(
-                        sample.kind,
-                        sample.identifier,
-                        None if retained or not valid_measurement else sample.value,
-                        now,
-                        prime=priming,
-                    )
+            self._mqtt_sample(sample, leaf, now, retained or not valid_measurement, priming)
+
+    def _mqtt_sample(self, sample, leaf, now, clear_measurement, priming) -> None:
+        processor = self.service.processor
+        if sample.value is None or (leaf[:2] == sample.leaf[:2] and leaf[2] in ("", "Connected")):
+            processor.sample(sample.kind, sample.identifier, None, now)
+        elif leaf == sample.leaf:
+            self.service.queue(
+                processor.sample(
+                    sample.kind,
+                    sample.identifier,
+                    None if clear_measurement else sample.value,
+                    now,
+                    prime=priming,
                 )
+            )

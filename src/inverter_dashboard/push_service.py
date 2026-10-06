@@ -108,7 +108,7 @@ class PushService:
             self.fail()
 
     def _retire(self) -> None:
-        for task, (epoch, _) in list(self.inflight.items()):
+        for task, (epoch, _) in self.inflight.items():
             if epoch != "test":
                 task.cancel()
         self.processor.reset(uuid.uuid4().hex, time.time())
@@ -130,7 +130,7 @@ class PushService:
         return selected
 
     def _cancel_subscription(self, identifier: str) -> None:
-        for task, (_, subscription_id) in list(self.inflight.items()):
+        for task, (_, subscription_id) in self.inflight.items():
             if subscription_id == identifier:
                 task.cancel()
 

@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,7 +40,21 @@ def verify_runtime(sdist: Path, wheel: Path) -> dict[str, str]:
         return expected
 
 
-def rebuild(wheelhouse: Path, output: Path) -> Path:
+def output_directory(name: str) -> Path:
+    """Keep all writes below the fixed repository build directory."""
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name) is None:
+        raise ValueError("Output name must be a simple directory name")
+    base = ROOT / "build" / "vendor-wheels"
+    output = base / name
+    if any(path.is_symlink() for path in (output, *output.parents)):
+        raise ValueError("Output must not traverse symlinks")
+    if not output.resolve().is_relative_to(base.resolve()):
+        raise ValueError("Output must remain inside the build directory")
+    return output
+
+
+def rebuild(wheelhouse: Path, output_name: str) -> Path:
+    output = output_directory(output_name)
     if sys.version_info[:2] != (3, 12):
         raise ValueError("Use the reviewed Python 3.12 build interpreter")
     sdist = VENDOR / "http_ece-1.2.1.tar.gz"
@@ -116,9 +131,9 @@ def rebuild(wheelhouse: Path, output: Path) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheelhouse", required=True, type=Path)
-    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--output-name", required=True)
     args = parser.parse_args()
-    rebuild(args.wheelhouse, args.output)
+    rebuild(args.wheelhouse, args.output_name)
 
 
 if __name__ == "__main__":

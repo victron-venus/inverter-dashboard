@@ -399,6 +399,7 @@ class AppState:
     gateway_errors: int = 0
     data_source: str = "none"  # "mqtt" | "igw" | "none"
     source_generation: int = 0
+    source_stopped: asyncio.Event | None = None
 
     def __post_init__(self):
         if self.mqtt_tasks is None:
@@ -510,10 +511,26 @@ def _next_backoff(delay: float) -> float:
     return min(delay * 2, config.MQTT_RECONNECT_MAX)
 
 
+def _retire_source(owner) -> None:
+    owner.source_generation = getattr(owner, "source_generation", 0) + 1
+    stopped = getattr(owner, "source_stopped", None)
+    if stopped is not None:
+        stopped.set()
+
+
+async def _wait_for_source_retry(stopped: asyncio.Event, delay: float) -> None:
+    """Wake immediately on retirement, otherwise apply the reconnect backoff."""
+    try:
+        await asyncio.wait_for(stopped.wait(), delay)
+    except TimeoutError:
+        pass
+
+
 def _new_source_state(source: str):
     """Capture a source owner; late work can never target a replacement state."""
     owner = _app_state
-    owner.source_generation = getattr(owner, "source_generation", 0) + 1
+    _retire_source(owner)
+    owner.source_stopped = asyncio.Event()
     generation = owner.source_generation
     ms = MqttState()
     owner.mqtt_state = ms
@@ -533,12 +550,12 @@ def _new_source_state(source: str):
 
     ms.set_state_callback(emit)
     websocket_handler.set_mqtt_state(ms)
-    return owner, ms, current
+    return owner, ms, current, owner.source_stopped
 
 
 def _start_gateway_client():
     """Poll inverter-gateway /v1/snapshot (no Cerbo MQTT client)."""
-    owner, ms, current = _new_source_state("igw")
+    owner, ms, current, _stopped = _new_source_state("igw")
     owner.mqtt_client = None
     if config.CERBO_PORTAL_ID:
         ms._portal_id = config.CERBO_PORTAL_ID
@@ -568,7 +585,7 @@ def _start_gateway_client():
 
 def _start_mqtt_client():
     """Start an owner-bound MQTT client loop with auto-reconnect."""
-    owner, ms, current = _new_source_state("mqtt")
+    owner, ms, current, stopped = _new_source_state("mqtt")
     owner.mqtt_client = _make_mqtt_client()
 
     async def mqtt_connect_and_loop():
@@ -651,7 +668,7 @@ def _start_mqtt_client():
                     await asyncio.gather(keepalive_task, return_exceptions=True)
             if not current():
                 break
-            await asyncio.sleep(delay)
+            await _wait_for_source_retry(stopped, delay)
             if not current():
                 break
             delay = _next_backoff(delay)
@@ -682,7 +699,7 @@ def _start_version_check():
 async def _shutdown_tasks(ha_task, version_task=None):
     """Cancel and await all background tasks."""
     gateway.invalidate_ess_commands()
-    _app_state.source_generation = getattr(_app_state, "source_generation", 0) + 1
+    _retire_source(_app_state)
     if _push_service is not None:
         _push_service.disconnect()
     tasks = [task for task in (ha_task, version_task) if task is not None]
@@ -713,7 +730,7 @@ async def _cancel_data_source_tasks() -> None:
     can replace sibling transports without cancelling itself.
     """
     gateway.invalidate_ess_commands()
-    _app_state.source_generation = getattr(_app_state, "source_generation", 0) + 1
+    _retire_source(_app_state)
     if _push_service is not None:
         _push_service.disconnect()
     current = asyncio.current_task()
@@ -894,9 +911,15 @@ def _mount_vue_dist():
 _mount_vue_dist()
 
 
-@app.get("/notifications-sw.js")
-@app.get("/manifest.webmanifest")
-@app.get("/notification-icon.svg")
+@app.get(
+    "/notifications-sw.js", responses={404: {"description": "Notification resource not built"}}
+)
+@app.get(
+    "/manifest.webmanifest", responses={404: {"description": "Notification resource not built"}}
+)
+@app.get(
+    "/notification-icon.svg", responses={404: {"description": "Notification resource not built"}}
+)
 async def notification_static(request: Request):
     """Only these inert root-scoped resources are exempt from dashboard auth."""
     names = {

@@ -278,15 +278,19 @@ async def gateway_poll_loop(
             except Exception as e:  # pylint: disable=broad-except
                 if not is_current():
                     return
-                app_state.gateway_errors += 1
-                was = app_state.gateway_connected
-                app_state.gateway_connected = False
-                app_state.mqtt_connected = False
                 logged_ok = False
-                if was:
-                    logger.warning("IGW poll failed: %s", e)
-                    if status_emit is not None:
-                        await status_emit()
-                else:
-                    logger.debug("IGW poll failed: %s", e)
+                await _report_gateway_failure(app_state, status_emit, e)
             await asyncio.sleep(delay)
+
+
+async def _report_gateway_failure(app_state, status_emit, error) -> None:
+    app_state.gateway_errors += 1
+    was = app_state.gateway_connected
+    app_state.gateway_connected = False
+    app_state.mqtt_connected = False
+    if was:
+        logger.warning("IGW poll failed: %s", error)
+        if status_emit is not None:
+            await status_emit()
+    else:
+        logger.debug("IGW poll failed: %s", error)

@@ -107,7 +107,7 @@ async def test_retired_epoch_checked_before_send_and_inflight_cancelled(service)
     sending = asyncio.create_task(current._deliver(delivery))
     await started.wait()
     current.disconnect()
-    await sending
+    await asyncio.wait_for(asyncio.gather(sending), 1)
     assert cancelled.is_set()
     assert current.store.next_delivery(time.time() + 1) is None
 
@@ -132,7 +132,7 @@ async def test_subscription_revocation_cancels_inflight_and_pending(service, cha
         current.delete(subscription["endpoint"])
     else:
         current.register(subscription, {key: False for key in DEFAULT_PREFERENCES})
-    await sending
+    await asyncio.wait_for(asyncio.gather(sending), 1)
     assert cancelled.is_set()
     assert current.store.next_delivery(time.time()) is None
 

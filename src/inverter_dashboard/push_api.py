@@ -17,6 +17,19 @@ from .push_events import DEFAULT_PREFERENCES
 from .push_service import PushRateLimit, PushService
 from .push_store import SubscriptionConflict
 
+INVALID_SUBSCRIPTION = "Invalid subscription request"
+ERROR_RESPONSES = {
+    400: {"description": "Malformed notification request"},
+    401: {"description": "Dashboard authentication required"},
+    403: {"description": "Same-origin HTTPS request required"},
+    404: {"description": "Subscription not registered"},
+    409: {"description": "Subscription keys conflict"},
+    413: {"description": "Request body too large"},
+    415: {"description": "JSON request required"},
+    429: {"description": "Notification rate limit reached"},
+    503: {"description": "Web Push unavailable"},
+}
+
 
 def _origin_authority(value: str) -> tuple[str, int]:
     try:
@@ -71,7 +84,7 @@ async def request_body(request: Request) -> dict:
                 if len(data) > 8192:
                     raise HTTPException(status_code=413, detail="Request body too large")
         body = json.loads(data)
-    except (ValueError, UnicodeDecodeError, TimeoutError):
+    except (ValueError, TimeoutError):
         raise HTTPException(status_code=400, detail="Invalid JSON body") from None
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
@@ -82,40 +95,35 @@ def _response(value: dict, status: int = 200) -> JSONResponse:
     return JSONResponse(value, status_code=status, headers={"Cache-Control": "no-store"})
 
 
-def install_push_api(
-    app: FastAPI, get_service: Callable[[], PushService | None], authorize: Callable
-) -> None:
-    """Register narrow APIs; test factories can inject an entirely offline service."""
-    router = APIRouter(prefix="/api/notifications")
-    mutation_times: deque[float] = deque()
+class PushAPI:
+    """Keep endpoint state and helpers separate from route registration."""
 
-    @app.middleware("http")
-    async def no_store(request: Request, call_next):
-        response = await call_next(request)
-        if request.url.path.startswith("/api/notifications/"):
-            response.headers["Cache-Control"] = "no-store"
-        return response
+    def __init__(self, get_service: Callable[[], PushService | None], authorize: Callable):
+        self.get_service = get_service
+        self.authorize = authorize
+        self.mutation_times: deque[float] = deque()
 
-    async def mutation(request: Request) -> tuple[PushService, dict]:
-        authorize(request)
+    async def mutation(self, request: Request) -> tuple[PushService, dict]:
+        self.authorize(request)
         verify_origin(request)
         now = time.monotonic()
-        while mutation_times and now - mutation_times[0] >= 60:
-            mutation_times.popleft()
-        if len(mutation_times) >= 60:
+        while self.mutation_times and now - self.mutation_times[0] >= 60:
+            self.mutation_times.popleft()
+        if len(self.mutation_times) >= 60:
             raise HTTPException(status_code=429, detail="Notification API rate limit reached")
-        mutation_times.append(now)
-        service = get_service()
+        self.mutation_times.append(now)
+        service = self.get_service()
         if service is None or not service.available:
             raise HTTPException(status_code=503, detail="Web Push unavailable")
         return service, await request_body(request)
 
+    @staticmethod
     def endpoint(body: dict) -> str:
         if set(body) != {"endpoint"} or not isinstance(body["endpoint"], str):
-            raise HTTPException(status_code=400, detail="Invalid subscription request")
+            raise HTTPException(status_code=400, detail=INVALID_SUBSCRIPTION)
         return body["endpoint"]
 
-    def guarded(operation: Callable):
+    def guarded(self, operation: Callable):
         try:
             return operation()
         except SubscriptionConflict:
@@ -123,19 +131,18 @@ def install_push_api(
         except PushRateLimit:
             raise HTTPException(status_code=429, detail="Notification rate limit reached") from None
         except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid subscription request") from None
+            raise HTTPException(status_code=400, detail=INVALID_SUBSCRIPTION) from None
         except KeyError:
             raise HTTPException(status_code=404, detail="Subscription not registered") from None
         except (sqlite3.Error, OSError):
-            service = get_service()
+            service = self.get_service()
             if service is not None:
                 service.fail()
             raise HTTPException(status_code=503, detail="Web Push unavailable") from None
 
-    @router.get("/status")
-    async def status(request: Request):
-        authorize(request)
-        service = get_service()
+    async def status(self, request: Request):
+        self.authorize(request)
+        service = self.get_service()
         if service is not None:
             return _response(service.status())
         return _response(
@@ -149,10 +156,9 @@ def install_push_api(
             }
         )
 
-    @router.post("/subscription/status")
-    async def subscription_status(request: Request):
-        service, body = await mutation(request)
-        registered = guarded(lambda: service.registered(endpoint(body)))
+    async def subscription_status(self, request: Request):
+        service, body = await self.mutation(request)
+        registered = self.guarded(lambda: service.registered(self.endpoint(body)))
         return _response(
             {
                 "registered": registered is not None,
@@ -162,24 +168,41 @@ def install_push_api(
             }
         )
 
-    @router.post("/subscription")
-    async def subscribe(request: Request):
-        service, body = await mutation(request)
+    async def subscribe(self, request: Request):
+        service, body = await self.mutation(request)
         if set(body) != {"subscription", "preferences"}:
-            raise HTTPException(status_code=400, detail="Invalid subscription request")
-        selected = guarded(lambda: service.register(body["subscription"], body["preferences"]))
+            raise HTTPException(status_code=400, detail=INVALID_SUBSCRIPTION)
+        selected = self.guarded(lambda: service.register(body["subscription"], body["preferences"]))
         return _response({"registered": True, "preferences": selected})
 
-    @router.delete("/subscription")
-    async def unsubscribe(request: Request):
-        service, body = await mutation(request)
-        guarded(lambda: service.delete(endpoint(body)))
+    async def unsubscribe(self, request: Request):
+        service, body = await self.mutation(request)
+        self.guarded(lambda: service.delete(self.endpoint(body)))
         return _response({"registered": False})
 
-    @router.post("/test")
-    async def test(request: Request):
-        service, body = await mutation(request)
-        guarded(lambda: service.test(endpoint(body)))
+    async def test(self, request: Request):
+        service, body = await self.mutation(request)
+        self.guarded(lambda: service.test(self.endpoint(body)))
         return _response({"queued": True}, 202)
+
+
+def install_push_api(
+    app: FastAPI, get_service: Callable[[], PushService | None], authorize: Callable
+) -> None:
+    """Register narrow APIs; test factories can inject an entirely offline service."""
+    router = APIRouter(prefix="/api/notifications", responses=ERROR_RESPONSES)
+    api = PushAPI(get_service, authorize)
+    router.add_api_route("/status", api.status, methods=["GET"])
+    router.add_api_route("/subscription/status", api.subscription_status, methods=["POST"])
+    router.add_api_route("/subscription", api.subscribe, methods=["POST"])
+    router.add_api_route("/subscription", api.unsubscribe, methods=["DELETE"])
+    router.add_api_route("/test", api.test, methods=["POST"], status_code=202)
+
+    @app.middleware("http")
+    async def no_store(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/notifications/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     app.include_router(router)

@@ -24,7 +24,7 @@ async def test_gateway_captured_callbacks_reject_replaced_owner_and_generation(m
 
     monkeypatch.setattr(gateway, "gateway_poll_loop", poll)
     server._start_gateway_client()
-    await owner.mqtt_tasks[-1]
+    await asyncio.wait_for(asyncio.gather(owner.mqtt_tasks[-1]), 1)
     original = owner.mqtt_state
     old_apply, old_status, current = callbacks[0]
     await old_apply({"inverter": {"marker": "first"}})
@@ -40,7 +40,7 @@ async def test_gateway_captured_callbacks_reject_replaced_owner_and_generation(m
     assert not observer.snapshot.called and not broadcast.called
     # A replacement of the same transport also rejects the former callbacks.
     server._start_gateway_client()
-    await owner.mqtt_tasks[-1]
+    await asyncio.wait_for(asyncio.gather(owner.mqtt_tasks[-1]), 1)
     replacement = owner.mqtt_state
     replacement.current_state["marker"] = "replacement"
     await old_apply({"inverter": {"marker": "late"}})
@@ -115,7 +115,7 @@ async def test_mqtt_late_message_and_cleanup_do_not_touch_replacement_state(monk
     owner.data_source, owner.mqtt_state = "igw", replacement
     owner.gateway_connected, owner.mqtt_connected = True, False
     release.set()
-    await task
+    await asyncio.wait_for(asyncio.gather(task), 1)
     original.on_message.assert_not_called()
     observer.mqtt.assert_not_called()
     service.disconnect.assert_not_called()
@@ -160,7 +160,7 @@ async def test_mqtt_source_switch_during_message_await_skips_observer(monkeypatc
     monkeypatch.setattr(server.MqttState, "on_message", delayed_apply)
     monkeypatch.setattr(server, "_make_mqtt_client", Client)
     server._start_mqtt_client()
-    await owner.mqtt_tasks[0]
+    await asyncio.wait_for(asyncio.gather(owner.mqtt_tasks[0]), 1)
     observer.mqtt.assert_not_called()
     assert owner.mqtt_state is replacement
 
@@ -304,3 +304,16 @@ async def test_real_mqtt_loop_passes_actual_payload_to_independent_push_observer
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         await service.close()
+
+
+async def test_source_retirement_wakes_reconnect_backoff_without_waiting(monkeypatch):
+    owner = server.AppState()
+    monkeypatch.setattr(server, "_app_state", owner)
+    monkeypatch.setattr(server.websocket_handler, "set_mqtt_state", Mock())
+    _, _, current, stopped = server._new_source_state("mqtt")
+    waiting = asyncio.create_task(server._wait_for_source_retry(stopped, 60))
+    await asyncio.sleep(0)
+    assert not waiting.done()
+    server._retire_source(owner)
+    await asyncio.wait_for(asyncio.gather(waiting), 1)
+    assert stopped.is_set() and not current()

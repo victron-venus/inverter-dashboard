@@ -655,8 +655,11 @@ hash-pinned build tool wheels listed in `upstream-inputs.json` into a wheelhouse
 then use the resolved Python 3.12 executable (3.12.14 was used for qualification):
 
 ```sh
-python3.12 scripts/rebuild_http_ece_wheel.py --wheelhouse /path/to/wheelhouse --output /tmp/http-ece-rebuilt
+python3.12 scripts/rebuild_http_ece_wheel.py --wheelhouse /path/to/wheelhouse --output-name rebuilt
 ```
+
+The wheel is written beneath `build/vendor-wheels/rebuilt/`; output names cannot
+contain path separators or traverse symlinks.
 
 The build fixes `SOURCE_DATE_EPOCH`, installs only hash-checked offline tools,
 and compares every packaged runtime Python file with the upstream source. The
