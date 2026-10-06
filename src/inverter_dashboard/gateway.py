@@ -165,6 +165,9 @@ def apply_snapshot(ms: Any, snap: dict[str, Any]) -> None:
             ms._merge_daemon_state(snap["inverter"])
         elif snap["inverter"] is None:
             ms.clear_daemon_state()
+    if ms.gateway_capabilities.get("setpoint_override") is not True:
+        ms.current_state["setpoint_override"] = None
+        ms._setpoint_override_observed_at = None
     ms.replace_cerbo_snapshot(snap)
 
     # Alert banners (desktop parity): Venus-platform GUIv2 slots from IGW
@@ -224,7 +227,11 @@ async def fetch_snapshot(client: httpx.AsyncClient) -> dict[str, Any]:
 
 
 async def post_command(
-    name: str, body: dict[str, Any] | None = None, *, expected_generation: int | None = None
+    name: str,
+    body: dict[str, Any] | None = None,
+    *,
+    expected_generation: int | None = None,
+    before_send: Callable[[], None] | None = None,
 ) -> None:
     """POST /v1/commands/{name} (whitelist only on the gateway)."""
     base = config.validate_gateway_url(config.GATEWAY_URL)
@@ -233,6 +240,8 @@ async def post_command(
     async with _new_gateway_client() as client:
         if expected_generation is not None and expected_generation != _source_generation:
             raise ValueError("Connection changed before ESS selection")
+        if before_send is not None:
+            before_send()
         resp = await client.post(url, headers=headers, json=body or {}, follow_redirects=False)
         resp.raise_for_status()
 
