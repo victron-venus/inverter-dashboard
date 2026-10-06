@@ -523,6 +523,7 @@ async def _wait_for_source_retry(stopped: asyncio.Event, delay: float) -> None:
     try:
         await asyncio.wait_for(stopped.wait(), delay)
     except TimeoutError:
+        # Reaching the backoff deadline is the normal signal to reconnect.
         pass
 
 

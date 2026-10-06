@@ -18,16 +18,19 @@ from .push_service import PushRateLimit, PushService
 from .push_store import SubscriptionConflict
 
 INVALID_SUBSCRIPTION = "Invalid subscription request"
+SAME_ORIGIN_REQUIRED = "Same-origin HTTPS request required"
+BODY_TOO_LARGE = "Request body too large"
+PUSH_UNAVAILABLE = "Web Push unavailable"
 ERROR_RESPONSES = {
     400: {"description": "Malformed notification request"},
     401: {"description": "Dashboard authentication required"},
-    403: {"description": "Same-origin HTTPS request required"},
+    403: {"description": SAME_ORIGIN_REQUIRED},
     404: {"description": "Subscription not registered"},
     409: {"description": "Subscription keys conflict"},
-    413: {"description": "Request body too large"},
+    413: {"description": BODY_TOO_LARGE},
     415: {"description": "JSON request required"},
     429: {"description": "Notification rate limit reached"},
-    503: {"description": "Web Push unavailable"},
+    503: {"description": PUSH_UNAVAILABLE},
 }
 
 
@@ -46,7 +49,7 @@ def _origin_authority(value: str) -> tuple[str, int]:
             raise ValueError
         return parsed.hostname, parsed.port or 443
     except ValueError:
-        raise HTTPException(status_code=403, detail="Same-origin HTTPS request required") from None
+        raise HTTPException(status_code=403, detail=SAME_ORIGIN_REQUIRED) from None
 
 
 def verify_origin(request: Request) -> None:
@@ -59,7 +62,7 @@ def verify_origin(request: Request) -> None:
     origin = _origin_authority(request.headers.get("origin", ""))
     host = _origin_authority("https://" + request.headers.get("host", ""))
     if origin != host or request.headers.get("sec-fetch-site") not in (None, "same-origin", "none"):
-        raise HTTPException(status_code=403, detail="Same-origin HTTPS request required")
+        raise HTTPException(status_code=403, detail=SAME_ORIGIN_REQUIRED)
     if (
         request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         != "application/json"
@@ -75,14 +78,14 @@ async def request_body(request: Request) -> dict:
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid request body") from None
         if count < 0 or count > 8192:
-            raise HTTPException(status_code=413, detail="Request body too large")
+            raise HTTPException(status_code=413, detail=BODY_TOO_LARGE)
     data = bytearray()
     try:
         async with asyncio.timeout(5):
             async for chunk in request.stream():
                 data.extend(chunk)
                 if len(data) > 8192:
-                    raise HTTPException(status_code=413, detail="Request body too large")
+                    raise HTTPException(status_code=413, detail=BODY_TOO_LARGE)
         body = json.loads(data)
     except (ValueError, TimeoutError):
         raise HTTPException(status_code=400, detail="Invalid JSON body") from None
@@ -114,7 +117,7 @@ class PushAPI:
         self.mutation_times.append(now)
         service = self.get_service()
         if service is None or not service.available:
-            raise HTTPException(status_code=503, detail="Web Push unavailable")
+            raise HTTPException(status_code=503, detail=PUSH_UNAVAILABLE)
         return service, await request_body(request)
 
     @staticmethod
@@ -138,9 +141,9 @@ class PushAPI:
             service = self.get_service()
             if service is not None:
                 service.fail()
-            raise HTTPException(status_code=503, detail="Web Push unavailable") from None
+            raise HTTPException(status_code=503, detail=PUSH_UNAVAILABLE) from None
 
-    async def status(self, request: Request):
+    def status(self, request: Request):
         self.authorize(request)
         service = self.get_service()
         if service is not None:

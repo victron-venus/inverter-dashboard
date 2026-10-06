@@ -48,7 +48,7 @@ def test_rebuild_output_confined_to_fixed_build_directory(tmp_path, monkeypatch)
 
     monkeypatch.setattr(rebuild, "ROOT", tmp_path)
     assert rebuild.output_directory("review-2") == tmp_path / "build/vendor-wheels/review-2"
-    for name in ("", "../escape", "/tmp/escape", "nested/name", "..", "a" * 65, "a\\b"):
+    for name in ("", "../escape", "/outside/escape", "nested/name", "..", "a" * 65, "a\\b"):
         with pytest.raises(ValueError):
             rebuild.output_directory(name)
     (tmp_path / "build").symlink_to(tmp_path / "outside", target_is_directory=True)
