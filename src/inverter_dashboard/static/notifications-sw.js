@@ -129,8 +129,9 @@ async function deliver(value) {
   const current = await settings()
   if (!current.enabled || current.generation !== config.generation) return false
   try {
+    const bodyPrefix = event.body ? `${event.body}\n` : ''
     await self.registration.showNotification(event.title, {
-      body: `${event.body ? `${event.body}\n` : ''}Event: ${new Date(event.timestamp).toLocaleString(undefined, { timeZoneName: 'short' })}`,
+      body: `${bodyPrefix}Event: ${new Date(event.timestamp).toLocaleString(undefined, { timeZoneName: 'short' })}`,
       tag: event.key,
       timestamp: event.timestamp,
       icon: '/notification-icon.svg',
@@ -148,6 +149,7 @@ self.addEventListener('install', (event) => { event.waitUntil(self.skipWaiting()
 self.addEventListener('activate', (event) => { event.waitUntil(self.clients.claim()) })
 self.addEventListener('message', (event) => {
   // Only controlled same-origin dashboard windows may configure this worker.
+  if (event.origin !== self.location.origin) return
   if (!event.source?.url || new URL(event.source.url).origin !== self.location.origin) return
   const request = event.data
   event.waitUntil((async () => {

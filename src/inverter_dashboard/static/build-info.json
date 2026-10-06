@@ -1,22 +1,22 @@
 {
   "package": "inverter-dashboard-vue",
-  "version": "2.2.7-beta.5",
+  "version": "2.2.7-beta.7",
   "files": [
+    {
+      "path": "assets/IntervalEnergy-CjXkgAcG.js",
+      "sha256": "b932d304dab397880002b5635c04269d1747f843cf49eb98599b01c96a14986a"
+    },
     {
       "path": "assets/IntervalEnergy-DZnd1PxA.css",
       "sha256": "e7f34ba776c8465c821faeccfd40203716db53f77b6724a27b6b1a34d943e6e6"
     },
     {
-      "path": "assets/IntervalEnergy-qe7zYhj1.js",
-      "sha256": "653d311dd7000fcc0236103613a2d8e6a7efbeaffc4182beb0154a5171bae2a7"
-    },
-    {
-      "path": "assets/TariffEditor-B3ZMlOJf.js",
-      "sha256": "e4ccd563273f14ae536322306692437ac53e938a9403bbd58f092f00004d6f72"
-    },
-    {
       "path": "assets/TariffEditor-BO5kDYMX.css",
       "sha256": "da8d36a6d5f19db14033cc91657ff5edcd96c748c4383a6e2167d8cb641b456c"
+    },
+    {
+      "path": "assets/TariffEditor-DkY6sFlC.js",
+      "sha256": "0c41d39c8ab8616ead749c1fae068b8a6bab6686161f49403c842e34f5f25c9e"
     },
     {
       "path": "assets/af-DK_CjRn6-CZxsvT2y.js",
@@ -159,12 +159,12 @@
       "sha256": "6d9e56f7dc42978594aaaa4a53482112afd08d83f5a3ee787ee730054a660668"
     },
     {
-      "path": "assets/index-CA9Cu3UM.css",
-      "sha256": "d6486a133b054abbd3eb5a5b6d39253863742dea7629a174754df133da73c445"
+      "path": "assets/index-CXn0YRIT.css",
+      "sha256": "16e01dc83748e1b3855a5094222b089836c921e62bf83c0dc5e07db2b941c6dd"
     },
     {
-      "path": "assets/index-lZQIeaYz.js",
-      "sha256": "85a9ad320a77961d28215f1f55f7b845dfeb3b5fe0909f1052842f3c48555ce9"
+      "path": "assets/index-_hGWbhVF.js",
+      "sha256": "d652361c6402df4de059ac7f35c2c64ba6d333d6fed03046bf2cc2120d1b417c"
     },
     {
       "path": "assets/is-BT8UVRze-DWEBuJpb.js",
@@ -348,7 +348,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "f804add7ca79738fcb3be9a792b023a47701d32e0182f1b9f3dcca1a9c0e3529"
+      "sha256": "3eecfc3aaf4c22a2280eda27bc5cbc6ec34a7f00aa8dac511394796a0b3a2183"
     },
     {
       "path": "manifest.webmanifest",
@@ -360,7 +360,7 @@
     },
     {
       "path": "notifications-sw.js",
-      "sha256": "e2baa29128968f2f7af9be9efda224275e5a7c8d2835478b5ea9ad7185b4e95c"
+      "sha256": "1fe60df01b1ed26877870d94868b0f019a88d62414875f749be1f4cc0a0b3702"
     }
   ]
 }
