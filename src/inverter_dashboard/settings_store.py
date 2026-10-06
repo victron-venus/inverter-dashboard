@@ -149,6 +149,17 @@ def _valid_setting(key: str, value: Any, expected_type: type) -> bool:
     return not (key in SECRET_KEYS and value == "***")
 
 
+def _sync_settings_directory(parent: str) -> None:
+    """Persist the rename on POSIX; Windows does not expose directory fsync."""
+    if os.name != "posix":
+        return
+    directory = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
 def _write_private_settings(merged: dict[str, Any]) -> None:
     path = settings_path()
     parent = os.path.dirname(path)
@@ -161,6 +172,7 @@ def _write_private_settings(merged: dict[str, Any]) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        _sync_settings_directory(parent)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)

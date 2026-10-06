@@ -245,3 +245,39 @@ def test_explicit_durable_settings_private_atomic_and_masked_preserving(tmp_path
         settings_store.save_settings({"show_daily_stats": True})
     assert path.read_bytes() == before
     assert list(path.parent.iterdir()) == [path]
+
+
+@pytest.mark.skipif(settings_store.os.name != "posix", reason="Directory fsync is POSIX-only")
+def test_directory_sync_runs_after_replace_and_failure_is_reported(tmp_path, monkeypatch):
+    import stat
+
+    monkeypatch.setenv("INVERTER_DASHBOARD_SETTINGS_FILE", str(tmp_path / "settings.json"))
+    calls = []
+    real_fsync = settings_store.os.fsync
+    real_replace = settings_store.os.replace
+
+    def sync(fd):
+        is_directory = stat.S_ISDIR(settings_store.os.fstat(fd).st_mode)
+        calls.append("directory" if is_directory else "file")
+        if is_directory:
+            raise OSError("synthetic directory durability failure")
+        real_fsync(fd)
+
+    def replace(source, target):
+        calls.append("replace")
+        real_replace(source, target)
+
+    monkeypatch.setattr(settings_store.os, "fsync", sync)
+    monkeypatch.setattr(settings_store.os, "replace", replace)
+    with pytest.raises(OSError, match="durability"):
+        settings_store.save_settings({"show_daily_stats": False})
+    assert calls == ["file", "replace", "directory"]
+    assert list(tmp_path.iterdir()) == [tmp_path / "settings.json"]
+
+
+def test_directory_sync_skips_unsupported_windows_api(monkeypatch):
+    monkeypatch.setattr(settings_store.os, "name", "nt")
+    opened = []
+    monkeypatch.setattr(settings_store.os, "open", lambda *_: opened.append(True))
+    settings_store._sync_settings_directory("unused-fixture-parent")
+    assert opened == []

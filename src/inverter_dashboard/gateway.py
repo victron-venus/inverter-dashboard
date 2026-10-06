@@ -24,7 +24,7 @@ from typing import Any, Literal
 
 import httpx
 
-from . import config, notifications
+from . import config, controller_commands, notifications
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +242,16 @@ async def post_command(
             raise ValueError("Connection changed before ESS selection")
         if before_send is not None:
             before_send()
-        resp = await client.post(url, headers=headers, json=body or {}, follow_redirects=False)
+        if name in ("setpoint_override", "electricity_tariff"):
+            headers["Content-Type"] = "application/json"
+            resp = await client.post(
+                url,
+                headers=headers,
+                content=controller_commands.encode_body(body or {}).encode("utf-8"),
+                follow_redirects=False,
+            )
+        else:
+            resp = await client.post(url, headers=headers, json=body or {}, follow_redirects=False)
         resp.raise_for_status()
 
 

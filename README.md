@@ -676,7 +676,7 @@ connection configuration: set `INVERTER_DASHBOARD_SETTINGS_FILE` to an absolute
 path such as `/var/lib/inverter-dashboard/settings/dashboard_settings.json`.
 The default location beside `local_config.py` is unchanged. New explicit parent
 directories use mode `0700`; writes use a private `0600` temporary file and atomic
-replacement. Masked secret values returned by the settings API preserve existing
+replacement, followed by a directory sync on POSIX systems. Masked secret values returned by the settings API preserve existing
 credentials when submitted unchanged. Settings mutations require JSON and reject
 cross-origin browser requests; native clients retain the existing authentication.
 

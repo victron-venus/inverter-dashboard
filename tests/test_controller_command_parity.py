@@ -61,7 +61,7 @@ async def test_override_single_explicit_send_even_dry_no_optimistic_status(runti
     )
     client.publish.assert_awaited_once_with(
         "inverter/cmd/setpoint_override",
-        json.dumps({"value": value, "request_id": "override-1"}),
+        commands.encode_body({"value": value, "request_id": "override-1"}),
         qos=0,
         retain=False,
     )
@@ -155,7 +155,7 @@ async def test_tariff_revision_and_capability_checked_before_send(runtime):
     body["revision"] = TARIFF["revision"]
     await ws._dispatch_action("electricity_tariff", body, client)
     client.publish.assert_awaited_once_with(
-        "inverter/cmd/electricity_tariff", json.dumps(body), qos=0, retain=False
+        "inverter/cmd/electricity_tariff", commands.encode_body(body), qos=0, retain=False
     )
     assert ms.get_state()["ui_config"]["electricity_tariff_status"] == TARIFF
 
@@ -318,3 +318,61 @@ async def test_retained_or_stale_controller_can_display_but_cannot_control(runti
     with pytest.raises(ValueError):
         await ws._dispatch_action("dry_run", {"value": True}, client)
     client.publish.assert_not_awaited()
+
+
+@pytest.mark.parametrize("observation", ["none", "retained", "fresh"])
+async def test_override_reused_id_requires_new_nonretained_receipt(
+    runtime, monkeypatch, observation
+):
+    ms, _, client = runtime
+    matching = {"value": None, "last_error": None, "request_id": "reused"}
+    ms._merge_daemon_state({"setpoint_override": matching})
+    monkeypatch.setattr(ws, "OVERRIDE_TIMEOUT_SECONDS", 0.02)
+
+    async def publish(*_args, **_kwargs):
+        if observation != "none":
+            await ms.on_message(
+                "inverter/setpoint_override",
+                json.dumps(matching).encode(),
+                retained=observation == "retained",
+            )
+
+    client.publish.side_effect = publish
+    if observation == "fresh":
+        await ws._dispatch_action(
+            "set_setpoint_override", {"value": None, "request_id": "reused"}, client
+        )
+    else:
+        with pytest.raises((ValueError, TimeoutError)):
+            await ws._dispatch_action(
+                "set_setpoint_override", {"value": None, "request_id": "reused"}, client
+            )
+    client.publish.assert_awaited_once()
+
+
+async def test_tariff_actual_wire_bytes_match_validated_utf8_budget(runtime, monkeypatch):
+    import httpx
+
+    ms, _, client = runtime
+    body = {"request_id": "unicode", "revision": TARIFF["revision"], "plan": {"name": "é" * 20000}}
+    expected = commands.encode_body(commands.validate_tariff(body)).encode("utf-8")
+    assert len(expected) < 100_000 < len(json.dumps(body).encode())
+    await ws._dispatch_action("electricity_tariff", body, client)
+    assert client.publish.await_args.args[1].encode("utf-8") == expected
+    sent = []
+
+    def handler(request):
+        sent.append(request)
+        return httpx.Response(200)
+
+    monkeypatch.setattr(gateway.config, "GATEWAY_URL", "https://gateway.example")
+    monkeypatch.setattr(gateway, "build_headers", dict)
+    monkeypatch.setattr(
+        gateway,
+        "_new_gateway_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    await gateway.post_command("electricity_tariff", body)
+    assert sent[0].content == expected
+    assert sent[0].headers["Content-Type"] == "application/json"
+    assert ms.get_state()["ui_config"]["electricity_tariff_status"] == TARIFF

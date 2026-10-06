@@ -119,6 +119,7 @@ class MqttState(CerboOverlayMixin):
         self._controller_ess_mode: dict[str, Any] | None = None
         self._ess_mode_observed_at: float | None = None
         self._setpoint_override_observed_at: float | None = None
+        self._override_observation_sequence = 0
         self._electricity_tariff_observed_at: float | None = None
         self._alarm_values: dict[str, int] = {}
         # Venus-platform GUIv2 notification slots (desktop parity)

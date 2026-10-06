@@ -60,6 +60,11 @@ def validate_override(body: Any) -> dict[str, Any]:
     return body
 
 
+def encode_body(body: dict[str, Any]) -> str:
+    """Use the exact UTF-8 representation for both wire transports and limits."""
+    return json.dumps(body, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
 def validate_tariff(body: Any) -> dict[str, Any]:
     if (
         not isinstance(body, dict)
@@ -72,7 +77,7 @@ def validate_tariff(body: Any) -> dict[str, Any]:
     if body["plan"] is not None and not isinstance(body["plan"], dict):
         raise ValueError("Controller tariff plan must be an object or null")
     try:
-        encoded = json.dumps(body, ensure_ascii=False, allow_nan=False).encode()
+        encoded = encode_body(body).encode("utf-8")
     except (TypeError, ValueError, OverflowError) as error:
         raise ValueError("Invalid controller tariff JSON") from error
     if len(encoded) > 100_000:
@@ -93,6 +98,8 @@ def observe(state, incoming: dict[str, Any], *, retained: bool) -> None:
         status = override_status(incoming["setpoint_override"])
         state.current_state["setpoint_override"] = status
         state._setpoint_override_observed_at = observed if status is not None else None
+        if status is not None and not retained:
+            state._override_observation_sequence += 1
     if "ui_config" in incoming:
         state._electricity_tariff_observed_at = observed
     if "grid_backup" in incoming:

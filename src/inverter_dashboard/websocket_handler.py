@@ -691,6 +691,13 @@ async def _send_controller_command(
 
     async def send_checked() -> None:
         check_current()
+        dispatched_sequence: int | None = None
+
+        def before_dispatch() -> None:
+            nonlocal dispatched_sequence
+            check_current()
+            dispatched_sequence = owner._override_observation_sequence
+
         if remote:
             async with gateway._new_gateway_client() as client:
                 snapshot = await gateway.fetch_snapshot(client)
@@ -703,12 +710,17 @@ async def _send_controller_command(
                 raise ValueError("Controller tariff changed; reload before editing")
             check_current()
             await gateway.post_command(
-                name, body, expected_generation=generation, before_send=check_current
+                name, body, expected_generation=generation, before_send=before_dispatch
             )
         else:
-            await mqtt_client.publish(f"inverter/cmd/{name}", json.dumps(body), qos=0, retain=False)
+            before_dispatch()
+            await mqtt_client.publish(
+                f"inverter/cmd/{name}", controller_commands.encode_body(body), qos=0, retain=False
+            )
         if name == "setpoint_override":
-            await _wait_override_ack(owner, body, remote, check_current)
+            if dispatched_sequence is None:
+                raise ValueError("Override dispatch was not confirmed")
+            await _wait_override_ack(owner, body, remote, check_current, dispatched_sequence)
 
     # One deadline includes DNS/TLS, preflight, the sole write and every ACK read.
     # Controller owns the persistent two-second writes; this client never resends.
@@ -716,7 +728,9 @@ async def _send_controller_command(
         await gateway.run_ess_selection(generation, send_checked)
 
 
-async def _wait_override_ack(owner, body: dict[str, Any], remote: bool, check_current) -> None:
+async def _wait_override_ack(
+    owner, body: dict[str, Any], remote: bool, check_current, dispatched_sequence: int
+) -> None:
     while True:
         check_current()
         if remote:
@@ -730,7 +744,11 @@ async def _wait_override_ack(owner, body: dict[str, Any], remote: bool, check_cu
             await broadcast_state()
             check_current()
         status = controller_commands.override_status(owner.get_state().get("setpoint_override"))
-        if status and status["request_id"] == body["request_id"]:
+        if (
+            owner._override_observation_sequence > dispatched_sequence
+            and status
+            and status["request_id"] == body["request_id"]
+        ):
             if status["last_error"] is not None or status["value"] != body["value"]:
                 raise ValueError("Controller did not confirm the requested override value")
             return
