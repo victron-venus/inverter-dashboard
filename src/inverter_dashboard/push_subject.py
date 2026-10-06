@@ -50,6 +50,7 @@ def _mailto_contact(parsed) -> bool:
         and not local.endswith(".")
         and ".." not in local
         and "@" not in domain
+        and ":" not in domain
         and _contact_host(domain)
     )
 

@@ -45,6 +45,7 @@ def test_valid_contact_uris_preserve_exact_identity(subject):
         "https://-bad.example/",
         "mailto:@example.com",
         "mailto:a@",
+        "mailto:a@::1",
         "mailto:a@b@example.com",
         "mailto:a@example.com?subject=test",
         "mailto://a@example.com",
