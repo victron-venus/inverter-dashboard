@@ -107,6 +107,7 @@ _broadcast_lock = asyncio.Lock()
 WS_SEND_TIMEOUT_SECONDS = 2.0
 WS_CLOSE_TIMEOUT_SECONDS = 1.0
 OVERRIDE_TIMEOUT_SECONDS = 5.0
+NOTIFICATION_COMMAND_TIMEOUT_SECONDS = 5.0
 
 
 # Pydantic model for allowed state fields - replaces _STATE_ALLOWLIST
@@ -531,32 +532,71 @@ def _control_flag_key(entity: str | None) -> str | None:
     return key if key in _CONTROL_FLAG_KEYS else None
 
 
+def _notification_portal(owner) -> str:
+    return getattr(owner, "_portal_id", "") or config.CERBO_PORTAL_ID or ""
+
+
+async def _native_notification_command(name: str, mqtt_client: Client | None) -> None:
+    """Bind a single physical acknowledgement to its native source, not controller state."""
+    owner = _state.get("mqtt_state")
+    generation = gateway.source_generation()
+    remote = gateway.prefer_gateway()
+    portal = _notification_portal(owner)
+
+    def current() -> None:
+        if (
+            owner is None
+            or not _current_source(owner, generation, remote)
+            or not _transport_connected(remote)
+            or portal != _notification_portal(owner)
+        ):
+            raise ValueError("Native notification connection changed")
+        if not remote and (
+            not _current_mqtt_client(mqtt_client) or not _valid_notification_portal(portal)
+        ):
+            raise ValueError("Current native notification MQTT source is unavailable")
+
+    current()
+
+    async def send_checked() -> None:
+        current()
+        if remote:
+            await gateway.post_command(
+                name, {}, expected_generation=generation, before_send=current
+            )
+        elif name == "acknowledge_all_notifications":
+            await mqtt_client.publish(
+                f"W/{portal}/platform/0/Notifications/AcknowledgeAll",
+                '{"value":1}',
+                qos=0,
+                retain=False,
+            )
+        else:
+            raise ValueError("This native notification command requires the gateway")
+        current()
+
+    async with asyncio.timeout(NOTIFICATION_COMMAND_TIMEOUT_SECONDS):
+        await gateway.run_ess_selection(generation, send_checked)
+    current()
+
+
+def _valid_notification_portal(portal: Any) -> bool:
+    return (
+        isinstance(portal, str)
+        and bool(portal)
+        and not any(c in "/+#" or c.isspace() or ord(c) < 32 for c in portal)
+    )
+
+
 async def _acknowledge_victron_on_cerbo(app_state, mqtt_client: Client | None) -> None:
-    """Mirror desktop acknowledge_victron_banner: IGW command or LAN MQTT AcknowledgeAll."""
-    from . import config
+    await _native_notification_command("acknowledge_all_notifications", mqtt_client)
 
-    if gateway.prefer_gateway():
-        try:
-            await gateway.post_command("acknowledge_all_notifications", {})
-            logger.info("Acknowledged Victron notifications via IGW")
-        except Exception:
-            logger.exception("IGW acknowledge_all_notifications failed")
-        return
 
-    portal = ""
-    ms = _state.get("mqtt_state")
-    if ms is not None:
-        portal = getattr(ms, "_portal_id", "") or ""
-    portal = portal or (config.CERBO_PORTAL_ID or "")
-    if not portal or mqtt_client is None:
-        logger.warning("Cannot acknowledge Victron notifications: no portal/MQTT")
-        return
-    topic = f"W/{portal}/platform/0/Notifications/AcknowledgeAll"
-    try:
-        await mqtt_client.publish(topic, '{"value":1}', qos=0)
-        logger.info("Published Cerbo AcknowledgeAll on %s", topic)
-    except Exception:
-        logger.exception("MQTT AcknowledgeAll publish failed")
+async def _dismiss_native_notification(nid: str, mqtt_client: Client | None) -> None:
+    if nid.startswith("victron-platform-"):
+        await _acknowledge_victron_on_cerbo(None, mqtt_client)
+    elif nid.startswith("victron-") and gateway.prefer_gateway():
+        await _native_notification_command("silence_alarm", mqtt_client)
 
 
 def _can_control_controller() -> bool:
@@ -858,15 +898,12 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Clien
         if not isinstance(nid, str) or not nid or ms is None:
             return
         ms.dismiss_notification(nid)
-        if nid.startswith("victron-platform-"):
-            await _acknowledge_victron_on_cerbo(None, mqtt_client)
-        elif nid.startswith("victron-") and gateway.prefer_gateway():
-            # Raw Alarms/* fallback — best-effort silence via IGW whitelist.
-            try:
-                await gateway.post_command("silence_alarm", {})
-            except Exception:
-                logger.exception("IGW silence_alarm failed")
-        await broadcast_state()
+        try:
+            await _dismiss_native_notification(nid, mqtt_client)
+        finally:
+            # Local banner dismissal remains separate from physical ACK success.
+            await broadcast_state()
+
     else:
         raise ValueError("Unsupported dashboard action")
 

@@ -85,8 +85,8 @@ async def run_ess_selection(generation: int, operation: Callable[[], Awaitable[N
     _ess_command_tasks.add(task)
     try:
         result = (await asyncio.gather(task, return_exceptions=True))[0]
-        if isinstance(result, asyncio.CancelledError) and generation != _source_generation:
-            raise ValueError("Connection changed during ESS selection") from None
+        if generation != _source_generation:
+            raise ValueError("Connection changed during command dispatch") from None
         if isinstance(result, BaseException):
             raise result
     finally:

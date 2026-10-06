@@ -321,3 +321,19 @@ async def test_ess_rechecks_dry_run_after_post_client_entry(runtime, monkeypatch
     with pytest.raises(ValueError):
         await ws._dispatch_action("set_ess_mode", {"mode": "off", "request_id": "id"}, client)
     fake.post.assert_not_awaited()
+
+
+async def test_completed_child_retired_before_continuation_cannot_report_acceptance(runtime):
+    retired_done = []
+
+    def retire():
+        retired_done.extend(task.done() for task in gateway._ess_command_tasks)
+        gateway.invalidate_ess_commands()
+
+    async def operation():
+        asyncio.get_running_loop().call_soon(retire)
+
+    with pytest.raises(ValueError, match="changed"):
+        await gateway.run_ess_selection(gateway.source_generation(), operation)
+    assert retired_done == [True]
+    assert not gateway._ess_command_tasks

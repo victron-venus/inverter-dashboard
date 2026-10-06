@@ -376,3 +376,78 @@ async def test_tariff_actual_wire_bytes_match_validated_utf8_budget(runtime, mon
     assert sent[0].content == expected
     assert sent[0].headers["Content-Type"] == "application/json"
     assert ms.get_state()["ui_config"]["electricity_tariff_status"] == TARIFF
+
+
+@pytest.mark.parametrize(
+    "case", ["success", "old_client", "offline", "changed_portal", "generation"]
+)
+async def test_notification_ack_uses_current_native_owner_without_controller(runtime, case):
+    ms, app, client = runtime
+    ms.clear_daemon_state()
+    ms._portal_id = "site"
+    assert not ms.controller_available()
+
+    def change():
+        if case == "old_client":
+            app.mqtt_client = SimpleNamespace(publish=AsyncMock())
+        elif case == "offline":
+            app.mqtt_connected = False
+        elif case == "changed_portal":
+            ms._portal_id = "other"
+        elif case == "generation":
+            gateway.invalidate_ess_commands()
+
+    asyncio.get_running_loop().call_soon(change)
+    if case == "success":
+        await ws._acknowledge_victron_on_cerbo(None, client)
+        client.publish.assert_awaited_once_with(
+            "W/site/platform/0/Notifications/AcknowledgeAll", '{"value":1}', qos=0, retain=False
+        )
+    else:
+        with pytest.raises(ValueError):
+            await ws._acknowledge_victron_on_cerbo(None, client)
+        client.publish.assert_not_awaited()
+
+
+@pytest.mark.parametrize("native_id", ["victron-platform-0-1", "victron-battery-1-HighVoltage"])
+async def test_notification_gateway_entry_swap_never_posts_local_dismiss_stays_separate(
+    runtime, monkeypatch, native_id
+):
+    ms, app, client = runtime
+    ms.clear_daemon_state()
+    app.data_source = "igw"
+    app.gateway_connected = True
+    monkeypatch.setattr(gateway, "prefer_gateway", lambda: True)
+    monkeypatch.setattr(gateway.config, "GATEWAY_URL", "https://gateway.example")
+    monkeypatch.setattr(gateway, "build_headers", dict)
+    fake = AsyncMock()
+
+    async def enter():
+        gateway.invalidate_ess_commands()
+        return fake
+
+    fake.__aenter__.side_effect = enter
+    monkeypatch.setattr(gateway, "_new_gateway_client", lambda: fake)
+    broadcast = AsyncMock()
+    monkeypatch.setattr(ws, "broadcast_state", broadcast)
+    ms.push_notification({"id": native_id, "title": "Fixture", "body": "", "level": "warning"})
+    with pytest.raises(ValueError):
+        await ws._dispatch_action("dismiss_notification", {"id": native_id}, client)
+    fake.post.assert_not_awaited()
+    assert not ms.get_notifications()
+    broadcast.assert_awaited_once()
+
+
+async def test_native_ack_timeout_propagates_without_retry(runtime, monkeypatch):
+    ms, _, client = runtime
+    ms.clear_daemon_state()
+    ms._portal_id = "site"
+    monkeypatch.setattr(ws, "NOTIFICATION_COMMAND_TIMEOUT_SECONDS", 0.01)
+
+    async def stalled(*_args, **_kwargs):
+        await asyncio.sleep(0.1)
+
+    client.publish.side_effect = stalled
+    with pytest.raises(TimeoutError):
+        await ws._acknowledge_victron_on_cerbo(None, client)
+    client.publish.assert_awaited_once()
