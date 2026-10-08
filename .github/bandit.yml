@@ -7,9 +7,9 @@ assert_used:
 
 # Generated environments/artifacts are not repository source.
 exclude_dirs:
-  - './.git'
-  - './.venv'
-  - './.venv-ci'
-  - './build'
-  - './dist'
-  - './release-dist'
+  - './.git/'
+  - './.venv/'
+  - './.venv-ci/'
+  - './build/'
+  - './dist/'
+  - './release-dist/'

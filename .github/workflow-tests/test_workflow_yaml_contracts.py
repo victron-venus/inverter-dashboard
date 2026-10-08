@@ -33,15 +33,18 @@ class WorkflowYAMLTests(unittest.TestCase):
     def test_duplicate_top_level_and_nested_keys_are_rejected(self):
         for source in ("jobs: {}\njobs: {}", "jobs:\n  test:\n    uses: one\n    uses: two"):
             with self.subTest(source=source), self.assertRaises(ValueError):
-                yaml.load(source, Loader=CONTRACTS.UniqueKeyLoader)
+                # UniqueKeyLoader extends BaseLoader: scalar strings only, no constructors.
+                yaml.load(source, Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506
 
     def test_yaml_trigger_keys_and_scalars_remain_strings(self):
-        result = yaml.load("on: push\nvalue: true\n", Loader=CONTRACTS.UniqueKeyLoader)
+        # UniqueKeyLoader extends BaseLoader: this fixture tests scalar preservation.
+        result = yaml.load("on: push\nvalue: true\n", Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506
         self.assertEqual(result, {"on": "push", "value": "true"})
 
     def test_non_string_mapping_keys_are_rejected(self):
         with self.assertRaises(ValueError):
-            yaml.load("? [one, two]\n: value", Loader=CONTRACTS.UniqueKeyLoader)
+            # BaseLoader has no Python object constructors, even for malformed fixtures.
+            yaml.load("? [one, two]\n: value", Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506
 
     def test_mutable_or_unknown_generated_actions_are_rejected(self):
         for reference, pins in (("actions/checkout@main", None), ("actions/checkout@" + SHA, {})):
