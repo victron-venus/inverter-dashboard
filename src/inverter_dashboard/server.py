@@ -733,16 +733,20 @@ def _start_mqtt_client():
                     await _failover_to_igw("MQTT loop error")
                     break
             finally:
-                if current() and owner.mqtt_client is client:
-                    owner.mqtt_connected = False
-                    if _push_service is not None:
-                        _push_service.disconnect("mqtt", ms)
-                    ms.clear_daemon_state()
-                    ms.clear_cerbo_state()
-                    await ms._emit()
-                if keepalive_task is not None:
-                    keepalive_task.cancel()
-                    await asyncio.gather(keepalive_task, return_exceptions=True)
+                try:
+                    if current() and owner.mqtt_client is client:
+                        owner.mqtt_connected = False
+                        if _push_service is not None:
+                            _push_service.disconnect("mqtt", ms)
+                        ms.clear_daemon_state()
+                        ms.clear_cerbo_state()
+                        await ms._emit()
+                finally:
+                    # State notifications may fail or be cancelled; the owned
+                    # keepalive still has to stop before this session exits.
+                    if keepalive_task is not None:
+                        keepalive_task.cancel()
+                        await asyncio.gather(keepalive_task, return_exceptions=True)
             if not current():
                 break
             await _wait_for_source_retry(stopped, delay)
