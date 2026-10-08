@@ -75,5 +75,6 @@
         "required": false
       }
     ]
-  }
+  },
+  "release_notes": "CHANGELOG.md"
 }
