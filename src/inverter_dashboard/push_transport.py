@@ -200,7 +200,10 @@ class PushTransport:
                 "Urgency": "normal",
             }
         )
-        tls = enforce_peer_key_policy(ssl.create_default_context())
+        tls = ssl.create_default_context()
+        tls.verify_mode = ssl.CERT_REQUIRED
+        tls.check_hostname = True
+        enforce_peer_key_policy(tls)
         connector = aiohttp.TCPConnector(
             resolver=PublicPushResolver(),
             use_dns_cache=False,

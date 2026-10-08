@@ -1307,7 +1307,9 @@ def main():
         port=args.port,
         ssl_certfile=args.ssl_cert,
         ssl_keyfile=args.ssl_key,
-        ssl_context_factory=server_context if args.ssl_cert else None,
+        # Public since Uvicorn 0.47; tested by test_main_installs_identity_factory.
+        # https://uvicorn.dev/release-notes/#0470-may-14-2026 (minimum here: 0.51).
+        ssl_context_factory=server_context if args.ssl_cert else None,  # NOSONAR python:S930
         log_level="info",
     )
 

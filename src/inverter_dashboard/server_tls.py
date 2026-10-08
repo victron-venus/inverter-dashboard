@@ -28,18 +28,18 @@ def server_context(config, default_factory):
     # OpenSSL loads certificates and keys from paths. Use the validated snapshot,
     # so a concurrent replacement cannot substitute a different certificate.
     with tempfile.TemporaryDirectory(prefix="inverter-dashboard-tls-") as directory:
-        certificate_path = Path(directory) / "certificate.pem"
-        certificate_path.touch(mode=0o600)
-        certificate_path.write_bytes(certificate)
+        with tempfile.NamedTemporaryFile(mode="wb", dir=directory, delete=False) as snapshot:
+            snapshot.write(certificate)
+            certificate_path = snapshot.name
         key_path = None
         if key is not None:
-            key_path = Path(directory) / "private-key.pem"
-            key_path.touch(mode=0o600)
-            key_path.write_bytes(key)
+            with tempfile.NamedTemporaryFile(mode="wb", dir=directory, delete=False) as snapshot:
+                snapshot.write(key)
+                key_path = snapshot.name
         original = config.ssl_certfile, config.ssl_keyfile
         try:
-            config.ssl_certfile = str(certificate_path)
-            config.ssl_keyfile = str(key_path) if key_path else None
+            config.ssl_certfile = certificate_path
+            config.ssl_keyfile = key_path
             context = default_factory()
         finally:
             config.ssl_certfile, config.ssl_keyfile = original
