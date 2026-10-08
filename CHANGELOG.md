@@ -22,11 +22,23 @@ Provides a Python web dashboard for Victron telemetry and configured controls. T
 
 Existing configuration and stored settings remain usable. UPDATE_PIN must identify one branch, tag or commit; Git options and refspec syntax are rejected. Self-update remains opt-in. Back up settings and follow the documented container or binary replacement procedure.
 
+Home Assistant, gateway and update-metadata HTTPS connections now reject weak
+certificate keys throughout their verified chains, including a 2047-bit RSA
+trust anchor. Reissue affected private chains with RSA keys of at least 2048 bits
+or supported stronger keys. Certificate and hostname verification remain required;
+see [the TLS client policy](docs/tls-policy.md) for proxy and platform details.
+
 ### Security
 
 Use uv 0.12.18 for release builds, including Windows package installation, to
 address [GHSA-2cv4-cqwr-gwf7](https://github.com/advisories/GHSA-2cv4-cqwr-gwf7).
 Application dependencies and configuration are unchanged.
+
+Check exact certificate-key sizes on the established TLS connection before
+sending HTTP headers or bodies. This covers the HTTPX clients above and their
+HTTPS proxies; it preserves the configured CA selection and proxy exclusions.
+Intel macOS uses Apple's native certificate parser without adding a cryptography
+package dependency. The change does not establish whole-project OpenSSF compliance.
 
 Private vulnerability reporting and response policy are documented in SECURITY.md. This maintenance update strengthens release evidence and review instructions; it does not replace deployment authentication, network isolation or independent equipment safeguards. No new project CVE is announced by these changes.
 

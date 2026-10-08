@@ -10,6 +10,7 @@ import sys
 import httpx
 
 from .config import GITHUB_RAW_URL, SELF_UPDATE_ENABLED, UPDATE_PIN
+from .tls_policy import httpx_client
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def _update_url(filename: str) -> str:
 async def check_latest_version() -> str | None:
     """Check GitHub for latest version from VERSION file on main branch"""
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx_client() as client:
             resp = await client.get(_update_url("VERSION"), timeout=3.0)
             if resp.status_code == 200:
                 latest = resp.text.strip()

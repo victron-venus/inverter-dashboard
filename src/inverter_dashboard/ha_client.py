@@ -26,6 +26,7 @@ import httpx
 from . import controller_commands
 from .cerbo import CERBO_OWNED_KEYS
 from .config import HA_POLL_TIMEOUT, HA_REQUEST_TIMEOUT
+from .tls_policy import httpx_client
 
 logger = logging.getLogger(__name__)
 
@@ -402,7 +403,7 @@ def _get_http_client() -> httpx.AsyncClient:
     """Get or create a shared async HTTP client."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(timeout=HA_REQUEST_TIMEOUT)
+        _http_client = httpx_client(timeout=HA_REQUEST_TIMEOUT)
     return _http_client
 
 
@@ -614,7 +615,7 @@ async def fetch_states_once() -> dict[str, Any]:
     out: dict[str, Any] = {"booleans": {}}
 
     try:
-        async with httpx.AsyncClient(timeout=HA_POLL_TIMEOUT) as client:
+        async with httpx_client(timeout=HA_POLL_TIMEOUT) as client:
             booleans = {}
             for key, eid in _ha_fields(_boolean_entities):
                 st = await _get_state(client, headers, eid)
