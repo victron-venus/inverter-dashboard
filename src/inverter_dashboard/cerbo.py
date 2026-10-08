@@ -353,6 +353,19 @@ class CerboOverlayMixin:
         self._native_invalidated.update(self._native_observations)
         self._apply_cerbo_overlays()
 
+    def _snapshot_leaf(self, kind: str, key: Any, value: Any) -> tuple[str, str] | None:
+        if not isinstance(key, str) or "/" not in key:
+            return None
+        instance, path = key.split("/", 1)
+        if (
+            not instance
+            or not path
+            or not self._valid_path_value(kind, path, value)
+            or not self._known_path(kind, path)
+        ):
+            return None
+        return instance, path
+
     def replace_cerbo_snapshot(self, snapshot: dict[str, Any]) -> None:
         """Replace all native leaves from an IGW snapshot, including removals."""
         devices: dict[str, dict[str, dict[str, Any]]] = {}
@@ -361,16 +374,10 @@ class CerboOverlayMixin:
             if not isinstance(values, dict):
                 continue
             for key, value in values.items():
-                if not isinstance(key, str) or "/" not in key:
+                leaf = self._snapshot_leaf(kind, key, value)
+                if leaf is None:
                     continue
-                instance, path = key.split("/", 1)
-                if (
-                    not instance
-                    or not path
-                    or not self._valid_path_value(kind, path, value)
-                    or not self._known_path(kind, path)
-                ):
-                    continue
+                instance, path = leaf
                 devices.setdefault(kind, {}).setdefault(instance, {})[path] = value
                 if value is None:
                     self._claim_invalid_leaf(kind, instance, path)
