@@ -97,14 +97,16 @@ def test_symlinks_are_not_followed(tmp_path):
 
 
 def test_second_process_cannot_open_or_modify_locked_store(tmp_path):
-    import subprocess
+    # Reviewed test harness: fixed commands and isolated fixture paths; no shell interpolation.
+    import subprocess  # nosec B404
     import sys
 
     store = PushStore(tmp_path)
     store.initialize_metadata("test", b"preserved")
     before = (tmp_path / "push.sqlite3").read_bytes()
     code = "from pathlib import Path; from inverter_dashboard.push_store import PushStore; import sys; PushStore(Path(sys.argv[1]))"
-    result = subprocess.run(
+    # Reviewed test harness: fixed commands and isolated fixture paths; no shell interpolation.
+    result = subprocess.run(  # nosec B603
         [sys.executable, "-c", code, str(tmp_path)], capture_output=True, check=False
     )
     assert result.returncode != 0

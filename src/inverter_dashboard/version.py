@@ -4,6 +4,7 @@ Version management and self-update functionality
 
 import logging
 import os
+import re
 import sys
 
 import httpx
@@ -94,12 +95,17 @@ def download_and_update() -> tuple[bool, str]:
     if not SELF_UPDATE_ENABLED:
         raise SelfUpdateDisabled("self-update is disabled (set SELF_UPDATE_ENABLED=true)")
 
-    import subprocess
+    # Opt-in updater invokes only Git with argument arrays, never a shell.
+    import subprocess  # nosec B404
 
     ref = UPDATE_PIN or "main"
+    # A configured pin is one branch/tag/SHA, never a Git option or refspec.
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", ref) or ".." in ref:
+        return False, "invalid update pin"
     root = _repo_root()
     try:
-        subprocess.run(
+        # Fixed Git subcommand; the operator configures PATH and the validated ref.
+        subprocess.run(  # nosec B603, B607
             ["git", "fetch", "origin", ref],
             cwd=root,
             timeout=60,
@@ -107,7 +113,8 @@ def download_and_update() -> tuple[bool, str]:
             capture_output=True,
         )
         target = "FETCH_HEAD" if UPDATE_PIN else "origin/main"
-        subprocess.run(
+        # Fixed Git subcommand; the operator configures PATH and the validated ref.
+        subprocess.run(  # nosec B603, B607
             ["git", "reset", "--hard", target],
             cwd=root,
             timeout=30,

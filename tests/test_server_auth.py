@@ -24,7 +24,8 @@ def test_index_requires_secret(client):
 
 
 def test_index_rejects_wrong_credentials(client):
-    assert client.get("/", params={"token": "nope"}).status_code == 403
+    # Synthetic test credentials/sentinels; not valid external-service secrets.
+    assert client.get("/", params={"token": "nope"}).status_code == 403  # nosec B105
     assert client.get("/", headers={"Authorization": "Bearer nope"}).status_code == 403
 
 
@@ -32,7 +33,8 @@ def test_index_accepts_valid_credentials(client):
     # Repo ships flat static/index.html (docker-publish layout); authorized
     # requests must pass auth and serve the SPA (or a non-auth error).
     for resp in (
-        client.get("/", params={"token": "s3cret"}),
+        # Synthetic test credentials/sentinels; not valid external-service secrets.
+        client.get("/", params={"token": "s3cret"}),  # nosec B105
         client.get("/", headers={"Authorization": "Bearer s3cret"}),
     ):
         assert resp.status_code not in (401, 403)
@@ -173,7 +175,8 @@ async def test_mqtt_loop_reconnects_after_broker_error(monkeypatch):
 
 @pytest.mark.parametrize(
     "credentials",
-    [{}, {"params": {"token": "wrong"}}, {"headers": {"Authorization": "Bearer wrong"}}],
+    # Synthetic test credentials/sentinels; not valid external-service secrets.
+    [{}, {"params": {"token": "wrong"}}, {"headers": {"Authorization": "Bearer wrong"}}],  # nosec B105
 )
 def test_api_state_unauthenticated_omits_live_tiles(monkeypatch, credentials):
     """INVDASH-1: with secret set, unauthenticated /api/state is health-only."""
@@ -205,7 +208,8 @@ def test_api_state_unauthenticated_omits_live_tiles(monkeypatch, credentials):
     ("secret", "credentials"),
     [
         ("s3cret", {"headers": {"Authorization": "Bearer s3cret"}}),
-        ("a&b+c", {"params": {"token": "a&b+c"}}),
+        # Synthetic test credentials/sentinels; not valid external-service secrets.
+        ("a&b+c", {"params": {"token": "a&b+c"}}),  # nosec B105
         ("", {}),
     ],
 )

@@ -71,9 +71,11 @@ DEFAULTS: dict[str, Any] = {
     "mqtt_host": config.MQTT_HOST,
     "mqtt_port": config.MQTT_PORT,
     "mqtt_username": config.MQTT_USERNAME,
-    "mqtt_password": "",
+    # Empty/unconfigured value or placeholder sentinel; not a usable embedded credential.
+    "mqtt_password": "",  # nosec B105
     "ha_url": "",
-    "ha_token": "",
+    # Empty/unconfigured value or placeholder sentinel; not a usable embedded credential.
+    "ha_token": "",  # nosec B105
 }
 
 # Connection keys → config module attribute (mqtt_*) or ha_client override (ha_*)
@@ -81,7 +83,8 @@ _CONFIG_ATTRS = {
     "mqtt_host": "MQTT_HOST",
     "mqtt_port": "MQTT_PORT",
     "mqtt_username": "MQTT_USERNAME",
-    "mqtt_password": "MQTT_PASSWORD",
+    # Empty/unconfigured value or placeholder sentinel; not a usable embedded credential.
+    "mqtt_password": "MQTT_PASSWORD",  # nosec B105
 }
 
 

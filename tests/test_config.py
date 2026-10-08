@@ -21,7 +21,8 @@ class TestConfig:
         from inverter_dashboard import config
 
         # Default should be empty (unset)
-        assert config.DASHBOARD_SECRET == "" or isinstance(config.DASHBOARD_SECRET, str)
+        # Synthetic test credentials/sentinels; not valid external-service secrets.
+        assert config.DASHBOARD_SECRET == "" or isinstance(config.DASHBOARD_SECRET, str)  # nosec B105
 
     def test_github_raw_url(self):
         from inverter_dashboard import config
