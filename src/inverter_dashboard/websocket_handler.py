@@ -589,13 +589,13 @@ def _valid_notification_portal(portal: Any) -> bool:
     )
 
 
-async def _acknowledge_victron_on_cerbo(app_state, mqtt_client: Client | None) -> None:
+async def _acknowledge_victron_on_cerbo(mqtt_client: Client | None) -> None:
     await _native_notification_command("acknowledge_all_notifications", mqtt_client)
 
 
 async def _dismiss_native_notification(nid: str, mqtt_client: Client | None) -> None:
     if nid.startswith("victron-platform-"):
-        await _acknowledge_victron_on_cerbo(None, mqtt_client)
+        await _acknowledge_victron_on_cerbo(mqtt_client)
     elif nid.startswith("victron-") and gateway.prefer_gateway():
         await _native_notification_command("silence_alarm", mqtt_client)
 
