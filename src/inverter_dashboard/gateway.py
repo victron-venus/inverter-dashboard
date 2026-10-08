@@ -25,6 +25,7 @@ from typing import Any, Literal
 import httpx
 
 from . import config, controller_commands, notifications
+from .tls_policy import httpx_client
 
 logger = logging.getLogger(__name__)
 
@@ -262,7 +263,7 @@ async def post_command(
 
 def _new_gateway_client() -> httpx.AsyncClient:
     """Keep TLS verification and redirect refusal explicit for every IGW operation."""
-    return httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECS, verify=True, follow_redirects=False)
+    return httpx_client(timeout=REQUEST_TIMEOUT_SECS, follow_redirects=False)
 
 
 async def gateway_poll_loop(

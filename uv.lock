@@ -738,6 +738,9 @@ test = [
 packaging = [
     { name = "pyinstaller" },
 ]
+tls-native-test = [
+    { name = "pytest" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -762,6 +765,7 @@ provides-extras = ["test"]
 
 [package.metadata.requires-dev]
 packaging = [{ name = "pyinstaller", specifier = "==6.22.3" }]
+tls-native-test = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "macholib"
