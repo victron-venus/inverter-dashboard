@@ -30,7 +30,8 @@ class TestSettingsStore:
             settings_store.save_settings({"not_a_setting": "x"})
 
     def test_connection_secrets_masked_on_load(self):
-        settings_store.save_settings({"ha_token": "tok123", "mqtt_password": "pw"})
+        # Synthetic test credentials/sentinels; not valid external-service secrets.
+        settings_store.save_settings({"ha_token": "tok123", "mqtt_password": "pw"})  # nosec B105
         masked = settings_store.load_settings(mask_secrets=True)
         assert masked["ha_token"] == "***"
         assert masked["mqtt_password"] == "***"

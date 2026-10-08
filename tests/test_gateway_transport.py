@@ -54,7 +54,8 @@ def test_native_https_configuration_accepts_bearer_without_access_credentials(mo
         _env_file=None,
         GATEWAY_ENABLED=True,
         GATEWAY_URL="https://gateway.example.com:9151/",
-        GATEWAY_API_TOKEN="test-bearer",
+        # Synthetic test credentials/sentinels; not valid external-service secrets.
+        GATEWAY_API_TOKEN="test-bearer",  # nosec B106
         GATEWAY_ACCESS_CLIENT_ID="",
         GATEWAY_ACCESS_CLIENT_SECRET="",
     )

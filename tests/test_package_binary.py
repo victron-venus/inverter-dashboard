@@ -3,7 +3,9 @@
 import hashlib
 import json
 import shutil
-import subprocess
+
+# Reviewed test harness: fixed commands and isolated fixture paths; no shell interpolation.
+import subprocess  # nosec B404
 import sys
 import zipfile
 from pathlib import Path
@@ -34,7 +36,8 @@ def checkout(tmp_path):
 
 def package(root, binary="dist/inverter-dashboard", platform="linux-x86_64"):
     """Run the real CLI so argument parsing and path validation are covered."""
-    return subprocess.run(
+    # Reviewed test harness: fixed commands and isolated fixture paths; no shell interpolation.
+    return subprocess.run(  # nosec B603
         [sys.executable, "scripts/package_binary.py", str(binary), platform],
         cwd=root,
         capture_output=True,
@@ -85,7 +88,8 @@ def test_package_rejects_outside_traversal_and_symlink_inputs(checkout):
 
 def test_package_rejects_unsafe_platform_before_creating_output(checkout):
     """A platform label cannot select directories or alternate archive locations."""
-    for platform in ("../../../outside", "/tmp/output", "linux/amd64", "..", ""):
+    # Rejected path fixture; this test does not create a shared temporary file.
+    for platform in ("../../../outside", "/tmp/output", "linux/amd64", "..", ""):  # nosec B108
         result = package(checkout, platform=platform)
         assert result.returncode != 0
         assert not (checkout / "release").exists()

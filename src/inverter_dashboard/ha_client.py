@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 _configured = False
 _url = ""
-_token = ""
+# Empty/unconfigured value or placeholder sentinel; not a usable embedded credential.
+_token = ""  # nosec B105
 _direct = False
 _poll_interval = 12.0
 _overlay_observed_at: float | None = None
@@ -292,7 +293,8 @@ def load_config():
     _sensor_entities = dict(getattr(sc, "HA_SENSOR_ENTITIES", {}) or {})
     _filtered_entities = dict(getattr(sc, "HA_FILTERED_ENTITIES", {}) or {})
 
-    _configured = bool(_url and _token and _token != "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN")
+    # Empty/unconfigured value or placeholder sentinel; not a usable embedded credential.
+    _configured = bool(_url and _token and _token != "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN")  # nosec B105
     if _direct and not _configured:
         logger.warning(
             "HA_DIRECT_CONTROLS enabled but HA_URL/HA_TOKEN not set — falling back to MQTT"
@@ -306,7 +308,8 @@ def override_credentials(url: str | None = None, token: str | None = None) -> No
         _url = url.rstrip("/")
     if token:
         _token = token
-    _configured = bool(_url and _token and _token != "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN")
+    # Empty/unconfigured value or placeholder sentinel; not a usable embedded credential.
+    _configured = bool(_url and _token and _token != "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN")  # nosec B105
 
 
 def is_direct_mode() -> bool:

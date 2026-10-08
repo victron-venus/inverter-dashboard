@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.27] - Development line
+
+### Release overview
+
+Provides a Python web dashboard for Victron telemetry and configured controls. The existing README documents configuration and external interfaces for this development line.
+
+### Maintenance
+
+- Publish reviewed release notes from the exact source commit used to build each candidate, preserving build provenance.
+- Document contribution checks, confidential security reporting and the project-specific trust boundaries.
+- Require complete Bandit scans with no unresolved findings; reject malformed or incomplete scanner output. Document narrowly reviewed tooling and synthetic-fixture exceptions.
+- Reject updater pins containing Git options, refspecs or malformed references before invoking Git.
+
+### Upgrade
+
+Existing configuration and stored settings remain usable. UPDATE_PIN must identify one branch, tag or commit; Git options and refspec syntax are rejected. Self-update remains opt-in. Back up settings and follow the documented container or binary replacement procedure.
+
+### Security
+
+Private vulnerability reporting and response policy are documented in SECURITY.md. This maintenance update strengthens release evidence and review instructions; it does not replace deployment authentication, network isolation or independent equipment safeguards. No new project CVE is announced by these changes.
+
 ## [1.8.26] - Unreleased
 
 ### Fixed

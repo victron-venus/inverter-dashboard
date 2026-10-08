@@ -2,7 +2,9 @@
 
 import json
 import os
-import subprocess
+
+# Reviewed test harness: fixed commands and isolated fixture paths; no shell interpolation.
+import subprocess  # nosec B404
 import sys
 import textwrap
 import tomllib
@@ -86,7 +88,8 @@ def test_no_crypto_imports_or_store_writes_during_unsupported_dashboard_startup(
         """
     )
     environment = dict(os.environ, PYTHONPATH=str(Path("src").resolve()))
-    result = subprocess.run(
+    # Reviewed test harness: fixed commands and isolated fixture paths; no shell interpolation.
+    result = subprocess.run(  # nosec B603
         [sys.executable, "-c", script, system],
         cwd=tmp_path,
         env=environment,

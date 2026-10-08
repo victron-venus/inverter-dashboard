@@ -53,7 +53,8 @@ class TestBuildPayloadContract:
         ms = MqttState()
         ms.current_state = {
             "battery_soc": 80,
-            "secret_internal_key": "do-not-send",
+            # Synthetic test credentials/sentinels; not valid external-service secrets.
+            "secret_internal_key": "do-not-send",  # nosec B105
             "another_junk": 123,
         }
         wsh = websocket_handler

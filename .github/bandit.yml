@@ -4,3 +4,14 @@ assert_used:
   skips:
     - './tests/test_*.py'
     - './.github/release-tests/test_*.py'
+
+# Generated environments/artifacts are not repository source.
+exclude_dirs:
+  - './.git/'
+  - './.venv/'
+  - './.venv-ci/'
+  - './.tox/'
+  - './.eggs/'
+  - './build/'
+  - './dist/'
+  - './release-dist/'

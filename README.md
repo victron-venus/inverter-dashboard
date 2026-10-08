@@ -688,3 +688,9 @@ DRY mode. The dashboard sends once, requires matching request ID and exact value
 with no error within one five-second deadline, and never retries on a replacement
 connection. Controller tariff editing preserves revision-based concurrency and
 requires authoritative acknowledgement before the editor reports a saved plan.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for reports, development checks and pull requests,
+[SECURITY.md](SECURITY.md) for private vulnerability reporting and deployment trust boundaries,
+and the [OpenSSF evidence index](docs/openssf-evidence.md) for assessment references and remaining verification.

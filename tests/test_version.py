@@ -101,7 +101,8 @@ class TestDownloadAndUpdate:
         assert cmds[1] == ["git", "reset", "--hard", "FETCH_HEAD"]
 
     def test_git_failure_returns_false(self, monkeypatch):
-        import subprocess
+        # Reviewed test harness: fixed commands and isolated fixture paths; no shell interpolation.
+        import subprocess  # nosec B404
 
         self._enable(monkeypatch)
 
@@ -126,7 +127,8 @@ class TestDownloadAndUpdate:
 
     @pytest.mark.parametrize("operation", [1, 2])
     def test_git_failure_does_not_return_subprocess_details(self, monkeypatch, caplog, operation):
-        import subprocess
+        # Reviewed test harness: fixed commands and isolated fixture paths; no shell interpolation.
+        import subprocess  # nosec B404
 
         self._enable(monkeypatch)
         calls = 0
@@ -140,3 +142,17 @@ class TestDownloadAndUpdate:
         monkeypatch.setattr("subprocess.run", fail)
         assert download_and_update() == (False, "git update failed")
         assert "/private/repository" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "pin", ["--upload-pack=evil", "-u", "main:refs/heads/other", "main other", "../main", "main\n"]
+)
+def test_invalid_update_pin_never_invokes_git(monkeypatch, pin):
+    from unittest.mock import Mock
+
+    monkeypatch.setattr("inverter_dashboard.version.SELF_UPDATE_ENABLED", True)
+    monkeypatch.setattr("inverter_dashboard.version.UPDATE_PIN", pin)
+    run = Mock(side_effect=AssertionError("Invalid pins must not invoke Git"))
+    monkeypatch.setattr("subprocess.run", run)
+    assert download_and_update() == (False, "invalid update pin")
+    run.assert_not_called()

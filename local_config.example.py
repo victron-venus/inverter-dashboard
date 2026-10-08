@@ -26,7 +26,8 @@ polls those sensors from HA REST (same entity IDs as in inverter-control site_co
 # A silent modern Venus broker requires this ID to start notifications.
 # ---------------------------------------------------------------------------
 HA_URL = "http://homeassistant.local:8123"
-HA_TOKEN = "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN"
+# Empty/unconfigured value or placeholder sentinel; not a usable embedded credential.
+HA_TOKEN = "REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN"  # nosec B105
 
 # Master switch: use HA REST for switches/booleans below (recommended with MQTT_SLIM on Cerbo).
 # When True, dashboard does not fall back to MQTT/Cerbo for those entity states if HA REST is down.

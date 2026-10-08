@@ -205,6 +205,32 @@ async def test_gateway_override_checks_fresh_snapshot_and_post_entry(runtime, mo
     client.publish.assert_not_awaited()
 
 
+async def test_gateway_override_requires_dispatch_callback_before_waiting_for_ack(
+    runtime, monkeypatch
+):
+    ms, app, client = runtime
+    monkeypatch.setattr(gateway, "prefer_gateway", lambda: True)
+    app.data_source = "igw"
+    app.gateway_connected = True
+    ms.gateway_capabilities = {"setpoint_override": True}
+    snapshot = {
+        "capabilities": {"setpoint_override": True},
+        "inverter": {"setpoint_override": OVERRIDE},
+    }
+    fake = AsyncMock()
+    fake.__aenter__.return_value = fake
+    monkeypatch.setattr(gateway, "_new_gateway_client", lambda: fake)
+    monkeypatch.setattr(gateway, "fetch_snapshot", AsyncMock(return_value=snapshot))
+    # A transport returning without before_send must not confirm dispatch.
+    monkeypatch.setattr(gateway, "post_command", AsyncMock())
+    wait_for_ack = AsyncMock()
+    monkeypatch.setattr(ws, "_wait_override_ack", wait_for_ack)
+    with pytest.raises(ValueError, match="Override dispatch was not confirmed"):
+        await ws._dispatch_action("set_setpoint_override", {"value": 1, "request_id": "id"}, client)
+    wait_for_ack.assert_not_awaited()
+    client.publish.assert_not_awaited()
+
+
 async def test_override_status_subscription_and_retirement(runtime):
     ms, _, client = runtime
     client.subscribe = AsyncMock()

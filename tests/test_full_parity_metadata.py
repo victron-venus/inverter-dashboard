@@ -90,7 +90,8 @@ def test_api_settings_never_returns_stored_credentials(tmp_path, monkeypatch):
     monkeypatch.setenv("INVERTER_DASHBOARD_CONFIG", str(tmp_path))
     monkeypatch.setattr(server, "DASHBOARD_SECRET", "")
     settings_store.save_settings(
-        {"mqtt_password": "private-mqtt-fixture", "ha_token": "private-ha-fixture"}
+        # Synthetic test credentials/sentinels; not valid external-service secrets.
+        {"mqtt_password": "private-mqtt-fixture", "ha_token": "private-ha-fixture"}  # nosec B105
     )
     response = TestClient(server.app).post("/api/settings", json={"show_daily_stats": False})
     assert response.status_code == 200
@@ -228,11 +229,13 @@ def test_explicit_durable_settings_private_atomic_and_masked_preserving(tmp_path
 
     path = tmp_path / "persistent" / "dashboard_settings.json"
     monkeypatch.setenv("INVERTER_DASHBOARD_SETTINGS_FILE", str(path))
-    settings_store.save_settings({"ha_token": "private-fixture-token", "show_daily_stats": True})
+    # Synthetic test credentials/sentinels; not valid external-service secrets.
+    settings_store.save_settings({"ha_token": "private-fixture-token", "show_daily_stats": True})  # nosec B105
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
     old = path.read_bytes()
-    settings_store.save_settings({"ha_token": "***", "show_daily_stats": False})
+    # Synthetic test credentials/sentinels; not valid external-service secrets.
+    settings_store.save_settings({"ha_token": "***", "show_daily_stats": False})  # nosec B105
     assert settings_store.load_settings()["ha_token"] == "private-fixture-token"
     assert settings_store.load_settings()["show_daily_stats"] is False
     assert path.read_bytes() != old
