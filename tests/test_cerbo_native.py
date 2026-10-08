@@ -450,3 +450,57 @@ async def test_source_retirement_after_keepalive_prevents_water_reads(monkeypatc
         await _keepalive_loop(broker, lambda: portal[0])
     assert len(broker.events) == 1
     assert broker.events[0][1] == "R/site/keepalive"
+
+
+def test_battery_projection_keeps_custom_order_cache_and_shunt_precedence():
+    from inverter_dashboard.cerbo import CerboOverlayMixin
+
+    calls = []
+
+    class OrderedBatteries(CerboOverlayMixin):
+        def _devices(self, kind):
+            calls.append(kind)
+            return [
+                ("9", {"CustomName": "Shunt without voltage", "Dc/0/Current": 99}),
+                ("8", {"CustomName": "Bank shunt", "Dc/0/Voltage": 47.2, "Dc/0/Current": -2}),
+                ("1", {"CustomName": "Selected BMS", "Dc/0/Voltage": 54, "Dc/0/Power": 700}),
+            ]
+
+    state = OrderedBatteries()
+    writes = []
+
+    class ObservedOutput(dict):
+        def __setitem__(self, key, value):
+            writes.append((key, list(state._batteries)))
+            super().__setitem__(key, value)
+
+    output = ObservedOutput()
+    state._apply_batteries(output, {"Dc/Battery/Instance": 1, "Dc/Battery/Power": 1000})
+    assert calls == ["battery"]
+    assert [entry["instance"] for entry in output["batteries"]] == ["9", "8", "1"]
+    assert all(instances == ["9", "8", "1"] for _, instances in writes)
+    assert output["battery_voltage"] == 47.2
+    assert output["battery_current"] == -2
+    assert output["battery_power"] == -94.4
+    assert output["battery_soc"] == 50
+    assert output["bv"] == 47.2
+    assert output["bc"] == -2
+    assert output["bp"] == -94.4
+
+
+def test_battery_projection_omits_overflow_power_and_truncates_time_to_minutes():
+    from inverter_dashboard.cerbo import CerboOverlayMixin
+
+    class ExtremeBattery(CerboOverlayMixin):
+        def _devices(self, kind):
+            assert kind == "battery"
+            return [("1", {"Dc/0/Voltage": 1e308, "Dc/0/Current": 1e308, "TimeToGo": 7260.9})]
+
+    state = ExtremeBattery()
+    output = {}
+    state._apply_batteries(output, {})
+    entry = output["batteries"][0]
+    assert "power" not in entry
+    assert "battery_power" not in output
+    assert entry["time_to_go"] == "2h 01m"
+    assert entry["time_to_go_seconds"] == 7260.9
