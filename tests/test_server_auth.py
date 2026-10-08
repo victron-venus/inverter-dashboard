@@ -104,10 +104,10 @@ def test_solar_forecast_passthrough():
     wsh._state["mqtt_state"] = None
 
 
-async def test_shutdown_mqtt_client_clears_state():
+def test_clear_mqtt_client_clears_state():
     server._app_state.mqtt_connected = True
     server._app_state.mqtt_client = object()
-    await server._shutdown_mqtt_client()
+    server._clear_mqtt_client()
     assert server._app_state.mqtt_client is None
     assert server._app_state.mqtt_connected is False
 

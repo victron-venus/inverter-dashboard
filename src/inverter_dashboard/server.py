@@ -55,6 +55,8 @@ from .version import VERSION, SelfUpdateDisabled, check_latest_version, download
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+_SPA_INDEX_FILE = "index.html"
+
 
 def _capitalize(s: str) -> str:
     return s[:1].upper() + s[1:] if s else ""
@@ -820,7 +822,7 @@ async def _shutdown_tasks(ha_task, version_task=None):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def _shutdown_mqtt_client():
+def _clear_mqtt_client() -> None:
     """Clear MQTT client reference.
 
     The connection itself is closed by the message-loop task's ``async with``
@@ -969,7 +971,7 @@ async def lifespan(_app: FastAPI):
             await _shutdown_tasks(ha_task, version_task)
         finally:
             try:
-                await _shutdown_mqtt_client()
+                _clear_mqtt_client()
             finally:
                 if _push_service is not None:
                     await _push_service.close()
@@ -993,9 +995,9 @@ def _resolve_spa_root() -> Path | None:
     """Prefer static/dist (export_dist.sh), else static/ (docker-publish image layout)."""
     for static_dir in _spa_static_candidates():
         dist_dir = static_dir / "dist"
-        if (dist_dir / "index.html").is_file():
+        if (dist_dir / _SPA_INDEX_FILE).is_file():
             return dist_dir
-        if (static_dir / "index.html").is_file():
+        if (static_dir / _SPA_INDEX_FILE).is_file():
             return static_dir
     return None
 
@@ -1075,7 +1077,7 @@ async def index(request: Request, token: str | None = None):
         )
     spa_root = _resolve_spa_root()
     if spa_root is not None:
-        return (spa_root / "index.html").read_text()
+        return (spa_root / _SPA_INDEX_FILE).read_text()
     return HTMLResponse(
         "<h1>Inverter Dashboard</h1><p>Vue SPA not built. Run <code>npm run build</code> in inverter-dashboard-vue and copy dist/ to static/.</p>",
         status_code=404,
