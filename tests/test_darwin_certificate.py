@@ -9,7 +9,7 @@ import platform
 import shutil
 import socket
 import ssl
-import subprocess
+import subprocess  # nosec B404 -- fixed OpenSSL argv for disposable certificate fixtures.
 import sys
 import threading
 from contextlib import contextmanager
@@ -43,10 +43,10 @@ def native_pki(tmp_path_factory):
         command = [openssl, "genpkey", "-algorithm", algorithm, "-out", str(key)]
         for option in options:
             command.extend(["-pkeyopt", option])
-        subprocess.run(command, check=True, capture_output=True, timeout=30)
+        subprocess.run(command, check=True, capture_output=True, timeout=30)  # nosec B603 -- trusted OpenSSL; no shell.
         key.chmod(0o600)
         der = folder / f"{name}.der"
-        subprocess.run(
+        subprocess.run(  # nosec B603 -- trusted test-runner OpenSSL, fixed argv; no shell.
             [
                 openssl,
                 "req",
@@ -85,7 +85,7 @@ def certificates(native_pki):
 def tls_certificates(native_pki):
     folder, openssl, certificates = native_pki
     key = folder / "leaf.key"
-    subprocess.run(
+    subprocess.run(  # nosec B603 -- trusted test-runner OpenSSL, fixed argv; no shell.
         [
             openssl,
             "genpkey",
@@ -102,7 +102,7 @@ def tls_certificates(native_pki):
     )
     key.chmod(0o600)
     csr = folder / "leaf.csr"
-    subprocess.run(
+    subprocess.run(  # nosec B603 -- trusted test-runner OpenSSL, fixed argv; no shell.
         [openssl, "req", "-new", "-key", str(key), "-out", str(csr), "-subj", "/CN=localhost"],
         check=True,
         capture_output=True,
@@ -122,7 +122,7 @@ def tls_certificates(native_pki):
             "authorityKeyIdentifier=keyid,issuer\n"
             f"subjectAltName=DNS:{dns}\n"
         )
-        subprocess.run(
+        subprocess.run(  # nosec B603 -- trusted test-runner OpenSSL, fixed argv; no shell.
             [
                 openssl,
                 "x509",

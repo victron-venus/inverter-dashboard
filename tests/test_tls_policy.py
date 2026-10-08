@@ -196,7 +196,8 @@ def chains(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[Path, Pa
         issuer, issuer_key = root, root_key
         intermediate = b""
         if case == "weak-intermediate":
-            issuer_key = rsa.generate_private_key(65537, 1024)
+            # Deliberately weak, disposable certificate for rejection testing.
+            issuer_key = rsa.generate_private_key(65537, 1024)  # nosec B505
             issuer = certificate(issuer_key, "intermediate", root, root_key, ca=True)
             intermediate = issuer.public_bytes(serialization.Encoding.PEM)
         leaf_key: Key = (
