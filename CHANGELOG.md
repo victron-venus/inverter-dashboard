@@ -24,6 +24,10 @@ Existing configuration and stored settings remain usable. UPDATE_PIN must identi
 
 ### Security
 
+Use uv 0.12.18 for release builds, including Windows package installation, to
+address [GHSA-2cv4-cqwr-gwf7](https://github.com/advisories/GHSA-2cv4-cqwr-gwf7).
+Application dependencies and configuration are unchanged.
+
 Private vulnerability reporting and response policy are documented in SECURITY.md. This maintenance update strengthens release evidence and review instructions; it does not replace deployment authentication, network isolation or independent equipment safeguards. No new project CVE is announced by these changes.
 
 ## [1.8.26] - Unreleased
