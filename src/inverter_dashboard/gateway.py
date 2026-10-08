@@ -196,6 +196,16 @@ def build_headers() -> dict[str, str]:
     return headers
 
 
+def _fractional_datetime_keys(platform: dict[str, Any]) -> list[str]:
+    keys = []
+    for key, raw in platform.items():
+        parsed = notifications.parse_platform_leaf_key(key)
+        value = raw.get("value") if isinstance(raw, dict) else raw
+        if parsed and parsed[2] == "DateTime" and isinstance(value, float):
+            keys.append(key)
+    return keys
+
+
 async def fetch_snapshot(client: httpx.AsyncClient) -> dict[str, Any]:
     """GET /v1/snapshot; raises httpx.HTTPStatusError on non-2xx."""
     base = config.validate_gateway_url(config.GATEWAY_URL)
@@ -207,12 +217,7 @@ async def fetch_snapshot(client: httpx.AsyncClient) -> dict[str, Any]:
         raise TypeError("gateway snapshot is not a JSON object")
     platform = data.get("platform")
     if isinstance(platform, dict):
-        datetime_keys = []
-        for key, raw in platform.items():
-            parsed = notifications.parse_platform_leaf_key(key)
-            value = raw.get("value") if isinstance(raw, dict) else raw
-            if parsed and parsed[2] == "DateTime" and isinstance(value, float):
-                datetime_keys.append(key)
+        datetime_keys = _fractional_datetime_keys(platform)
         if datetime_keys:
             # Only source DateTime decimals need their exact wire text. Reparse
             # those leaves without rounding; all other telemetry stays ordinary
