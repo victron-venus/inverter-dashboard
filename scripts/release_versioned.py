@@ -362,9 +362,12 @@ def prepare(args):
     """Freeze one durable plan before any platform build consumes version files."""
     inputs = event_inputs()
     kind = os.environ.get("GITHUB_EVENT_NAME")
-    channel = (
-        "nightly" if kind == "schedule" else ("beta" if kind == "push" else inputs.get("channel"))
-    )
+    if kind == "schedule":
+        channel = "nightly"
+    elif kind == "push":
+        channel = "beta"
+    else:
+        channel = inputs.get("channel")
     rc.require(channel in {"nightly", "beta", "rc", "stable"}, "Invalid release channel")
     if kind == "workflow_dispatch" and channel != "nightly":
         rc.require(
