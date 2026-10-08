@@ -164,6 +164,50 @@ def test_native_solar_aggregates_no_double_count_or_stale_legacy_component(ms):
     assert ms.current_state["solar_total"] == 900
 
 
+def test_solar_device_inventory_retains_metadata_and_power_precedence(ms):
+    sample(ms, "solarcharger", "CustomName", "Roof", "290")
+    sample(ms, "solarcharger", "Pv/V", 110, "290")
+    sample(ms, "solarcharger", "Dc/0/Voltage", 50, "290")
+    sample(ms, "solarcharger", "Dc/0/Current", 10, "290")
+    sample(ms, "solarcharger", "Dc/0/Power", 400, "290")
+    sample(ms, "solarcharger", "Yield/Power", 0, "290")
+    sample(ms, "pvinverter", "ProductName", "AC solar", "42")
+    sample(ms, "pvinverter", "Ac/L1/Power", 250, "42")
+    sample(ms, "pvinverter", "Ac/L1/Voltage", 230, "42")
+    sample(ms, "pvinverter", "Ac/L1/Current", 1.2, "42")
+    sample(ms, "pvinverter", "Ac/Power", 0, "42")
+
+    state = ms.current_state
+    assert state["mppt_chargers"] == [
+        {"instance": "290", "name": "Roof", "pv_voltage": 110, "current": 10, "power": 0}
+    ]
+    assert state["pv_inverters"] == [
+        {"instance": "42", "name": "AC solar", "voltage": 230, "current": 1.2, "power": 0}
+    ]
+    assert state["mppt_data"] == state["mppt_chargers"]
+    assert state["pv_inverter_powers"] == state["pv_inverter_individual"] == [0]
+    assert state["solar_total"] == 0
+
+    sample(ms, "solarcharger", "Yield/Power", None, "290")
+    assert ms.current_state["mppt_total"] == 400
+    sample(ms, "solarcharger", "Dc/0/Power", None, "290")
+    assert ms.current_state["mppt_total"] == 500
+    sample(ms, "pvinverter", "Ac/Power", None, "42")
+    assert ms.current_state["solar_total"] == 750
+
+
+def test_solar_product_overflow_does_not_hide_device_or_supply_power(ms):
+    sample(ms, "solarcharger", "CustomName", "Overflow", "290")
+    sample(ms, "solarcharger", "Dc/0/Voltage", 1e308, "290")
+    sample(ms, "solarcharger", "Dc/0/Current", 1e308, "290")
+    charger = ms.current_state["mppt_chargers"][0]
+    assert charger == {"instance": "290", "name": "Overflow", "current": 1e308}
+    assert ms.current_state.get("mppt_total") is None
+    assert ms.current_state.get("solar_total") is None
+    sample(ms, "solarcharger", "Dc/0/Power", 0, "290")
+    assert ms.current_state["mppt_total"] == 0
+
+
 def test_acload_phases_and_duplicate_names_are_stable(ms):
     sample(ms, "acload", "CustomName", "Heater", "81")
     sample(ms, "acload", "ProductName", "Product", "81")

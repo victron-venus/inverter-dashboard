@@ -310,6 +310,32 @@ def _invalid_service_keys(kind: str, path: str) -> set[str]:
     return keys
 
 
+def _charger_entry(instance: str, leaves: dict[str, Any]) -> dict[str, Any]:
+    """Project one solar charger, preserving explicit power before V × I."""
+    entry = _identity(instance, leaves)
+    for path, key in (("Pv/V", "pv_voltage"), (VE_DC_CURRENT_PATH, "current")):
+        if (value := number(leaves.get(path))) is not None:
+            entry[key] = value
+    voltage = number(leaves.get(VE_DC_VOLTAGE_PATH))
+    current = number(leaves.get(VE_DC_CURRENT_PATH))
+    product = voltage * current if voltage is not None and current is not None else None
+    power = _first_number(leaves.get(VE_YIELD_POWER_PATH), leaves.get(VE_DC_POWER_PATH), product)
+    if power is not None:
+        entry["power"] = power
+    return entry
+
+
+def _pv_inverter_entry(instance: str, leaves: dict[str, Any]) -> dict[str, Any]:
+    """Project one PV inverter, preserving aggregate power before phase totals."""
+    entry = _identity(instance, leaves)
+    if (value := _power(leaves)) is not None:
+        entry["power"] = value
+    for path, key in (("Ac/L1/Voltage", "voltage"), ("Ac/L1/Current", "current")):
+        if (value := number(leaves.get(path))) is not None:
+            entry[key] = value
+    return entry
+
+
 def _battery_entry(instance: str, leaves: dict[str, Any]) -> dict[str, Any]:
     entry = _identity(instance, leaves)
     for path, key in BATTERY_PATHS.items():
@@ -703,18 +729,7 @@ class CerboOverlayMixin:
     def _apply_solar(self, out, system) -> None:
         chargers = []
         for instance, leaves in self._devices("solarcharger"):
-            entry = _identity(instance, leaves)
-            for path, key in (("Pv/V", "pv_voltage"), (VE_DC_CURRENT_PATH, "current")):
-                if (value := number(leaves.get(path))) is not None:
-                    entry[key] = value
-            voltage = number(leaves.get(VE_DC_VOLTAGE_PATH))
-            current = number(leaves.get(VE_DC_CURRENT_PATH))
-            product = voltage * current if voltage is not None and current is not None else None
-            power = _first_number(
-                leaves.get(VE_YIELD_POWER_PATH), leaves.get(VE_DC_POWER_PATH), product
-            )
-            if power is not None:
-                entry["power"] = power
+            entry = _charger_entry(instance, leaves)
             if len(entry) > 1:
                 chargers.append(entry)
         self._chargers = {c["instance"]: c for c in chargers}
@@ -730,12 +745,7 @@ class CerboOverlayMixin:
             out["pv_total"] = mppt
         inverters = []
         for instance, leaves in self._devices("pvinverter"):
-            entry = _identity(instance, leaves)
-            if (value := _power(leaves)) is not None:
-                entry["power"] = value
-            for path, key in (("Ac/L1/Voltage", "voltage"), ("Ac/L1/Current", "current")):
-                if (value := number(leaves.get(path))) is not None:
-                    entry[key] = value
+            entry = _pv_inverter_entry(instance, leaves)
             if len(entry) > 1:
                 inverters.append(entry)
         self._pv_inverters = {p["instance"]: p for p in inverters}
