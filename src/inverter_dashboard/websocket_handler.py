@@ -701,18 +701,15 @@ def _validate_controller_snapshot(name: str, snapshot: dict[str, Any]) -> dict[s
     return controller
 
 
-async def _send_controller_command(
-    name: str, data: dict[str, Any], mqtt_client: Client | None
-) -> None:
-    body = {key: value for key, value in data.items() if key != "action"}
-    body = (
-        controller_commands.validate_override
-        if name == "setpoint_override"
-        else controller_commands.validate_tariff
-    )(body)
-    generation = gateway.source_generation()
-    owner = _state.get("mqtt_state")
-    remote = gateway.prefer_gateway()
+def _controller_command_guard(
+    name: str,
+    body: dict[str, Any],
+    owner,
+    generation: int,
+    remote: bool,
+    mqtt_client: Client | None,
+):
+    """Capture the selection while checking live authority at every send boundary."""
 
     def check_current() -> None:
         if (
@@ -727,6 +724,24 @@ async def _send_controller_command(
             != body["revision"]
         ):
             raise ValueError("Controller tariff changed; reload before editing")
+
+    return check_current
+
+
+async def _send_controller_command(
+    name: str, data: dict[str, Any], mqtt_client: Client | None
+) -> None:
+    body = {key: value for key, value in data.items() if key != "action"}
+    body = (
+        controller_commands.validate_override
+        if name == "setpoint_override"
+        else controller_commands.validate_tariff
+    )(body)
+    generation = gateway.source_generation()
+    owner = _state.get("mqtt_state")
+    remote = gateway.prefer_gateway()
+
+    check_current = _controller_command_guard(name, body, owner, generation, remote, mqtt_client)
 
     check_current()
 
