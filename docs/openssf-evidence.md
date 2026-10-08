@@ -70,3 +70,8 @@ Release guidance parsing also imports toolkit revision `ec99f37`: Markdown code
 fences cannot provide or split the required version, Upgrade or Security headings.
 The release contract suite tests matching fence markers and lengths, unclosed
 examples, CRLF input and rejection before any remote publication writes.
+
+The Bandit entry point ignores auto-discovered `.bandit` INI files by selecting
+the operating system null device explicitly. CLI regressions verify that root,
+nested and duplicate INI files cannot narrow the reviewed YAML scan policy.
+Bandit emits an expected empty-INI warning; stderr remains visible.
