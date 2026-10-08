@@ -4,7 +4,9 @@ import os
 import re
 import signal
 import socket
-import subprocess
+
+# CI tools use fixed executable choices and argv; no shell interpolation.
+import subprocess  # nosec B404
 import sys
 import tempfile
 import time
@@ -31,7 +33,8 @@ def main() -> None:
     """Start the binary on loopback and verify its packaged runtime assets."""
     binary = Path(sys.argv[1]).resolve()
     expected_version = Path("VERSION").read_text(encoding="utf-8").strip()
-    subprocess.run([str(binary), "--help"], check=True, timeout=60)
+    # Build/verification command from checked repository policy; argv remains data.
+    subprocess.run([str(binary), "--help"], check=True, timeout=60)  # nosec B603
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -41,12 +44,13 @@ def main() -> None:
         MQTT_HOST="",
         GATEWAY_ENABLED="false",
         SELF_UPDATE_ENABLED="false",
-        DASHBOARD_SECRET="",
+        DASHBOARD_SECRET="",  # nosec B106 - isolated loopback smoke fixture has no real credentials
         INVERTER_DASHBOARD_VERSION="",
     )
     with (
         tempfile.TemporaryDirectory() as directory,
-        subprocess.Popen(
+        # Build/verification command from checked repository policy; argv remains data.
+        subprocess.Popen(  # nosec B603
             [str(binary), "--port", str(port)],
             cwd=directory,
             env=environment,

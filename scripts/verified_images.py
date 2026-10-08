@@ -13,7 +13,8 @@ import json
 import os
 import secrets
 import stat
-import subprocess
+# CI tools use fixed executable choices and argv; no shell interpolation.
+import subprocess  # nosec B404
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -124,12 +125,14 @@ def resolve(policy: dict, tag: str, directory: Path) -> dict:
             Path(name).name == name and (directory / name).is_file(),
             "Approved container archive is missing",
         )
-        local = subprocess.run(
+        # Build/verification command from checked repository policy; argv remains data.
+        local = subprocess.run(  # nosec B603, B607
             ["skopeo", "inspect", "--raw", "oci-archive:" + str(directory / name)],
             capture_output=True,
             check=True,
         ).stdout
-        remote = subprocess.run(
+        # Build/verification command from checked repository policy; argv remains data.
+        remote = subprocess.run(  # nosec B603, B607
             [
                 "skopeo",
                 "inspect",
