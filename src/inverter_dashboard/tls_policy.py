@@ -82,13 +82,22 @@ class _VerifiedObject(ssl.SSLObject):
         _check_verified_keys(self)
 
 
+def enforce_tls_minimum(context: ssl.SSLContext) -> ssl.SSLContext:
+    """Raise protocol/key-strength floors while preserving the selected ciphers."""
+    context.minimum_version = max(context.minimum_version, ssl.TLSVersion.TLSv1_2)
+    if context.security_level < 2:
+        selected = [
+            cipher["name"] for cipher in context.get_ciphers() if cipher["protocol"] != "TLSv1.3"
+        ]
+        context.set_ciphers(":".join([*selected, "@SECLEVEL=2"]))
+    return context
+
+
 def enforce_peer_key_policy(context: ssl.SSLContext) -> ssl.SSLContext:
     """Apply the policy to an owned client context without changing its trust roots."""
     if context.verify_mode != ssl.CERT_REQUIRED or not context.check_hostname:
         raise ValueError("TLS context must verify certificates and hostnames")
-    context.minimum_version = max(context.minimum_version, ssl.TLSVersion.TLSv1_2)
-    if context.security_level < 2:
-        context.set_ciphers("DEFAULT:@SECLEVEL=2")
+    enforce_tls_minimum(context)
     context.sslsocket_class = _VerifiedSocket
     context.sslobject_class = _VerifiedObject
     return context

@@ -26,6 +26,20 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from inverter_dashboard.tls_policy import enforce_peer_key_policy, httpx_client
 
 Key = rsa.RSAPrivateKey | ec.EllipticCurvePrivateKey
+
+
+@pytest.mark.parametrize("level", [1, 3])
+def test_tls_floor_preserves_explicit_cipher_selection(level):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.set_ciphers(f"ECDHE-RSA-AES128-GCM-SHA256:@SECLEVEL={level}")
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+    selected = context.get_ciphers()
+    enforce_peer_key_policy(context)
+    assert context.get_ciphers() == selected
+    assert context.security_level == max(level, 2)
+    assert context.minimum_version == ssl.TLSVersion.TLSv1_3
+
+
 CHAIN_CASES = (
     "strong",
     "strong-ec",
@@ -284,7 +298,7 @@ def peer(
                         )
             except ssl.SSLError as error:
                 result["handshake_error"] = str(error)
-            except ConnectionResetError as error:
+            except (ConnectionResetError, BrokenPipeError) as error:
                 if result["application_bytes"]:
                     result["unexpected_error"] = repr(error)
                 else:
@@ -336,6 +350,7 @@ def proxy(
                     raw.settimeout(5)
                     if chain:
                         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                        context.minimum_version = ssl.TLSVersion.TLSv1_2
                         context.set_ciphers("DEFAULT:@SECLEVEL=0")
                         context.load_cert_chain(chain[0], chain[1])
                         incoming: socket.socket = context.wrap_socket(raw, server_side=True)
@@ -365,6 +380,10 @@ def proxy(
             except ssl.SSLError:
                 # TLS clients may reject this proxy certificate or close its tunnel.
                 pass
+            except (ConnectionResetError, BrokenPipeError) as error:
+                # A rejected proxy may be closed before a CONNECT request is sent.
+                if observed:
+                    errors.append(error)
             except Exception as error:
                 errors.append(error)
 
