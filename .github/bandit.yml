@@ -10,6 +10,8 @@ exclude_dirs:
   - './.git/'
   - './.venv/'
   - './.venv-ci/'
+  - './.tox/'
+  - './.eggs/'
   - './build/'
   - './dist/'
   - './release-dist/'
