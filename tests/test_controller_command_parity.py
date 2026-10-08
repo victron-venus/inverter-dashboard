@@ -425,13 +425,13 @@ async def test_notification_ack_uses_current_native_owner_without_controller(run
 
     asyncio.get_running_loop().call_soon(change)
     if case == "success":
-        await ws._acknowledge_victron_on_cerbo(None, client)
+        await ws._acknowledge_victron_on_cerbo(client)
         client.publish.assert_awaited_once_with(
             "W/site/platform/0/Notifications/AcknowledgeAll", '{"value":1}', qos=0, retain=False
         )
     else:
         with pytest.raises(ValueError):
-            await ws._acknowledge_victron_on_cerbo(None, client)
+            await ws._acknowledge_victron_on_cerbo(client)
         client.publish.assert_not_awaited()
 
 
@@ -475,5 +475,5 @@ async def test_native_ack_timeout_propagates_without_retry(runtime, monkeypatch)
 
     client.publish.side_effect = stalled
     with pytest.raises(TimeoutError):
-        await ws._acknowledge_victron_on_cerbo(None, client)
+        await ws._acknowledge_victron_on_cerbo(client)
     client.publish.assert_awaited_once()
