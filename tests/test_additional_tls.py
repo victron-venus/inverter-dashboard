@@ -45,8 +45,10 @@ def mqtt_peer(chain, version):
                         connection.sendall(b"\x20\x02\x00\x00")
                         while connection.recv(4096):
                             pass
-            except (ssl.SSLError, ConnectionError):
-                pass
+            except (ssl.SSLError, ConnectionError) as error:
+                # Rejected peers and normal MQTT disconnects can close this socket.
+                # Keep the diagnostic; each test also checks the received bytes.
+                observed["connection_error"] = repr(error)
             except Exception as error:
                 observed["unexpected"] = repr(error)
 

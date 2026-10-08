@@ -97,8 +97,10 @@ def https_peer(context):
                         connection.sendall(
                             b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
                         )
-            except (ssl.SSLError, ConnectionError):
-                pass
+            except (ssl.SSLError, ConnectionError) as error:
+                # A client that rejects the test identity closes before its request.
+                # Preserve the diagnostic alongside the received-byte assertion.
+                observed["connection_error"] = repr(error)
             except Exception as error:
                 observed["unexpected"] = repr(error)
 
