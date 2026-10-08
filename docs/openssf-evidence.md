@@ -77,3 +77,7 @@ nested and duplicate INI files cannot narrow the reviewed YAML scan policy.
 Bandit emits an expected empty-INI warning; stderr remains visible.
 
 Release guidance and validation helpers also import reviewed toolkit revision `cab6d07`: comments and empty code fences cannot satisfy upgrade/security guidance, while visible literal examples remain valid. Receipt size limits are enforced before parsing. The existing consumer workflow policy is retained.
+
+Toolkit revision `79f1857` also makes same-level and higher-level ATX headings end release sections, including empty headings, while headings inside code or comments remain inert.
+
+Release structure uses ATX headings (`#`, `##`, `###`), with up to three leading spaces. Setext-style or ambiguous text/comment/underline structures in the selected version are rejected; use ATX headings or a blank line before a thematic `---` separator. Literal fenced/indented examples and comments do not define sections.
