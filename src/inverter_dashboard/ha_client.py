@@ -771,13 +771,32 @@ async def press_entity(entity_id: str) -> bool:
     return resp is not None and resp.status_code == 200
 
 
-async def perform_action(action: str, entity: str, payload: dict[str, Any]) -> bool:
-    """Dispatch configured rich HA controls through the direct HA connection."""
-    if not is_direct_mode():
-        raise ValueError("Direct Home Assistant controls are not enabled")
-    require_live_controls()
-    if not isinstance(entity, str) or not entity or entity.rsplit(".", 1)[-1] in CONTROL_FLAG_KEYS:
-        raise ValueError("A Home Assistant entity is required")
+def _number_action_value(payload: dict[str, Any]) -> int | float:
+    """Validate the value before constructing a number service request."""
+    value = payload.get("value")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError("Number value must be finite")
+    return value
+
+
+def _cover_action_position(payload: dict[str, Any]) -> int | float:
+    """Validate the position before constructing a cover service request."""
+    position = payload.get("position")
+    if (
+        isinstance(position, bool)
+        or not isinstance(position, (int, float))
+        or not math.isfinite(position)
+        or not 0 <= position <= 100
+        or int(position) != position
+    ):
+        raise ValueError("Cover position must be an integer from 0 to 100")
+    return position
+
+
+def _prepare_action(
+    action: str, entity: str, payload: dict[str, Any]
+) -> tuple[str, dict[str, Any], str]:
+    """Build the request for a configured entity and supported action."""
     domain = entity.split(".", 1)[0]
     body: dict[str, Any] = {"entity_id": entity}
     allowed = False
@@ -786,26 +805,12 @@ async def perform_action(action: str, entity: str, payload: dict[str, Any]) -> b
         allowed = domain in ("number", "input_number") and entity in _filtered_entities.get(
             "numbers", []
         )
-        value = payload.get("value")
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-        ):
-            raise ValueError("Number value must be finite")
+        value = _number_action_value(payload)
         body["value"] = value
         service = "set_value"
     elif action == "set_cover_position":
         allowed = domain == "cover" and entity in _filtered_entities.get("covers", [])
-        position = payload.get("position")
-        if (
-            isinstance(position, bool)
-            or not isinstance(position, (int, float))
-            or not math.isfinite(position)
-            or not 0 <= position <= 100
-            or int(position) != position
-        ):
-            raise ValueError("Cover position must be an integer from 0 to 100")
+        position = _cover_action_position(payload)
         body["position"] = int(position)
         service = "set_cover_position"
     elif action == "media_player":
@@ -820,6 +825,17 @@ async def perform_action(action: str, entity: str, payload: dict[str, Any]) -> b
         service = "turn_on"
     if not allowed or not service:
         raise ValueError("Home Assistant action is not allowed for this entity")
+    return domain, body, service
+
+
+async def perform_action(action: str, entity: str, payload: dict[str, Any]) -> bool:
+    """Dispatch configured rich HA controls through the direct HA connection."""
+    if not is_direct_mode():
+        raise ValueError("Direct Home Assistant controls are not enabled")
+    require_live_controls()
+    if not isinstance(entity, str) or not entity or entity.rsplit(".", 1)[-1] in CONTROL_FLAG_KEYS:
+        raise ValueError("A Home Assistant entity is required")
+    domain, body, service = _prepare_action(action, entity, payload)
     section = {
         "number_set": "numbers",
         "set_cover_position": "covers",
