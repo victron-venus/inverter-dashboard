@@ -1023,7 +1023,15 @@ async def health_live(response: Response):
     return {"ok": True}
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get(
+    "/",
+    response_class=HTMLResponse,
+    responses={
+        401: {"description": "Missing secret", "model": str},
+        403: {"description": "Invalid secret", "model": str},
+        404: {"description": "Dashboard assets are unavailable", "model": str},
+    },
+)
 async def index(request: Request, token: str | None = None):
     """Serve Vue SPA from static/dist or static/, or 404 if not built"""
     try:
@@ -1117,7 +1125,8 @@ async def api_settings_get(request: Request):
     responses={
         400: {"description": "Invalid settings"},
         401: {"description": "Missing secret"},
-        403: {"description": "Invalid secret"},
+        403: {"description": "Invalid secret or cross-origin settings write"},
+        415: {"description": "Content-Type must be application/json"},
     },
 )
 async def api_settings_post(request: Request):
@@ -1196,7 +1205,10 @@ async def api_check_update(request: Request):
 
 @app.post(
     "/api/update",
-    responses={401: {"description": "Missing secret"}, 403: {"description": "Invalid secret"}},
+    responses={
+        401: {"description": "Missing secret"},
+        403: {"description": "Invalid secret or self-update disabled"},
+    },
 )
 async def api_update(request: Request):
     """Self-update: download latest from GitHub and restart"""
