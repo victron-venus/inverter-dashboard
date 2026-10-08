@@ -660,102 +660,128 @@ def _start_gateway_client():
     owner.mqtt_tasks.append(task)
 
 
+async def _prepare_mqtt_session(owner, ms: MqttState, current, client: Client) -> None:
+    """Initialize the current session before subscribing to its source topics."""
+    owner.mqtt_connected = True
+    logger.info("Connected to MQTT broker")
+
+    async def _on_portal(portal: str, session_client=client) -> None:
+        if current() and owner.mqtt_client is session_client:
+            await _subscribe_portal_topics(session_client, portal)
+
+    ms.set_portal_callback(_on_portal)
+    ms.clear_daemon_state()
+    ms.clear_cerbo_state()
+    if _push_service is not None:
+        _push_service.connect("mqtt", ms, force=True)
+    await _subscribe_topics(client, ms._portal_id or None)
+
+
+async def _consume_mqtt_messages(owner, ms: MqttState, current, client: Client) -> None:
+    """Apply current-session messages before notifying the push observer."""
+    async for message in client.messages:
+        if not current() or owner.mqtt_client is not client:
+            break
+        await ms.on_message(message.topic.value, message.payload, retained=bool(message.retain))
+        if (
+            _push_observer is not None
+            and current()
+            and owner.mqtt_client is client
+            and owner.mqtt_connected
+        ):
+            _push_observer.mqtt(
+                ms,
+                message.topic.value,
+                retained=bool(message.retain),
+                payload=message.payload,
+            )
+
+
+async def _finish_mqtt_session(
+    owner, ms: MqttState, current, client: Client, keepalive_task
+) -> None:
+    """Clear current-session state and always join its owned keepalive task."""
+    try:
+        if current() and owner.mqtt_client is client:
+            owner.mqtt_connected = False
+            if _push_service is not None:
+                _push_service.disconnect("mqtt", ms)
+            ms.clear_daemon_state()
+            ms.clear_cerbo_state()
+            await ms._emit()
+    finally:
+        # State notifications may fail or be cancelled; the owned
+        # keepalive still has to stop before this session exits.
+        if keepalive_task is not None:
+            keepalive_task.cancel()
+            await asyncio.gather(keepalive_task, return_exceptions=True)
+
+
+def _current_mqtt_portal(ms: MqttState, current) -> str:
+    """Read the portal lazily only while this source generation is current."""
+    return ms._portal_id if current() else ""
+
+
+async def _handle_mqtt_failure(owner, current, delay: float, error: Exception) -> bool:
+    """Keep the active exception context while logging and deciding retry/failover."""
+    if not current():
+        return False
+    owner.mqtt_reconnects += 1
+    if isinstance(error, MqttError):
+        logger.warning(
+            "MQTT connection lost — reconnecting in %.1fs (reconnect #%d)",
+            delay,
+            owner.mqtt_reconnects,
+        )
+        reason = "MQTT connection lost"
+    else:
+        logger.exception("Unexpected error in MQTT loop — retrying in %.1fs", delay)
+        reason = "MQTT loop error"
+    if gateway.dual_path_enabled() and gateway.gateway_configured():
+        await _failover_to_igw(reason)
+        return False
+    return True
+
+
+async def _mqtt_connect_and_loop(owner, ms: MqttState, current, stopped) -> None:
+    """Reconnect one captured source without reviving a retired generation."""
+    delay = max(config.MQTT_RECONNECT_MIN, 0.1)
+    while current():
+        keepalive_task: asyncio.Task | None = None
+        client = owner.mqtt_client
+        try:
+            async with client:
+                if not current() or owner.mqtt_client is not client:
+                    break
+                await _prepare_mqtt_session(owner, ms, current, client)
+                if not current():
+                    break
+                logger.info("Subscribed to MQTT topics")
+                keepalive_task = asyncio.create_task(
+                    _keepalive_loop(client, lambda: _current_mqtt_portal(ms, current))
+                )
+                delay = max(config.MQTT_RECONNECT_MIN, 0.1)
+                await _consume_mqtt_messages(owner, ms, current, client)
+        except Exception as error:  # pylint: disable=broad-except
+            if not await _handle_mqtt_failure(owner, current, delay, error):
+                break
+        finally:
+            await _finish_mqtt_session(owner, ms, current, client, keepalive_task)
+        if not current():
+            break
+        await _wait_for_source_retry(stopped, delay)
+        if not current():
+            break
+        delay = _next_backoff(delay)
+        owner.mqtt_client = _make_mqtt_client()
+
+
 def _start_mqtt_client():
     """Start an owner-bound MQTT client loop with auto-reconnect."""
     owner, ms, current, stopped = _new_source_state("mqtt")
     owner.mqtt_client = _make_mqtt_client()
 
-    async def mqtt_connect_and_loop():
-        delay = max(config.MQTT_RECONNECT_MIN, 0.1)
-        while current():
-            keepalive_task: asyncio.Task | None = None
-            client = owner.mqtt_client
-            try:
-                async with client:
-                    if not current() or owner.mqtt_client is not client:
-                        break
-                    owner.mqtt_connected = True
-                    logger.info("Connected to MQTT broker")
-
-                    async def _on_portal(portal: str, session_client=client) -> None:
-                        if current() and owner.mqtt_client is session_client:
-                            await _subscribe_portal_topics(session_client, portal)
-
-                    ms.set_portal_callback(_on_portal)
-                    ms.clear_daemon_state()
-                    ms.clear_cerbo_state()
-                    if _push_service is not None:
-                        _push_service.connect("mqtt", ms, force=True)
-                    await _subscribe_topics(client, ms._portal_id or None)
-                    if not current():
-                        break
-                    logger.info("Subscribed to MQTT topics")
-                    keepalive_task = asyncio.create_task(
-                        _keepalive_loop(client, lambda: ms._portal_id if current() else "")
-                    )
-                    delay = max(config.MQTT_RECONNECT_MIN, 0.1)
-                    async for message in client.messages:
-                        if not current() or owner.mqtt_client is not client:
-                            break
-                        await ms.on_message(
-                            message.topic.value, message.payload, retained=bool(message.retain)
-                        )
-                        if (
-                            _push_observer is not None
-                            and current()
-                            and owner.mqtt_client is client
-                            and owner.mqtt_connected
-                        ):
-                            _push_observer.mqtt(
-                                ms,
-                                message.topic.value,
-                                retained=bool(message.retain),
-                                payload=message.payload,
-                            )
-            except MqttError:
-                if not current():
-                    break
-                owner.mqtt_reconnects += 1
-                logger.warning(
-                    "MQTT connection lost — reconnecting in %.1fs (reconnect #%d)",
-                    delay,
-                    owner.mqtt_reconnects,
-                )
-                if gateway.dual_path_enabled() and gateway.gateway_configured():
-                    await _failover_to_igw("MQTT connection lost")
-                    break
-            except Exception:  # pylint: disable=broad-except
-                if not current():
-                    break
-                owner.mqtt_reconnects += 1
-                logger.exception("Unexpected error in MQTT loop — retrying in %.1fs", delay)
-                if gateway.dual_path_enabled() and gateway.gateway_configured():
-                    await _failover_to_igw("MQTT loop error")
-                    break
-            finally:
-                try:
-                    if current() and owner.mqtt_client is client:
-                        owner.mqtt_connected = False
-                        if _push_service is not None:
-                            _push_service.disconnect("mqtt", ms)
-                        ms.clear_daemon_state()
-                        ms.clear_cerbo_state()
-                        await ms._emit()
-                finally:
-                    # State notifications may fail or be cancelled; the owned
-                    # keepalive still has to stop before this session exits.
-                    if keepalive_task is not None:
-                        keepalive_task.cancel()
-                        await asyncio.gather(keepalive_task, return_exceptions=True)
-            if not current():
-                break
-            await _wait_for_source_retry(stopped, delay)
-            if not current():
-                break
-            delay = _next_backoff(delay)
-            owner.mqtt_client = _make_mqtt_client()
-
-    mqtt_task = asyncio.create_task(mqtt_connect_and_loop())
+    mqtt_task = asyncio.create_task(_mqtt_connect_and_loop(owner, ms, current, stopped))
     owner.mqtt_tasks.append(mqtt_task)
 
 
