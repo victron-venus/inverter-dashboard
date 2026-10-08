@@ -27,7 +27,7 @@ def _certificate_key_ok(der: bytes) -> bool:
         from cryptography.exceptions import UnsupportedAlgorithm
         from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed448, ed25519, rsa
     except ImportError:
-        raise ssl.SSLError("Verified HTTPS requires the cryptography package") from None
+        raise ssl.SSLError("Verified TLS requires the cryptography package") from None
     try:
         key = x509.load_der_x509_certificate(der).public_key()
     except (ValueError, UnsupportedAlgorithm):
@@ -42,8 +42,18 @@ def _certificate_key_ok(der: bytes) -> bool:
     return isinstance(key, ed25519.Ed25519PublicKey | ed448.Ed448PublicKey)
 
 
-def _check_verified_keys(connection: ssl.SSLObject | ssl.SSLSocket) -> None:
+def _certificate_der(certificate) -> bytes:
+    """Normalize the public and older CPython verified-certificate formats."""
+    if isinstance(certificate, bytes):
+        return certificate
+    encode = getattr(certificate, "public_bytes", None)
+    pem = encode() if callable(encode) else None
+    if not isinstance(pem, str):
+        raise ssl.SSLError("TLS runtime returned an unsupported certificate format")
+    return ssl.PEM_cert_to_DER_cert(pem)
 
+
+def _check_verified_keys(connection: ssl.SSLObject | ssl.SSLSocket) -> None:
     get_chain = getattr(connection, "get_verified_chain", None)
     if not callable(get_chain):
         # CPython 3.12 exposes the verified chain through its internal SSL object.
@@ -54,15 +64,7 @@ def _check_verified_keys(connection: ssl.SSLObject | ssl.SSLSocket) -> None:
     if not isinstance(chain, list) or not chain:
         raise ssl.SSLError("TLS peer has no verified certificate chain")
     for item in chain:
-        if isinstance(item, bytes):
-            der = item
-        else:
-            encode = getattr(item, "public_bytes", None)
-            pem = encode() if callable(encode) else None
-            if not isinstance(pem, str):
-                raise ssl.SSLError("TLS runtime returned an unsupported certificate format")
-            der = ssl.PEM_cert_to_DER_cert(pem)
-        if not _certificate_key_ok(der):
+        if not _certificate_key_ok(_certificate_der(item)):
             raise ssl.SSLError("TLS certificate key is below the supported security minimum")
 
 
