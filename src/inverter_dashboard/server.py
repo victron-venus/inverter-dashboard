@@ -14,6 +14,7 @@ import fnmatch
 import json
 import logging
 import os
+import ssl
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -23,7 +24,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import uvicorn
-from aiomqtt import Client, MqttError, TLSParameters
+from aiomqtt import Client, MqttError
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -50,6 +51,8 @@ from .config import DASHBOARD_SECRET, WEB_PORT
 from .push_api import install_push_api
 from .push_observer import PushObserver
 from .push_service import PushService
+from .server_tls import server_context
+from .tls_policy import enforce_peer_key_policy
 from .version import VERSION, SelfUpdateDisabled, check_latest_version, download_and_update
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -509,7 +512,13 @@ def _make_mqtt_client() -> Client:
         "password": config.MQTT_PASSWORD,
     }
     if config.MQTT_TLS:
-        client_kwargs["tls_params"] = TLSParameters(ca_certs=config.MQTT_CA_CERT or None)
+        # Match Paho's CA selection without changing SSLContext verification flags.
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        if config.MQTT_CA_CERT:
+            context.load_verify_locations(cafile=config.MQTT_CA_CERT)
+        else:
+            context.load_default_certs()
+        client_kwargs["tls_context"] = enforce_peer_key_policy(context)
     return Client(**client_kwargs)
 
 
@@ -1298,6 +1307,7 @@ def main():
         port=args.port,
         ssl_certfile=args.ssl_cert,
         ssl_keyfile=args.ssl_key,
+        ssl_context_factory=server_context if args.ssl_cert else None,
         log_level="info",
     )
 

@@ -17,6 +17,7 @@ from aiohttp.abc import AbstractResolver
 
 from .push_store import PushStore
 from .push_subject import validate_push_subject
+from .tls_policy import enforce_peer_key_policy
 
 EXACT_PUSH_HOSTS = frozenset({"fcm.googleapis.com", "updates.push.services.mozilla.com"})
 PUSH_SUFFIXES = (".push.apple.com", ".notify.windows.com")
@@ -199,9 +200,7 @@ class PushTransport:
                 "Urgency": "normal",
             }
         )
-        tls = ssl.create_default_context()
-        tls.verify_mode = ssl.CERT_REQUIRED
-        tls.check_hostname = True
+        tls = enforce_peer_key_policy(ssl.create_default_context())
         connector = aiohttp.TCPConnector(
             resolver=PublicPushResolver(),
             use_dns_cache=False,

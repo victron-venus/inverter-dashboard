@@ -28,6 +28,10 @@ trust anchor. Reissue affected private chains with RSA keys of at least 2048 bit
 or supported stronger keys. Certificate and hostname verification remain required;
 see [the TLS client policy](docs/tls-policy.md) for proxy and platform details.
 
+The same minima now apply to MQTT TLS, Web Push, HTTPS health probes and the
+built-in HTTPS server identity. Reissue weak server certificate chains before
+startup; combined or separate PEM certificate/key files remain supported.
+
 ### Security
 
 Use uv 0.12.18 for release builds, including Windows package installation, to
@@ -39,6 +43,11 @@ sending HTTP headers or bodies. This covers the HTTPX clients above and their
 HTTPS proxies; it preserves the configured CA selection and proxy exclusions.
 Intel macOS uses Apple's native certificate parser without adding a cryptography
 package dependency. The change does not establish whole-project OpenSSF compliance.
+
+Load the built-in server's certificate and private key from a checked snapshot
+to prevent file replacement between validation and OpenSSL loading. Preserve
+Web Push provider/DNS restrictions and MQTT CA selection while checking their
+actual TLS connections before credentials or payloads are sent.
 
 Private vulnerability reporting and response policy are documented in SECURITY.md. This maintenance update strengthens release evidence and review instructions; it does not replace deployment authentication, network isolation or independent equipment safeguards. No new project CVE is announced by these changes.
 

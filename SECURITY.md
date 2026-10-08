@@ -14,9 +14,9 @@ Security fixes are developed on the current default branch and released through 
 
 The HTTP/WebSocket service and MQTT/Home Assistant connections cross trust boundaries. Configure authentication and TLS at the documented deployment boundary, protect persisted credentials and limit command publishers. Self-update is opt-in and executes trusted repository code; dashboard controls can affect real equipment.
 
-The [TLS client policy](docs/tls-policy.md) documents certificate verification and
-exact key-size checks for Home Assistant, gateway and update-metadata HTTPX
-connections, including HTTPS proxies. Its coverage is specific to those clients.
+The [TLS policy](docs/tls-policy.md) documents certificate verification and exact
+key-size checks for HTTPX connections and HTTPS proxies, MQTT, Web Push, the
+loopback health probe and the built-in HTTPS server's configured identity.
 
 ## Secure development and delivery
 

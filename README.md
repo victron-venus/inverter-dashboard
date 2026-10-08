@@ -68,10 +68,11 @@ reject redirects, so configure the final URL directly. Native HTTPS accepts the
 gateway bearer token alone; Cloudflare Access credentials are optional and must
 be supplied as a complete pair when used. Private CA bundles can be supplied via
 `SSL_CERT_FILE` or `SSL_CERT_DIR` while retaining certificate and hostname checks.
-HTTPS connections to Home Assistant, the gateway and update metadata also check
-every verified certificate's exact public-key size before sending requests.
-See the [TLS client policy](docs/tls-policy.md) for supported keys, proxy handling
-and migration from weak private certificate chains.
+TLS connections to Home Assistant, the gateway, update metadata, MQTT and Web
+Push check every verified certificate's exact public-key size before sending
+application data. The built-in HTTPS server also validates its configured
+certificate chain before startup. See the [TLS policy](docs/tls-policy.md) for
+supported keys, proxy handling and migration from weak certificate chains.
 
 **Data-source precedence** (exclusive live path, desktop-aligned):
 
