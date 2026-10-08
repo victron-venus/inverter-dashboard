@@ -75,3 +75,5 @@ The Bandit entry point ignores auto-discovered `.bandit` INI files by selecting
 the operating system null device explicitly. CLI regressions verify that root,
 nested and duplicate INI files cannot narrow the reviewed YAML scan policy.
 Bandit emits an expected empty-INI warning; stderr remains visible.
+
+Release guidance and validation helpers also import reviewed toolkit revision `cab6d07`: comments and empty code fences cannot satisfy upgrade/security guidance, while visible literal examples remain valid. Receipt size limits are enforced before parsing. The existing consumer workflow policy is retained.

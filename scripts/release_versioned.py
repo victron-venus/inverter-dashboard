@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-# Vendored release toolkit; change the toolkit source, then render again.
-# ruff: noqa
-# mypy: ignore-errors
-# pylint: skip-file
-# fmt: off
 """Prepare exact versions before building and publish only matching build receipts."""
 
 from __future__ import annotations
@@ -14,7 +9,7 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import release as client
@@ -23,8 +18,8 @@ import version_plan
 from release_state import (
     StateGitHub,
     begin_publication,
-    reserve_plan,
     read_state,
+    reserve_plan,
     verify_reservation,
 )
 from version_receipt import verify_declared_artifacts, verify_receipts
@@ -38,6 +33,30 @@ def diagnostic_label(value):
     if re.fullmatch(r"[A-Za-z0-9_./~-]{1,200}", value, re.ASCII):
         return value
     return "redacted-sha256-" + rc.digest(value.encode("utf-8", "surrogatepass"))
+
+
+def _queue_toolchain_mapping(pending, path, before, after, missing):
+    """Push mapping fields in reverse order for stable depth-first diagnostics."""
+    for key in sorted(before.keys() | after.keys(), reverse=True):
+        pending.append(
+            (
+                diagnostic_label(path + "/" + key.replace("~", "~0").replace("/", "~1")),
+                before.get(key, missing),
+                after.get(key, missing),
+            )
+        )
+
+
+def _queue_toolchain_list(pending, path, before, after, missing):
+    """Push list positions without exposing the compared toolchain values."""
+    for index in reversed(range(max(len(before), len(after)))):
+        pending.append(
+            (
+                diagnostic_label(f"{path}/{index}"),
+                before[index] if index < len(before) else missing,
+                after[index] if index < len(after) else missing,
+            )
+        )
 
 
 def toolchain_changes(original, current):
@@ -58,25 +77,9 @@ def toolchain_changes(original, current):
                 f"type changed ({type(before).__name__} -> {type(after).__name__})",
             )
         elif isinstance(before, dict):
-            for key in sorted(before.keys() | after.keys(), reverse=True):
-                pending.append(
-                    (
-                        diagnostic_label(
-                            path + "/" + key.replace("~", "~0").replace("/", "~1")
-                        ),
-                        before.get(key, missing),
-                        after.get(key, missing),
-                    )
-                )
+            _queue_toolchain_mapping(pending, path, before, after, missing)
         elif isinstance(before, list):
-            for index in reversed(range(max(len(before), len(after)))):
-                pending.append(
-                    (
-                        diagnostic_label(f"{path}/{index}"),
-                        before[index] if index < len(before) else missing,
-                        after[index] if index < len(after) else missing,
-                    )
-                )
+            _queue_toolchain_list(pending, path, before, after, missing)
         else:
             yield path, "value changed"
 
@@ -90,16 +93,10 @@ def context(gh, channel, gate=False):
         gh, run_id, channel, info, rc.checked_out_sha(), attempt, gate=gate
     )
     snapshot = rc.source_policy_snapshot(gh, run["head_sha"])
-    rc.require_release_policy(
-        snapshot["data"], gh.repo, qualified=channel in {"rc", "stable"}
-    )
-    rc.require(
-        snapshot["data"].get("versioning"), "Repository has not enabled version plans"
-    )
+    rc.require_release_policy(snapshot["data"], gh.repo, qualified=channel in {"rc", "stable"})
+    rc.require(snapshot["data"].get("versioning"), "Repository has not enabled version plans")
     local_policy = json.loads(Path(rc.POLICY).read_text(encoding="utf-8"))
-    rc.require(
-        local_policy == snapshot["data"], "Working policy differs from source commit"
-    )
+    rc.require(local_policy == snapshot["data"], "Working policy differs from source commit")
     rc.check_ancestry(gh, run["head_sha"], info["default_branch"])
     return info, run, snapshot
 
@@ -117,22 +114,14 @@ def verified_rc(gh, tag, info, current_run):
     ref, _, assets = initial
     manifests = [asset for asset in assets if asset["name"] == rc.MANIFEST]
     rc.require(len(manifests) == 1, "RC manifest is missing")
-    raw = gh.binary(
-        f"releases/assets/{rc.positive(manifests[0]['id'], 'manifest asset ID')}"
-    )
+    raw = gh.binary(f"releases/assets/{rc.positive(manifests[0]['id'], 'manifest asset ID')}")
     manifest = rc.validate_manifest(raw, gh.repo, tag)
     source_policy = rc.source_policy_snapshot(gh, manifest["source_sha"])
     rc.require(source_policy == manifest["source_policy"], "RC source policy changed")
-    rc.require(
-        ref["object"].get("sha") == manifest["source_sha"], "RC source tag mismatch"
-    )
-    rc.require(
-        manifest["run_id"] != current_run["id"], "RC must come from a separate run"
-    )
+    rc.require(ref["object"].get("sha") == manifest["source_sha"], "RC source tag mismatch")
+    rc.require(manifest["run_id"] != current_run["id"], "RC must come from a separate run")
     source_run = gh.api(f"actions/runs/{manifest['run_id']}")
-    rc.require(
-        source_run.get("id") == manifest["run_id"], "RC source run identity mismatch"
-    )
+    rc.require(source_run.get("id") == manifest["run_id"], "RC source run identity mismatch")
     rc.validate_run(
         gh,
         run=source_run,
@@ -168,8 +157,7 @@ def verified_rc(gh, tag, info, current_run):
                 f"RC payload checksum mismatch: {item['name']}",
             )
     rc.require(
-        rc.snapshot_identity(rc.release_snapshot(gh, tag))
-        == rc.snapshot_identity(initial),
+        rc.snapshot_identity(rc.release_snapshot(gh, tag)) == rc.snapshot_identity(initial),
         "RC changed during verification",
     )
     return manifest, {
@@ -182,9 +170,7 @@ def verified_rc(gh, tag, info, current_run):
 
 def event_inputs() -> dict:
     """Read dispatch inputs from the runner-provided event payload."""
-    event = rc.parse_json(
-        Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes(), "workflow event"
-    )
+    event = rc.parse_json(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes(), "workflow event")
     return event.get("inputs") or {}
 
 
@@ -204,12 +190,8 @@ def verify_final_toolchains(gh, candidate, receipts):
     for current in sorted(receipts, key=lambda item: item["name"]):
         name = current["name"]
         rc.require(name in inventory, "RC platform receipt is missing")
-        raw = gh.binary(
-            f"releases/assets/{rc.positive(inventory[name]['id'], 'receipt asset ID')}"
-        )
-        rc.require(
-            rc.digest(raw) == expected[name]["sha256"], "RC toolchain receipt changed"
-        )
+        raw = gh.binary(f"releases/assets/{rc.positive(inventory[name]['id'], 'receipt asset ID')}")
+        rc.require(rc.digest(raw) == expected[name]["sha256"], "RC toolchain receipt changed")
         try:
             original = rc.parse_json(raw, "RC toolchain receipt")
         except rc.ReleaseError:
@@ -233,9 +215,7 @@ def verify_final_toolchains(gh, candidate, receipts):
     if platforms:
         omitted = fields - len(differences)
         if omitted:
-            differences.append(
-                f"  {omitted} further field differences omitted (log limit)"
-            )
+            differences.append(f"  {omitted} further field differences omitted (log limit)")
         raise rc.ReleaseError(
             f"Build toolchain differs from accepted RC: {platforms} platform receipt(s), "
             f"{fields} field difference(s).\n"
@@ -309,8 +289,7 @@ def verify_scheduled_reuse(gh, info, snapshot, plan, source_run_id, tag):
     rc.require(isinstance(expected, list) and expected, "Qualified payloads missing")
     declarations = {entry["name"]: entry for entry in expected}
     rc.require(
-        len(declarations) == len(expected)
-        and set(inventory) == set(declarations) | {rc.MANIFEST},
+        len(declarations) == len(expected) and set(inventory) == set(declarations) | {rc.MANIFEST},
         "Qualified asset inventory mismatch",
     )
     declarations[rc.MANIFEST] = {"size": len(raw), "sha256": rc.digest(raw)}
@@ -325,9 +304,7 @@ def verify_scheduled_reuse(gh, info, snapshot, plan, source_run_id, tag):
     source_run = gh.api(f"actions/runs/{source_run_id}")
     rc.require(source_run.get("id") == source_run_id, "Qualified run ID mismatch")
     attempt = rc.positive(manifest.get("run_attempt"), "qualified run attempt")
-    rc.validate_run(
-        gh, source_run, info, plan["source_sha"], attempt, completed=True, gate=False
-    )
+    rc.validate_run(gh, source_run, info, plan["source_sha"], attempt, completed=True, gate=False)
     jobs = gh.pages(f"actions/runs/{source_run_id}/attempts/{attempt}/jobs", "jobs")
     for names in (("Release gate",), ("CI gate", "checks / CI gate")):
         gates = [job for job in jobs if job.get("name") in names]
@@ -359,8 +336,7 @@ def scheduled_reuse(gh, info, run, snapshot, base):
         for key, record in ledger["plans"].items()
         if record["plan"]["source_sha"] == run["head_sha"]
         and record["plan"]["base_version"] == base
-        and record["plan"]["policy_sha256"]
-        == version_plan.policy_digest(snapshot["data"])
+        and record["plan"]["policy_sha256"] == version_plan.policy_digest(snapshot["data"])
         and record["plan"]["channel"] in {"beta", "rc", "stable"}
     ]
     # Bound remote probes even when a source has many abandoned reservations.
@@ -387,13 +363,9 @@ def prepare(args):
     inputs = event_inputs()
     kind = os.environ.get("GITHUB_EVENT_NAME")
     channel = (
-        "nightly"
-        if kind == "schedule"
-        else ("beta" if kind == "push" else inputs.get("channel"))
+        "nightly" if kind == "schedule" else ("beta" if kind == "push" else inputs.get("channel"))
     )
-    rc.require(
-        channel in {"nightly", "beta", "rc", "stable"}, "Invalid release channel"
-    )
+    rc.require(channel in {"nightly", "beta", "rc", "stable"}, "Invalid release channel")
     if kind == "workflow_dispatch" and channel != "nightly":
         rc.require(
             os.environ.get("PUBLICATION_ENABLED") == "true",
@@ -402,9 +374,7 @@ def prepare(args):
     gh = StateGitHub(args.repo)
     info, run, snapshot = context(gh, channel)
     policy = snapshot["data"]
-    rc.require(
-        not policy.get("release_blockers"), "Release policy has unresolved blockers"
-    )
+    rc.require(not policy.get("release_blockers"), "Release policy has unresolved blockers")
     rc.require(
         not inputs.get("expected_sha") or inputs["expected_sha"] == run["head_sha"],
         "Default branch changed since dispatch; refresh and retry",
@@ -416,9 +386,7 @@ def prepare(args):
         base = candidate["version"]
         if policy["versioning"]["promotion"] == "promote-bytes":
             rc.require(
-                candidate["source_policy"]["data"]
-                .get("versioning", {})
-                .get("promotion")
+                candidate["source_policy"]["data"].get("versioning", {}).get("promotion")
                 != "final-build",
                 "A final-build RC cannot be promoted unchanged",
             )
@@ -455,7 +423,7 @@ def prepare(args):
         run["head_sha"],
         run["id"],
         run["run_attempt"],
-        datetime.now(timezone.utc),
+        datetime.now(UTC),
         parent,
     )
     PLAN.write_bytes(rc.json_bytes(plan))
@@ -519,7 +487,7 @@ def publish_versioned(args):
             "workflow_path": rc.WORKFLOW,
             "run_id": run["id"],
             "run_attempt": run["run_attempt"],
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "assets": assets,
             "version_plan": plan,
             "plan_sha256": version_plan.plan_digest(plan),
@@ -590,9 +558,7 @@ def main():
     parser.add_argument("--assets", default=".release-assets")
     args = parser.parse_args()
     try:
-        rc.emit_result(
-            prepare(args) if args.command == "prepare" else publish_versioned(args)
-        )
+        rc.emit_result(prepare(args) if args.command == "prepare" else publish_versioned(args))
     except (rc.ReleaseError, ValueError, OSError, KeyError, TypeError) as error:
         print(f"release-versioned: {error}", file=sys.stderr)
         raise SystemExit(1) from error

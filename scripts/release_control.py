@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-# Vendored release toolkit; change the toolkit source, then render again.
-# ruff: noqa
-# mypy: ignore-errors
-# pylint: skip-file
-# fmt: off
 """Publish candidates and promote checked RCs inside the guarded Actions workflow."""
 
 # Keep the audited engine self-contained when vendored into application repos.
@@ -27,7 +22,7 @@ import sys
 import tempfile
 import time
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote, unquote
 
@@ -40,9 +35,7 @@ ASSET_RESTRICTIONS = ()
 VERSION_PATTERN = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 VERSION_RE = re.compile(VERSION_PATTERN, re.ASCII)
 TAG_RE = re.compile(
-    "v"
-    + VERSION_PATTERN
-    + r"(?:-(?:beta|rc)\.[1-9]\d*|-nightly\.\d{14}\.[1-9]\d*\.[1-9]\d*)?",
+    "v" + VERSION_PATTERN + r"(?:-(?:beta|rc)\.[1-9]\d*|-nightly\.\d{14}\.[1-9]\d*\.[1-9]\d*)?",
     re.ASCII,
 )
 API_PATHS = {
@@ -103,9 +96,7 @@ def version(value: str) -> str:
 
 def positive(value: object, name: str) -> int:
     """Parse a positive integer identifier without accepting booleans."""
-    require(
-        isinstance(value, (str, int)) and not isinstance(value, bool), f"Invalid {name}"
-    )
+    require(isinstance(value, (str, int)) and not isinstance(value, bool), f"Invalid {name}")
     require(bool(re.fullmatch(r"[1-9]\d*", str(value), re.ASCII)), f"Invalid {name}")
     return int(value)
 
@@ -232,9 +223,7 @@ class GitHub:
             check=False,
         )
         require(result.returncode == 0, "Publication token permission probe failed")
-        headers, separator, body = result.stdout.replace(b"\r\n", b"\n").partition(
-            b"\n\n"
-        )
+        headers, separator, body = result.stdout.replace(b"\r\n", b"\n").partition(b"\n\n")
         require(bool(separator), "Publication token permission headers are missing")
         scopes = set()
         for line in headers.decode("utf-8", errors="replace").splitlines():
@@ -253,10 +242,7 @@ class GitHub:
         )
         require(
             "workflow" in scopes
-            and (
-                "repo" in scopes
-                or (repository["private"] is False and "public_repo" in scopes)
-            ),
+            and ("repo" in scopes or (repository["private"] is False and "public_repo" in scopes)),
             "Publication token requires verified workflow and repo/public_repo OAuth scopes",
         )
         self.workflow_scope_verified = True
@@ -297,9 +283,7 @@ class GitHub:
             "pages": ["--paginate", "--slurp"],
             "asset": ["-H", "Accept: application/octet-stream"],
         }
-        require(
-            mode in modes and (mode == "json" or method == "GET"), "Invalid API mode"
-        )
+        require(mode in modes and (mode == "json" or method == "GET"), "Invalid API mode")
         endpoint = f"{self.base}/{path}".rstrip("/")
         if mode == "pages":
             endpoint += ("&" if "?" in endpoint else "?") + "per_page=100"
@@ -403,12 +387,8 @@ class GitHub:
     def upload(self, tag: str, path: Path) -> None:
         """Upload a canonical tag's staged regular file, with no overwrite option."""
         require(TAG_RE.fullmatch(tag), "Unsupported release upload tag")
-        require(
-            path.is_absolute() and NAME_RE.fullmatch(path.name), "Unsafe upload path"
-        )
-        require(
-            path.is_file() and not path.is_symlink(), "Upload must be a regular file"
-        )
+        require(path.is_absolute() and NAME_RE.fullmatch(path.name), "Unsafe upload path")
+        require(path.is_file() and not path.is_symlink(), "Upload must be a regular file")
         parent = path.parent.resolve(strict=True)
         require(
             parent.parent == Path(tempfile.gettempdir()).resolve()
@@ -454,8 +434,7 @@ def require_release_policy(policy: object, repo: str, qualified: bool) -> None:
     """Check policy identity, release mode, and required eligibility blockers."""
     require(isinstance(policy, dict), "Source release policy must be an object")
     require(
-        isinstance(policy.get("repository"), str)
-        and policy["repository"].lower() == repo.lower(),
+        isinstance(policy.get("repository"), str) and policy["repository"].lower() == repo.lower(),
         "Source policy repository mismatch",
     )
     require(policy.get("mode") == "release", "Source policy mode must be release")
@@ -588,9 +567,7 @@ def check_workflow_publication(gh: GitHub, sha: str) -> None:
     GitHub cannot atomically bind this read-only preflight to release creation.
     A later default-branch change can still fail closed after partial writes.
     """
-    require(
-        isinstance(sha, str) and SHA_RE.fullmatch(sha), "Invalid release source SHA"
-    )
+    require(isinstance(sha, str) and SHA_RE.fullmatch(sha), "Invalid release source SHA")
     if getattr(gh, "workflow_scope_verified", False) is True:
         return
     info = repository_info(gh)
@@ -700,9 +677,7 @@ def superseded_candidate(gh: GitHub, info: dict, run: dict, channel: str):
     }
 
 
-def check_execution(
-    gh: GitHub, run_id: int, channel: str, info: dict, run: dict
-) -> None:
+def check_execution(gh: GitHub, run_id: int, channel: str, info: dict, run: dict) -> None:
     """Bind publication to the expected Actions repository, ref, run and event."""
     require(
         os.environ.get("GITHUB_ACTIONS") == "true",
@@ -744,15 +719,12 @@ def check_execution(
         require(bool(event_file), "Missing workflow dispatch event")
         payload = parse_json(Path(event_file).read_bytes(), "workflow dispatch event")
         require(
-            isinstance(payload, dict)
-            and payload.get("inputs", {}).get("channel") == channel,
+            isinstance(payload, dict) and payload.get("inputs", {}).get("channel") == channel,
             f"Workflow dispatch input channel must be {channel}",
         )
 
 
-def validate_run_provenance(
-    gh: GitHub, run: dict, info: dict, sha: str, attempt: int
-) -> None:
+def validate_run_provenance(gh: GitHub, run: dict, info: dict, sha: str, attempt: int) -> None:
     """Check immutable run identity before considering its changing status."""
     require(
         run.get("repository", {}).get("full_name", "").lower() == gh.repo.lower(),
@@ -762,9 +734,7 @@ def validate_run_provenance(
         run.get("head_repository", {}).get("full_name", "").lower() == gh.repo.lower(),
         "Source run comes from another repository",
     )
-    require(
-        run.get("head_sha") == sha and SHA_RE.fullmatch(sha), "Source run SHA mismatch"
-    )
+    require(run.get("head_sha") == sha and SHA_RE.fullmatch(sha), "Source run SHA mismatch")
     require(run.get("path") == WORKFLOW, "Source run uses an unexpected workflow path")
     require(
         run.get("head_branch") == info["default_branch"],
@@ -799,9 +769,7 @@ def validate_run(
             "Source run has not completed successfully",
         )
     else:
-        require(
-            run.get("status") == "in_progress", "Publication run is not in progress"
-        )
+        require(run.get("status") == "in_progress", "Publication run is not in progress")
     if gate:
         jobs = gh.pages(
             f"actions/runs/{positive(run.get('id'), 'run ID')}/attempts/{attempt}/jobs",
@@ -841,9 +809,7 @@ def wait_for_executing_run(
         check_execution(gh, run_id, channel, info, run)
         validate_run_provenance(gh, run, info, sha, attempt)
         status = run.get("status")
-        require(
-            run.get("conclusion") is None, "Publication run already has a conclusion"
-        )
+        require(run.get("conclusion") is None, "Publication run already has a conclusion")
         if status == "in_progress":
             validate_run(gh, run, info, sha, attempt, completed=False, gate=gate)
             return run
@@ -918,9 +884,7 @@ def next_sequence(gh: GitHub, base_version: str, channel: str) -> int:
     tags = [item.get("name", "") for item in gh.pages("tags")]
     tags += [item.get("tag_name", "") for item in gh.pages("releases")]
     for tag in tags:
-        if tag.startswith(prefix) and re.fullmatch(
-            r"[1-9]\d*", tag[len(prefix) :], re.ASCII
-        ):
+        if tag.startswith(prefix) and re.fullmatch(r"[1-9]\d*", tag[len(prefix) :], re.ASCII):
             numbers.append(int(tag[len(prefix) :]))
     return max(numbers, default=0) + 1
 
@@ -972,8 +936,7 @@ def stage_assets(source: Path, destination: Path) -> list[dict]:
             f"Assets must be flat regular files: {entry.name}",
         )
         require(
-            NAME_RE.fullmatch(entry.name)
-            and entry.name.casefold() != MANIFEST.casefold(),
+            NAME_RE.fullmatch(entry.name) and entry.name.casefold() != MANIFEST.casefold(),
             f"Unsafe or reserved asset name: {entry.name}",
         )
         require(
@@ -1003,9 +966,7 @@ def verify_uploaded_asset(gh: GitHub, item: dict, path: Path) -> None:
         "Incomplete asset upload; draft left unpublished",
     )
     with tempfile.TemporaryFile() as downloaded:
-        gh.download_asset(
-            f"releases/assets/{positive(item.get('id'), 'asset ID')}", downloaded
-        )
+        gh.download_asset(f"releases/assets/{positive(item.get('id'), 'asset ID')}", downloaded)
         downloaded.seek(0)
         remote = stream_identity(downloaded)
     require(remote == local, "Uploaded bytes differ; draft left unpublished")
@@ -1023,44 +984,102 @@ def _release_fence(line: str) -> tuple[str, int, str] | None:
     return marker, length, content[length:]
 
 
-def _release_headings(text: str) -> list[tuple[int, str, int, int]]:
-    """Locate conventional release headings outside fenced code examples."""
-    headings = []
+def _release_code_span_ends(line: str) -> dict[int, int]:
+    """Find equal-length inline backtick pairs in one linear scan and reverse pass."""
+    runs = [(match.start(), match.end()) for match in re.finditer(r"`+", line)]
+    following = {}
+    ends = {}
+    for start, end in reversed(runs):
+        length = end - start
+        if length in following:
+            ends[start] = following[length]
+        following[length] = end
+    return ends
+
+
+def _release_comment_line(line: str, comment: bool) -> tuple[str, bool]:
+    """Mask comments without shifting offsets or interpreting literal inline code."""
+    visible = list(line)
+    code_ends = _release_code_span_ends(line)
+    position = 0
+    while position < len(line):
+        if comment:
+            end = line.find("-->", position)
+            stop = len(line) if end < 0 else end + 3
+            visible[position:stop] = [
+                char if char in "\r\n" else " " for char in line[position:stop]
+            ]
+            position = stop
+            comment = end < 0
+        elif line[position] == "\\":
+            position += 2
+        elif position in code_ends:
+            position = code_ends[position]
+        elif line.startswith("<!--", position):
+            comment = True
+        else:
+            position += 1
+    return "".join(visible), comment
+
+
+def _release_fence_closes(candidate, fence) -> bool:
+    return (
+        candidate is not None
+        and candidate[0] == fence[0]
+        and candidate[1] >= fence[1]
+        and not candidate[2].strip(" \t\r\n")
+    )
+
+
+def _release_lines(text: str):
+    """Yield offset-preserving text, heading eligibility and visible guidance."""
     fence = None
-    offset = 0
+    comment = False
     for line in io.StringIO(text):
         candidate = _release_fence(line)
         if fence is not None:
-            if (
-                candidate is not None
-                and candidate[0] == fence[0]
-                and candidate[1] >= fence[1]
-                and not candidate[2].strip(" \t\r\n")
-            ):
+            closes = _release_fence_closes(candidate, fence)
+            yield line, False, not closes
+            if closes:
                 fence = None
-        elif candidate is not None and (candidate[0] == "~" or "`" not in candidate[2]):
+        elif (
+            not comment
+            and candidate is not None
+            and (candidate[0] == "~" or "`" not in candidate[2])
+        ):
             fence = candidate[:2]
+            yield line, False, False
+        elif not comment and line.startswith(("    ", "\t")):
+            yield line, False, True
         else:
-            level = len(line) - len(line.lstrip("#"))
-            if level in (2, 3) and line[level : level + 1] in (" ", "\t"):
-                headings.append(
-                    (
-                        level,
-                        line[level:].strip(" \t\r\n"),
-                        offset,
-                        offset + len(line),
-                    )
-                )
+            visible, comment = _release_comment_line(line, comment)
+            yield visible, True, True
+
+
+def _release_headings(text: str) -> list[tuple[int, str, int, int]]:
+    """Locate release headings outside comments and fenced code examples."""
+    headings = []
+    offset = 0
+    for line, heading_allowed, _ in _release_lines(text):
+        level = len(line) - len(line.lstrip("#"))
+        if heading_allowed and level in (2, 3) and line[level : level + 1] in (" ", "\t"):
+            headings.append((level, line[level:].strip(" \t\r\n"), offset, offset + len(line)))
         offset += len(line)
     return headings
 
 
 def _release_sections(text: str, level: int):
-    """Keep section bodies verbatim while excluding example headings."""
+    """Keep original bodies plus comment-masked bodies for validation."""
+    visible = "".join(line for line, _, _ in _release_lines(text))
     headings = [heading for heading in _release_headings(text) if heading[0] == level]
     for index, (_, title, _, start) in enumerate(headings):
         end = headings[index + 1][2] if index + 1 < len(headings) else len(text)
-        yield title, text[start:end].strip()
+        yield title, text[start:end].strip(), visible[start:end]
+
+
+def _release_has_guidance(text: str) -> bool:
+    """Comments and empty fence markers cannot replace readable release guidance."""
+    return any(line.strip() for line, _, guidance in _release_lines(text) if guidance)
 
 
 # pylint: disable-next=too-many-arguments
@@ -1100,22 +1119,20 @@ def release_notes(gh: GitHub, tag: str, sha: str, provenance: str) -> str:
     ).hexdigest()
     require(response.get("sha") == blob_sha, "Release notes Git blob identity mismatch")
     matches = [
-        section
-        for title, section in _release_sections(changelog, 2)
+        (section, visible)
+        for title, section, visible in _release_sections(changelog, 2)
         if re.fullmatch(
             rf"\[{re.escape(base_version)}\](?:[ \t]+-[ \t]+[^\n]+)?[ \t]*",
             title,
         )
     ]
-    require(
-        len(matches) == 1 and matches[0], "Release needs one nonempty changelog section"
-    )
-    notes = matches[0]
-    sections = list(_release_sections(notes, 3))
+    require(len(matches) == 1 and matches[0][0], "Release needs one nonempty changelog section")
+    notes, visible_notes = matches[0]
+    sections = list(_release_sections(visible_notes, 3))
     for heading in ("Upgrade", "Security"):
-        section = next((body for title, body in sections if title == heading), None)
+        section = next((body for title, _, body in sections if title == heading), None)
         require(
-            section,
+            section and _release_has_guidance(section),
             f"Release notes need {heading} guidance",
         )
     body = f"## Changes in {base_version}\n\n{notes}\n\n## Build provenance\n\n{provenance}"
@@ -1123,9 +1140,7 @@ def release_notes(gh: GitHub, tag: str, sha: str, provenance: str) -> str:
     return body
 
 
-def publish(
-    gh: GitHub, tag: str, sha: str, directory: Path, prerelease: bool, body: str
-) -> dict:
+def publish(gh: GitHub, tag: str, sha: str, directory: Path, prerelease: bool, body: str) -> dict:
     """Keep draft creation, exact-byte upload checks and publication in one transaction."""
     reject_restricted_assets(path.name for path in directory.iterdir())
     body = release_notes(gh, tag, sha, body)
@@ -1167,8 +1182,7 @@ def _publish_prepared(
     uploaded = gh.pages(f"releases/{release_id}/assets")
     expected = {path.name: path for path in directory.iterdir()}
     require(
-        len(uploaded) == len(expected)
-        and {item.get("name") for item in uploaded} == set(expected),
+        len(uploaded) == len(expected) and {item.get("name") for item in uploaded} == set(expected),
         "Uploaded asset inventory mismatch; draft left unpublished",
     )
     for item in uploaded:
@@ -1242,9 +1256,7 @@ def candidate(args) -> dict:
     info = repository_info(gh)
     run = wait_for_executing_run(gh, run_id, args.channel, info, args.sha, attempt)
     policy_snapshot = source_policy_snapshot(gh, args.sha)
-    require_release_policy(
-        policy_snapshot["data"], gh.repo, qualified=args.channel == "rc"
-    )
+    require_release_policy(policy_snapshot["data"], gh.repo, qualified=args.channel == "rc")
     require(
         not policy_snapshot["data"].get("versioning"),
         "Versioned policies require the frozen-plan publisher, not post-build allocation",
@@ -1257,10 +1269,8 @@ def candidate(args) -> dict:
         # Once a base version is final, further candidates would mislabel new
         # code as an already released version. Nightlies retain run identities.
         ensure_absent(gh, f"v{base_version}")
-    now = datetime.now(timezone.utc)
-    tag = candidate_tag(
-        gh, args.channel, base_version, run_id, attempt, args.sequence, now
-    )
+    now = datetime.now(UTC)
+    tag = candidate_tag(gh, args.channel, base_version, run_id, attempt, args.sequence, now)
     with tempfile.TemporaryDirectory(prefix="release-candidate-") as temp:
         stage = Path(temp)
         assets = stage_assets(Path(args.assets), stage)
@@ -1309,10 +1319,35 @@ def candidate(args) -> dict:
     }
 
 
+def _validate_manifest_assets(manifest):
+    assets = manifest.get("assets")
+    require(isinstance(assets, list) and assets, "Manifest contains no assets")
+    names = set()
+    for item in assets:
+        require(isinstance(item, dict), "Invalid manifest asset")
+        name = item.get("name")
+        require(
+            isinstance(name, str)
+            and NAME_RE.fullmatch(name)
+            and name.casefold() != MANIFEST.casefold(),
+            "Unsafe manifest asset name",
+        )
+        require(name.casefold() not in names, "Duplicate manifest asset name")
+        names.add(name.casefold())
+        require(
+            # Reject JSON booleans, which isinstance(value, int) would accept.
+            type(item.get("size")) is int  # pylint: disable=unidiomatic-typecheck
+            and item["size"] >= 0,
+            "Invalid manifest asset size",
+        )
+        require(
+            isinstance(item.get("sha256"), str) and re.fullmatch(SHA256_PATTERN, item["sha256"]),
+            "Invalid asset checksum",
+        )
+
+
 # pylint: disable-next=too-many-locals
-def validate_manifest(
-    raw: bytes, repo: str, rc_tag: str, allow_final: bool = False
-) -> dict:
+def validate_manifest(raw: bytes, repo: str, rc_tag: str, allow_final: bool = False) -> dict:
     """Reject malformed or ineligible RC manifests before trusting their assets."""
     require(len(raw) <= 2_000_000, "Manifest is unreasonably large")
     manifest = parse_json(raw, MANIFEST)
@@ -1338,24 +1373,17 @@ def validate_manifest(
             "Final tag/version mismatch",
         )
     else:
-        require(
-            manifest.get("channel") == "rc", "Only release candidates can be promoted"
-        )
+        require(manifest.get("channel") == "rc", "Only release candidates can be promoted")
         require(
             manifest.get("tag") == rc_tag
-            and re.fullmatch(
-                rf"v{re.escape(base_version)}-rc\.[1-9]\d*", rc_tag, re.ASCII
-            ),
+            and re.fullmatch(rf"v{re.escape(base_version)}-rc\.[1-9]\d*", rc_tag, re.ASCII),
             "Manifest RC tag/version mismatch",
         )
     require(
-        isinstance(manifest.get("source_sha"), str)
-        and SHA_RE.fullmatch(manifest["source_sha"]),
+        isinstance(manifest.get("source_sha"), str) and SHA_RE.fullmatch(manifest["source_sha"]),
         "Invalid manifest source SHA",
     )
-    require(
-        manifest.get("workflow_path") == WORKFLOW, "Manifest workflow path mismatch"
-    )
+    require(manifest.get("workflow_path") == WORKFLOW, "Manifest workflow path mismatch")
     positive(manifest.get("run_id"), "manifest run ID")
     positive(manifest.get("run_attempt"), "manifest run attempt")
     validate_policy_snapshot(manifest.get("source_policy"), repo)
@@ -1400,31 +1428,7 @@ def validate_manifest(
             positive(parent["run_id"], "parent RC run ID") != manifest["run_id"],
             "Final build must use a new run",
         )
-    assets = manifest.get("assets")
-    require(isinstance(assets, list) and assets, "Manifest contains no assets")
-    names = set()
-    for item in assets:
-        require(isinstance(item, dict), "Invalid manifest asset")
-        name = item.get("name")
-        require(
-            isinstance(name, str)
-            and NAME_RE.fullmatch(name)
-            and name.casefold() != MANIFEST.casefold(),
-            "Unsafe manifest asset name",
-        )
-        require(name.casefold() not in names, "Duplicate manifest asset name")
-        names.add(name.casefold())
-        require(
-            # Reject JSON booleans, which isinstance(value, int) would accept.
-            type(item.get("size")) is int  # pylint: disable=unidiomatic-typecheck
-            and item["size"] >= 0,
-            "Invalid manifest asset size",
-        )
-        require(
-            isinstance(item.get("sha256"), str)
-            and re.fullmatch(SHA256_PATTERN, item["sha256"]),
-            "Invalid asset checksum",
-        )
+    _validate_manifest_assets(manifest)
     return manifest
 
 
@@ -1432,8 +1436,7 @@ def release_snapshot(gh: GitHub, tag: str) -> tuple[dict, dict, list[dict]]:
     """Read a candidate tag, release metadata and its complete asset inventory."""
     ref = gh.api(f"git/ref/tags/{quote(tag, safe='')}")
     require(
-        ref.get("ref") == f"refs/tags/{tag}"
-        and ref.get("object", {}).get("type") == "commit",
+        ref.get("ref") == f"refs/tags/{tag}" and ref.get("object", {}).get("type") == "commit",
         "Candidate must have a lightweight commit tag",
     )
     release = gh.api(f"releases/tags/{quote(tag, safe='')}")
@@ -1481,11 +1484,7 @@ def snapshot_identity(snapshot: tuple) -> bytes:
             # field, including unknown metadata, when checking for replacement.
             "assets": sorted(
                 (
-                    {
-                        key: value
-                        for key, value in asset.items()
-                        if key != "download_count"
-                    }
+                    {key: value for key, value in asset.items() if key != "download_count"}
                     for asset in assets
                 ),
                 key=lambda asset: asset["id"],
@@ -1512,9 +1511,7 @@ def verify_evidence(gh: GitHub, manifest: dict, raw: bytes) -> None:
         and artifact.get("workflow_run", {}).get("head_sha") == manifest["source_sha"],
         "Evidence artifact provenance mismatch",
     )
-    archive = gh.binary(
-        f"actions/artifacts/{positive(artifact.get('id'), 'artifact ID')}/zip"
-    )
+    archive = gh.binary(f"actions/artifacts/{positive(artifact.get('id'), 'artifact ID')}/zip")
     require(
         artifact.get("digest") == f"sha256:{digest(archive)}",
         "Evidence must have a matching immutable v4 artifact digest",
@@ -1541,15 +1538,10 @@ def verify_evidence(gh: GitHub, manifest: dict, raw: bytes) -> None:
 def require_reviewers(gh: GitHub) -> None:
     """Require the release environment to configure at least one reviewer."""
     environment = gh.api("environments/release")
-    require(
-        environment.get("name") == "release", "Protected release environment is missing"
-    )
+    require(environment.get("name") == "release", "Protected release environment is missing")
     rules = environment.get("protection_rules", [])
     require(
-        any(
-            rule.get("type") == "required_reviewers" and rule.get("reviewers")
-            for rule in rules
-        ),
+        any(rule.get("type") == "required_reviewers" and rule.get("reviewers") for rule in rules),
         "The release environment must have required reviewers configured",
     )
 
@@ -1581,9 +1573,7 @@ def promote(args) -> dict:
     require_reviewers(gh)
     initial = release_snapshot(gh, args.rc)
     ref, candidate_release, release_assets = initial
-    manifest_assets = [
-        asset for asset in release_assets if asset.get("name") == MANIFEST
-    ]
+    manifest_assets = [asset for asset in release_assets if asset.get("name") == MANIFEST]
     require(len(manifest_assets) == 1, "Candidate manifest is missing")
     raw = gh.binary(
         f"releases/assets/{positive(manifest_assets[0].get('id'), 'manifest asset ID')}"
@@ -1656,8 +1646,7 @@ def promote(args) -> dict:
                     f"Candidate checksum mismatch: {name}",
                 )
         require(
-            snapshot_identity(release_snapshot(gh, args.rc))
-            == snapshot_identity(initial),
+            snapshot_identity(release_snapshot(gh, args.rc)) == snapshot_identity(initial),
             "Candidate changed during verification",
         )
         # Recheck mutable authorization/provenance just before the first write.
@@ -1726,9 +1715,7 @@ def parser() -> argparse.ArgumentParser:
     sequence.add_argument("--repo", required=True)
     sequence.add_argument("--channel", choices=("beta", "rc"), required=True)
     sequence.add_argument("--version", required=True)
-    verify = commands.add_parser(
-        "verify-manifest", help="Validate a local RC manifest's structure"
-    )
+    verify = commands.add_parser("verify-manifest", help="Validate a local RC manifest's structure")
     verify.add_argument("--repo", required=True)
     verify.add_argument("--rc", required=True)
     verify.add_argument("--manifest", type=Path, required=True)
@@ -1744,9 +1731,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "promote":
             result = promote(args)
         elif args.command == "next":
-            result = {
-                "sequence": next_sequence(GitHub(args.repo), args.version, args.channel)
-            }
+            result = {"sequence": next_sequence(GitHub(args.repo), args.version, args.channel)}
         else:
             result = validate_manifest(args.manifest.read_bytes(), args.repo, args.rc)
         emit_result(result)

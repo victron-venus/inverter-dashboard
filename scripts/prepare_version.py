@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-# Vendored release toolkit; change the toolkit source, then render again.
-# ruff: noqa
-# mypy: ignore-errors
-# pylint: skip-file
-# fmt: off
 """Prepare all owned base-version files together, optionally as a GitHub PR."""
 
 from __future__ import annotations
@@ -12,6 +7,7 @@ import argparse
 import copy
 import json
 import re
+
 # Subprocess calls below use argument vectors with shell=False.
 import subprocess  # nosec B404
 import tempfile
@@ -44,6 +40,89 @@ def source_policy(policy):
     return result
 
 
+def _bumped_version(current, tags, bump):
+    """Choose the requested bump while preserving an already prepared base."""
+    values = [
+        tuple(map(int, value[1:].split(".")))
+        for value in tags
+        if value.startswith("v") and version_plan.BASE.fullmatch(value[1:])
+    ]
+    existing = tuple(map(int, current.split(".")))
+    if bump == "next-patch":
+        if not values or existing > max(values):
+            selected = current
+        else:
+            major, minor, patch = max(values)
+            selected = f"{major}.{minor}.{patch + 1}"
+    elif bump == "major":
+        selected = f"{existing[0] + 1}.0.0"
+    elif bump == "minor":
+        selected = f"{existing[0]}.{existing[1] + 1}.0"
+    else:
+        selected = f"{existing[0]}.{existing[1]}.{existing[2] + 1}"
+    return selected
+
+
+def _validate_preparation_checkout(root, policy):
+    """Require a clean checkout of the matching origin and current default branch."""
+    if policy.get("mode") != "release":
+        raise ValueError("Only release-mode products can prepare versions")
+    if run(root, "git", "status", "--porcelain"):
+        raise ValueError("Version preparation requires a clean checkout")
+    repo = policy.get("repository", "")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise ValueError("Preparation requires an explicit OWNER/REPO identity")
+    for extra in ([], ["--push"]):
+        remote_url = run(root, "git", "remote", "get-url", *extra, "origin")
+        identity = re.fullmatch(
+            r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+            r"([^/]+/[^/]+?)(?:\.git)?",
+            remote_url,
+        )
+        if not identity or identity[1].casefold() != repo.casefold():
+            raise ValueError("Origin fetch/push identity differs from the release policy")
+    branch = policy.get("default_branch", "main")
+    # Refresh the actual GitHub history; stale local tags cannot choose a version.
+    run(root, "git", "fetch", "origin", branch, "--tags", capture=False)
+    head = run(root, "git", "rev-parse", "HEAD")
+    remote = run(root, "git", "rev-parse", f"origin/{branch}")
+    if head != remote:
+        raise ValueError("Prepare versions from the current default-branch HEAD")
+    return repo, branch, head
+
+
+def _preparation_topic(root, repo, branch, head, target):
+    """Identify and verify an existing preparation branch before any write."""
+    topic = f"release/version-{target}"
+    listed = json.loads(
+        run(
+            root,
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--head",
+            topic,
+            "--base",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "url,isCrossRepository,headRefName,headRefOid,baseRefName",
+        )
+    )
+    existing = own_pull_requests(listed, topic, branch)
+    topic_sha = remote_topic(root, topic)
+    if existing and topic_sha is None:
+        raise ValueError("Open preparation PR has no matching remote branch")
+    if existing and existing[0].get("headRefOid") != topic_sha:
+        raise ValueError("Preparation PR head SHA differs from the remote topic; retry")
+    if topic_sha:
+        verify_owned_topic(root, topic_sha, head, target)
+    return topic, existing, topic_sha
+
+
 def choose_version(current, tags, requested="", bump="next-patch", *, occupied=None):  # pylint: disable=too-many-branches
     """Use SemVer ordering and preserve an already prepared unreleased cycle."""
     if requested:
@@ -51,24 +130,7 @@ def choose_version(current, tags, requested="", bump="next-patch", *, occupied=N
             raise ValueError("Requested version must be X.Y.Z")
         selected = requested
     else:
-        values = [
-            tuple(map(int, value[1:].split(".")))
-            for value in tags
-            if value.startswith("v") and version_plan.BASE.fullmatch(value[1:])
-        ]
-        existing = tuple(map(int, current.split(".")))
-        if bump == "next-patch":
-            if not values or existing > max(values):
-                selected = current
-            else:
-                major, minor, patch = max(values)
-                selected = f"{major}.{minor}.{patch + 1}"
-        elif bump == "major":
-            selected = f"{existing[0] + 1}.0.0"
-        elif bump == "minor":
-            selected = f"{existing[0]}.{existing[1] + 1}.0"
-        else:
-            selected = f"{existing[0]}.{existing[1]}.{existing[2] + 1}"
+        selected = _bumped_version(current, tags, bump)
     if tuple(map(int, selected.split("."))) < tuple(map(int, current.split("."))):
         raise ValueError("Preparation must not downgrade the active release base")
     occupied = set(tags if occupied is None else occupied)
@@ -86,9 +148,7 @@ def choose_version(current, tags, requested="", bump="next-patch", *, occupied=N
 def advertised_tags(root):
     """Return reachable history plus all occupied names from the same remote read."""
     advertised = {}
-    for line in run(
-        root, "git", "ls-remote", "--tags", "--refs", "origin"
-    ).splitlines():
+    for line in run(root, "git", "ls-remote", "--tags", "--refs", "origin").splitlines():
         object_id, ref = line.split("\t", 1)
         if not re.fullmatch(r"[0-9a-f]{40}", object_id):
             raise ValueError("Remote advertised an invalid tag object")
@@ -143,14 +203,10 @@ def own_pull_requests(rows, topic, base):
 def verify_owned_topic(root, topic_sha, main_sha, target):  # pylint: disable=too-many-locals
     """Reject any existing branch content beyond its declared version inputs."""
     ancestor = run(root, "git", "merge-base", topic_sha, main_sha)
-    old_policy = json.loads(
-        run(root, "git", "show", f"{ancestor}:.release-policy.json")
-    )
+    old_policy = json.loads(run(root, "git", "show", f"{ancestor}:.release-policy.json"))
     editable = source_policy(old_policy)
     version_plan.validate_policy(editable)
-    changed = set(
-        run(root, "git", "diff", "--name-only", ancestor, topic_sha).splitlines()
-    )
+    changed = set(run(root, "git", "diff", "--name-only", ancestor, topic_sha).splitlines())
     names = {item["path"] for item in editable["versioning"]["files"]}
     if not changed <= names:
         raise ValueError("Existing preparation branch contains unowned changes")
@@ -161,14 +217,10 @@ def verify_owned_topic(root, topic_sha, main_sha, target):  # pylint: disable=to
             old_entry = run(root, "git", "ls-tree", ancestor, "--", name).split()
             new_entry = run(root, "git", "ls-tree", topic_sha, "--", name).split()
             if not old_entry or not new_entry:
-                raise ValueError(
-                    "Existing preparation branch removed a declared version file"
-                )
+                raise ValueError("Existing preparation branch removed a declared version file")
             mode, current_mode = old_entry[0], new_entry[0]
             if mode not in {"100644", "100755"} or current_mode != mode:
-                raise ValueError(
-                    "Existing preparation branch changed a version file type or mode"
-                )
+                raise ValueError("Existing preparation branch changed a version file type or mode")
             path = expected / name
             path.parent.mkdir(parents=True, exist_ok=True)
             # Developer/CI toolchain selected by the invoking operator via PATH.
@@ -194,31 +246,7 @@ def prepare(root, requested="", bump="next-patch", pull_request=False, dry_run=F
     root = root.resolve()
     policy = json.loads((root / ".release-policy.json").read_text())
     version_plan.validate_policy(policy)
-    if policy.get("mode") != "release":
-        raise ValueError("Only release-mode products can prepare versions")
-    if run(root, "git", "status", "--porcelain"):
-        raise ValueError("Version preparation requires a clean checkout")
-    repo = policy.get("repository", "")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
-        raise ValueError("Preparation requires an explicit OWNER/REPO identity")
-    for extra in ([], ["--push"]):
-        remote_url = run(root, "git", "remote", "get-url", *extra, "origin")
-        identity = re.fullmatch(
-            r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
-            r"([^/]+/[^/]+?)(?:\.git)?",
-            remote_url,
-        )
-        if not identity or identity[1].casefold() != repo.casefold():
-            raise ValueError(
-                "Origin fetch/push identity differs from the release policy"
-            )
-    branch = policy.get("default_branch", "main")
-    # Refresh the actual GitHub history; stale local tags cannot choose a version.
-    run(root, "git", "fetch", "origin", branch, "--tags", capture=False)
-    head = run(root, "git", "rev-parse", "HEAD")
-    remote = run(root, "git", "rev-parse", f"origin/{branch}")
-    if head != remote:
-        raise ValueError("Prepare versions from the current default-branch HEAD")
+    repo, branch, head = _validate_preparation_checkout(root, policy)
     tags, occupied = advertised_tags(root)
     current = version_plan.read_base_version(root, policy)
     target = choose_version(current, tags, requested, bump, occupied=occupied)
@@ -235,33 +263,7 @@ def prepare(root, requested="", bump="next-patch", pull_request=False, dry_run=F
         changed = version_plan.sync_versions(root, editable, plan)
         version_plan.check_base_versions(root, editable, target)
         return {"version": target, "files": changed}
-    topic = f"release/version-{target}"
-    listed = json.loads(
-        run(
-            root,
-            "gh",
-            "pr",
-            "list",
-            "--repo",
-            repo,
-            "--head",
-            topic,
-            "--base",
-            branch,
-            "--state",
-            "open",
-            "--json",
-            "url,isCrossRepository,headRefName,headRefOid,baseRefName",
-        )
-    )
-    existing = own_pull_requests(listed, topic, branch)
-    topic_sha = remote_topic(root, topic)
-    if existing and topic_sha is None:
-        raise ValueError("Open preparation PR has no matching remote branch")
-    if existing and existing[0].get("headRefOid") != topic_sha:
-        raise ValueError("Preparation PR head SHA differs from the remote topic; retry")
-    if topic_sha:
-        verify_owned_topic(root, topic_sha, head, target)
+    topic, existing, topic_sha = _preparation_topic(root, repo, branch, head, target)
     with tempfile.TemporaryDirectory(prefix="prepare-release-version-") as temp:
         checkout = Path(temp) / "checkout"
         run(
@@ -288,9 +290,7 @@ def prepare(root, requested="", bump="next-patch", pull_request=False, dry_run=F
                 run(checkout, "git", "add", "--", *sorted(changed), capture=False)
             tree = run(checkout, "git", "write-tree")
             topic_tree = (
-                run(root, "git", "rev-parse", f"{topic_sha}^{{tree}}")
-                if topic_sha
-                else None
+                run(root, "git", "rev-parse", f"{topic_sha}^{{tree}}") if topic_sha else None
             )
             updated = tree != topic_tree
             if updated:
@@ -387,9 +387,7 @@ def main(argv=None):
     options = parser.parse_args(argv)
     print(
         json.dumps(
-            prepare(
-                Path.cwd(), options.version, options.bump, options.pr, options.dry_run
-            ),
+            prepare(Path.cwd(), options.version, options.bump, options.pr, options.dry_run),
             indent=2,
         )
     )
