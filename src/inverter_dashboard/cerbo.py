@@ -13,6 +13,15 @@ from typing import Any
 
 from . import config
 
+# Shared protocol identifiers keep publication and update paths consistent.
+VE_DC_VOLTAGE_PATH = "Dc/0/Voltage"
+VE_DC_CURRENT_PATH = "Dc/0/Current"
+VE_DC_POWER_PATH = "Dc/0/Power"
+VE_MIN_VOLTAGE_CELL_PATH = "System/MinVoltageCellId"
+VE_MAX_VOLTAGE_CELL_PATH = "System/MaxVoltageCellId"
+VE_AC_POWER_PATH = "Ac/Power"
+VE_YIELD_POWER_PATH = "Yield/Power"
+
 CERBO_KINDS = (
     "system",
     "grid",
@@ -139,9 +148,9 @@ INVERTER_STATES = {
 }
 BATTERY_PATHS = {
     "Soc": "soc",
-    "Dc/0/Voltage": "voltage",
-    "Dc/0/Current": "current",
-    "Dc/0/Power": "power",
+    VE_DC_VOLTAGE_PATH: "voltage",
+    VE_DC_CURRENT_PATH: "current",
+    VE_DC_POWER_PATH: "power",
     "Dc/0/Temperature": "temperature",
     "System/MinCellVoltage": "min_cell_voltage",
     "System/MaxCellVoltage": "max_cell_voltage",
@@ -306,8 +315,8 @@ class CerboOverlayMixin:
             "CustomName",
             "ProductName",
             "Serial",
-            "System/MinVoltageCellId",
-            "System/MaxVoltageCellId",
+            VE_MIN_VOLTAGE_CELL_PATH,
+            VE_MAX_VOLTAGE_CELL_PATH,
             "BatteryService",
             "ActiveBatteryService",
             "AutoSelectedBatteryService",
@@ -400,7 +409,7 @@ class CerboOverlayMixin:
             for i in (1, 2, 3):
                 if path in (f"Ac/L{i}/Power", f"Ac/ActiveIn/L{i}/Power", f"Ac/ActiveIn/L{i}/P"):
                     keys.update((f"g{i}", "gt"))
-            if kind == "grid" and path == "Ac/Power":
+            if kind == "grid" and path == VE_AC_POWER_PATH:
                 keys.add("gt")
         if kind == "pump":
             if instance == str(config.WATER_PUMP_INSTANCE):
@@ -424,7 +433,7 @@ class CerboOverlayMixin:
             if path.startswith("Ac/PvOn") and path.endswith("/Power"):
                 keys.update(("pv_inverter_total", "solar_total"))
         if kind in ("battery", "system"):
-            if path == ("Dc/Battery/Voltage" if kind == "system" else "Dc/0/Voltage"):
+            if path == ("Dc/Battery/Voltage" if kind == "system" else VE_DC_VOLTAGE_PATH):
                 keys.add("battery_soc")
             prefix = "Dc/Battery/" if kind == "system" else "Dc/0/"
             for field, leaf, alias in (
@@ -438,7 +447,7 @@ class CerboOverlayMixin:
                     keys.add(f"battery_{field}")
                     if alias:
                         keys.add(alias)
-        if kind == "solarcharger" and path in ("Yield/Power", "Dc/0/Power"):
+        if kind == "solarcharger" and path in (VE_YIELD_POWER_PATH, VE_DC_POWER_PATH):
             keys.update(("mppt_total", "pv_total", "solar_total"))
         if kind == "pvinverter" and path.endswith("/Power"):
             keys.update(("pv_inverter_total", "solar_total"))
@@ -449,8 +458,8 @@ class CerboOverlayMixin:
                 keys.add("setpoint")
         for service, leaf, fields in (
             ("ev", "Soc", ("car_soc",)),
-            ("ev", "Ac/Power", ("ev_power", "car_charging_power")),
-            ("evcharger", "Ac/Power", ("ev_charging_kw", "ev_charging_power")),
+            ("ev", VE_AC_POWER_PATH, ("ev_power", "car_charging_power")),
+            ("evcharger", VE_AC_POWER_PATH, ("ev_charging_kw", "ev_charging_power")),
             ("evcharger", "Soc", ("car_soc",)),
             ("tank", "Level", ("water_level",)),
         ):
@@ -466,8 +475,8 @@ class CerboOverlayMixin:
             return True
         if kind == "battery":
             return path in BATTERY_PATHS or path in (
-                "System/MinVoltageCellId",
-                "System/MaxVoltageCellId",
+                VE_MIN_VOLTAGE_CELL_PATH,
+                VE_MAX_VOLTAGE_CELL_PATH,
                 "State",
             )
         if kind == "system":
@@ -477,7 +486,13 @@ class CerboOverlayMixin:
                 "AutoSelectedBatteryService",
             )
         if kind == "solarcharger":
-            return path in ("Yield/Power", "Dc/0/Power", "Dc/0/Voltage", "Dc/0/Current", "Pv/V")
+            return path in (
+                VE_YIELD_POWER_PATH,
+                VE_DC_POWER_PATH,
+                VE_DC_VOLTAGE_PATH,
+                VE_DC_CURRENT_PATH,
+                "Pv/V",
+            )
         if kind in ("acload", "pvinverter", "grid"):
             return path.startswith("Ac/")
         if kind == "vebus":
@@ -488,7 +503,7 @@ class CerboOverlayMixin:
             return path in ("State", "Status", "Mode")
         if kind == "settings":
             return path in ESS_PATHS
-        return path in ("Soc", "Ac/Power")
+        return path in ("Soc", VE_AC_POWER_PATH)
 
     def _devices(self, kind: str):
         values = self._cerbo_devices.get(kind, {})
@@ -589,8 +604,8 @@ class CerboOverlayMixin:
                 if (value := number(leaves.get(path))) is not None:
                     entry[key] = value
             for path, key in (
-                ("System/MinVoltageCellId", "min_voltage_cell_id"),
-                ("System/MaxVoltageCellId", "max_voltage_cell_id"),
+                (VE_MIN_VOLTAGE_CELL_PATH, "min_voltage_cell_id"),
+                (VE_MAX_VOLTAGE_CELL_PATH, "max_voltage_cell_id"),
             ):
                 value = leaves.get(path)
                 if value is not None and (isinstance(value, str) or number(value) is not None):
@@ -645,13 +660,15 @@ class CerboOverlayMixin:
         chargers = []
         for instance, leaves in self._devices("solarcharger"):
             entry = _identity(instance, leaves)
-            for path, key in (("Pv/V", "pv_voltage"), ("Dc/0/Current", "current")):
+            for path, key in (("Pv/V", "pv_voltage"), (VE_DC_CURRENT_PATH, "current")):
                 if (value := number(leaves.get(path))) is not None:
                     entry[key] = value
-            voltage = number(leaves.get("Dc/0/Voltage"))
-            current = number(leaves.get("Dc/0/Current"))
+            voltage = number(leaves.get(VE_DC_VOLTAGE_PATH))
+            current = number(leaves.get(VE_DC_CURRENT_PATH))
             product = voltage * current if voltage is not None and current is not None else None
-            power = _first_number(leaves.get("Yield/Power"), leaves.get("Dc/0/Power"), product)
+            power = _first_number(
+                leaves.get(VE_YIELD_POWER_PATH), leaves.get(VE_DC_POWER_PATH), product
+            )
             if power is not None:
                 entry["power"] = power
             if len(entry) > 1:
@@ -732,12 +749,12 @@ class CerboOverlayMixin:
         if "Soc" in vehicle or "Soc" in charger:
             fallback_soc = charger.get("Soc") if config.EV_INSTANCE is None else None
             out["car_soc"] = _first_number(vehicle.get("Soc"), fallback_soc)
-        if "Ac/Power" in vehicle:
-            vehicle_power = number(vehicle["Ac/Power"])
+        if VE_AC_POWER_PATH in vehicle:
+            vehicle_power = number(vehicle[VE_AC_POWER_PATH])
             out["ev_power"] = vehicle_power
             out["car_charging_power"] = vehicle_power
-        if "Ac/Power" in charger:
-            power = number(charger["Ac/Power"])
+        if VE_AC_POWER_PATH in charger:
+            power = number(charger[VE_AC_POWER_PATH])
             out["ev_charging_power"] = power
             out["ev_charging_kw"] = power / 1000 if power is not None else None
         for kind, selected in (("ev", vehicle), ("evcharger", charger)):
@@ -755,7 +772,7 @@ class CerboOverlayMixin:
     def _water_ev_device(kind: str, instance: str, leaves: dict[str, Any]) -> dict[str, Any]:
         item = {"kind": kind, **_identity(instance, leaves)}
         item["instance"] = int(instance) if instance.isdigit() else instance
-        for field, path in (("soc", "Soc"), ("power", "Ac/Power")):
+        for field, path in (("soc", "Soc"), ("power", VE_AC_POWER_PATH)):
             if (value := number(leaves.get(path))) is not None:
                 item[field] = value
         return item
@@ -781,7 +798,7 @@ class CerboOverlayMixin:
         usable = [
             leaves
             for _, leaves in devices
-            if any(number(leaves.get(path)) is not None for path in ("Soc", "Ac/Power"))
+            if any(number(leaves.get(path)) is not None for path in ("Soc", VE_AC_POWER_PATH))
         ]
         if usable:
             return usable[0]
