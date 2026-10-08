@@ -517,33 +517,50 @@ class CerboOverlayMixin:
             # only a valid nonretained Mode below can establish it again.
             self._water_mode_observations.pop(instance, None)
         if not payload:
-            devices = self._cerbo_devices.get(kind, {})
-            if instance not in devices:
+            if not self._remove_cerbo_device(kind, instance):
                 return False
-            # dbus-flashmq clears each service leaf with an empty payload when
-            # the service disappears. Remove it immediately on the first such
-            # notification; JSON {"value": null} invalidates only one leaf.
-            devices.pop(instance)
-            if kind == "pump":
-                self._water_mode_observations.pop(instance, None)
-        else:
-            if not path:
-                return False
-            try:
-                data = json.loads(payload)
-            except ValueError:
-                return False
-            if not isinstance(data, dict) or "value" not in data:
-                return False
-            value = data["value"]
-            if not self._valid_path_value(kind, path, value):
-                return False
-            if not self._known_path(kind, path):
-                return False
-            self._cerbo_devices.setdefault(kind, {}).setdefault(instance, {})[path] = value
-            self._observe_water_mode(kind, instance, path, value, retained)
-            if value is None:
-                self._claim_invalid_leaf(kind, instance, path)
+        elif not self._store_cerbo_leaf(kind, instance, path, payload, retained):
+            return False
+        return self._refresh_native_mqtt_state()
+
+    def _remove_cerbo_device(self, kind: str, instance: str) -> bool:
+        """Remove a vanished service on its first empty notification."""
+        devices = self._cerbo_devices.get(kind, {})
+        if instance not in devices:
+            return False
+        # dbus-flashmq clears each service leaf with an empty payload when
+        # the service disappears. Remove it immediately on the first such
+        # notification; JSON {"value": null} invalidates only one leaf.
+        devices.pop(instance)
+        if kind == "pump":
+            self._water_mode_observations.pop(instance, None)
+        return True
+
+    def _store_cerbo_leaf(
+        self, kind: str, instance: str, path: str, payload: bytes, retained: bool
+    ) -> bool:
+        """Accept one validated leaf before updating observation and authority."""
+        if not path:
+            return False
+        try:
+            data = json.loads(payload)
+        except ValueError:
+            return False
+        if not isinstance(data, dict) or "value" not in data:
+            return False
+        value = data["value"]
+        if not self._valid_path_value(kind, path, value):
+            return False
+        if not self._known_path(kind, path):
+            return False
+        self._cerbo_devices.setdefault(kind, {}).setdefault(instance, {})[path] = value
+        self._observe_water_mode(kind, instance, path, value, retained)
+        if value is None:
+            self._claim_invalid_leaf(kind, instance, path)
+        return True
+
+    def _refresh_native_mqtt_state(self) -> bool:
+        """Apply an accepted native change and preserve the footer refresh cadence."""
         before = dict(self.current_state)
         self._note_native_observation("mqtt")
         self._apply_cerbo_overlays()
