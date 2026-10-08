@@ -527,23 +527,34 @@ def _filtered_skeleton() -> dict[str, Any]:
     }
 
 
-def build_filtered_displays(docs: dict[str, dict | None], cfg: dict[str, Any]) -> dict[str, Any]:
-    """Map fetched HA state docs to the HaFilteredData display shape (pure; testable)."""
-    out = _filtered_skeleton()
+def _append_sensor_displays(docs: dict, cfg: dict, out: dict) -> None:
+    """Include configured sensors whose state document is available."""
     for eid in cfg.get("sensors") or []:
         doc = docs.get(eid)
         if doc:
             out["sensors"].append(_sensor_display(doc))
+
+
+def _append_number_displays(docs: dict, cfg: dict, out: dict) -> None:
+    """Include number controls with a valid display value."""
     for eid in cfg.get("numbers") or []:
         doc = docs.get(eid)
         if doc:
             disp = _number_display(doc)
             if disp:
                 out["numbers"].append(disp)
+
+
+def _append_cover_displays(docs: dict, cfg: dict, out: dict) -> None:
+    """Include covers with a known, available state."""
     for eid in cfg.get("covers") or []:
         doc = docs.get(eid)
         if doc and doc.get("state") not in (None, "unknown", "unavailable"):
             out["covers"].append(_cover_display(doc))
+
+
+def _append_media_player_displays(docs: dict, cfg: dict, out: dict) -> None:
+    """Include media players with a known, available state."""
     for eid in cfg.get("media_players") or []:
         doc = docs.get(eid)
         if doc and doc.get("state") not in (None, "unknown", "unavailable"):
@@ -554,10 +565,24 @@ def build_filtered_displays(docs: dict[str, dict | None], cfg: dict[str, Any]) -
                     "state": str(doc.get("state") or ""),
                 }
             )
+
+
+def _append_scene_displays(docs: dict, cfg: dict, out: dict) -> None:
+    """Include scenes unless their state is explicitly unavailable."""
     for eid in cfg.get("scenes") or []:
         doc = docs.get(eid)
         if doc and doc.get("state") != "unavailable":
             out["scenes"].append({"entity_id": doc["entity_id"], "name": _friendly_name(doc)})
+
+
+def build_filtered_displays(docs: dict[str, dict | None], cfg: dict[str, Any]) -> dict[str, Any]:
+    """Map fetched HA state docs to the HaFilteredData display shape (pure; testable)."""
+    out = _filtered_skeleton()
+    _append_sensor_displays(docs, cfg, out)
+    _append_number_displays(docs, cfg, out)
+    _append_cover_displays(docs, cfg, out)
+    _append_media_player_displays(docs, cfg, out)
+    _append_scene_displays(docs, cfg, out)
     weather_eid = cfg.get("weather")
     wdoc = docs.get(weather_eid) if weather_eid else None
     if wdoc:
