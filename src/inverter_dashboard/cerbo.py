@@ -310,6 +310,46 @@ def _invalid_service_keys(kind: str, path: str) -> set[str]:
     return keys
 
 
+def _battery_entry(instance: str, leaves: dict[str, Any]) -> dict[str, Any]:
+    entry = _identity(instance, leaves)
+    for path, key in BATTERY_PATHS.items():
+        if (value := number(leaves.get(path))) is not None:
+            entry[key] = value
+    for path, key in (
+        (VE_MIN_VOLTAGE_CELL_PATH, "min_voltage_cell_id"),
+        (VE_MAX_VOLTAGE_CELL_PATH, "max_voltage_cell_id"),
+    ):
+        value = leaves.get(path)
+        if value is not None and (isinstance(value, str) or number(value) is not None):
+            entry[key] = str(value)
+    if "current" in entry:
+        entry["state"] = state_from_current(entry["current"])
+    if (
+        "power" not in entry
+        and "voltage" in entry
+        and "current" in entry
+        and (power := number(entry["voltage"] * entry["current"])) is not None
+    ):
+        entry["power"] = power
+    if (seconds := entry.get("time_to_go_seconds")) is not None and seconds >= 0:
+        minutes = int(seconds / 60)
+        entry["time_to_go"] = f"{minutes // 60}h {minutes % 60:02d}m"
+    return entry
+
+
+def _apply_bank_shunt(out, system, batteries) -> None:
+    shunts = [entry for entry in batteries if "shunt" in entry.get("name", "").lower()]
+    shunt = next((entry for entry in shunts if "voltage" in entry), shunts[0] if shunts else {})
+    bank_voltage = _first_number(shunt.get("voltage"), system.get("Dc/Battery/Voltage"))
+    if bank_voltage is not None:
+        out["battery_soc"] = voltage_soc(bank_voltage)
+        out["battery_voltage"] = bank_voltage
+    if shunt:
+        for field in ("current", "power"):
+            if field in shunt:
+                out[f"battery_{field}"] = shunt[field]
+
+
 class CerboOverlayMixin:
     """Native telemetry reducer used by the MQTT server and IGW snapshot path."""
 
@@ -634,29 +674,7 @@ class CerboOverlayMixin:
     def _apply_batteries(self, out, system) -> None:
         batteries = []
         for instance, leaves in self._devices("battery"):
-            entry = _identity(instance, leaves)
-            for path, key in BATTERY_PATHS.items():
-                if (value := number(leaves.get(path))) is not None:
-                    entry[key] = value
-            for path, key in (
-                (VE_MIN_VOLTAGE_CELL_PATH, "min_voltage_cell_id"),
-                (VE_MAX_VOLTAGE_CELL_PATH, "max_voltage_cell_id"),
-            ):
-                value = leaves.get(path)
-                if value is not None and (isinstance(value, str) or number(value) is not None):
-                    entry[key] = str(value)
-            if "current" in entry:
-                entry["state"] = state_from_current(entry["current"])
-            if (
-                "power" not in entry
-                and "voltage" in entry
-                and "current" in entry
-                and (power := number(entry["voltage"] * entry["current"])) is not None
-            ):
-                entry["power"] = power
-            if (seconds := entry.get("time_to_go_seconds")) is not None and seconds >= 0:
-                minutes = int(seconds / 60)
-                entry["time_to_go"] = f"{minutes // 60}h {minutes % 60:02d}m"
+            entry = _battery_entry(instance, leaves)
             if len(entry) > 1:
                 batteries.append(entry)
         self._batteries = {b["instance"]: b for b in batteries}
@@ -677,16 +695,7 @@ class CerboOverlayMixin:
                 out[f"battery_{field}"] = value
         # The shunt's reported SoC counter is not the main bank percentage.
         # Keep real device SoCs in batteries, and derive the bank tile locally.
-        shunts = [entry for entry in batteries if "shunt" in entry.get("name", "").lower()]
-        shunt = next((entry for entry in shunts if "voltage" in entry), shunts[0] if shunts else {})
-        bank_voltage = _first_number(shunt.get("voltage"), system.get("Dc/Battery/Voltage"))
-        if bank_voltage is not None:
-            out["battery_soc"] = voltage_soc(bank_voltage)
-            out["battery_voltage"] = bank_voltage
-        if shunt:
-            for field in ("current", "power"):
-                if field in shunt:
-                    out[f"battery_{field}"] = shunt[field]
+        _apply_bank_shunt(out, system, batteries)
         for field, alias in (("voltage", "bv"), ("current", "bc"), ("power", "bp")):
             if f"battery_{field}" in out:
                 out[alias] = out[f"battery_{field}"]
