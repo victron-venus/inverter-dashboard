@@ -167,6 +167,15 @@ def _slot_to_notification(inst: str, slot_n: int, slot: dict[str, Any]) -> dict[
     }
 
 
+def _apply_platform_datetime(entry: dict[str, Any], value: Any) -> None:
+    next_dt = _event_datetime(value)
+    if next_dt is not None:
+        if next_dt != entry.get("last_valid_date_time"):
+            entry["user_dismissed"] = False
+        entry["last_valid_date_time"] = next_dt
+    entry["date_time"] = next_dt
+
+
 def apply_platform_field(
     slots: dict[tuple[str, int], dict[str, Any]], key: str, value: Any
 ) -> bool:
@@ -199,12 +208,7 @@ def apply_platform_field(
     elif field == "Service":
         entry["service"] = _as_str(value)
     elif field == "DateTime":
-        next_dt = _event_datetime(value)
-        if next_dt is not None:
-            if next_dt != entry.get("last_valid_date_time"):
-                entry["user_dismissed"] = False
-            entry["last_valid_date_time"] = next_dt
-        entry["date_time"] = next_dt
+        _apply_platform_datetime(entry, value)
     elif field == "Type":
         # OS pushes require an explicit numeric Type; preserve banner coercion.
         entry["push_type_known"] = (
@@ -318,6 +322,39 @@ def mqtt_sync_platform_from_snapshot(ms: Any, platform_leaves: dict[str, Any]) -
     return before != after
 
 
+def _sync_alarm_leaf(
+    ms: Any, bucket: str, key: str, raw: Any, pretty_service, pretty_alarm
+) -> bool:
+    parsed = parse_alarm_leaf_key(bucket, key)
+    if not parsed:
+        return False
+    service_id, alarm_name = parsed
+    value_raw = raw.get("value") if isinstance(raw, dict) and "value" in raw else raw
+    try:
+        value = int(float(value_raw))
+    except (TypeError, ValueError):
+        value = 0
+    topic = f"igw/{bucket}/{key}"
+    prev = ms._alarm_values.get(topic, 0)
+    if prev == value:
+        return False
+    ms._alarm_values[topic] = value
+    nid = f"victron-alarm-{service_id}-{alarm_name}"
+    if value not in (1, 2):
+        return mqtt_remove_notification_id(ms, nid)
+    notif = alarm_notification(
+        service_id,
+        alarm_name,
+        value,
+        pretty_service=pretty_service,
+        pretty_alarm=pretty_alarm,
+    )
+    if notif:
+        ms.push_notification(notif)
+        return True
+    return False
+
+
 def mqtt_sync_alarms_from_snapshot(
     ms: Any, snap: dict[str, Any], pretty_service, pretty_alarm
 ) -> bool:
@@ -330,34 +367,9 @@ def mqtt_sync_alarms_from_snapshot(
         if not isinstance(leaves, dict):
             continue
         for key, raw in leaves.items():
-            parsed = parse_alarm_leaf_key(bucket, key)
-            if not parsed:
-                continue
-            service_id, alarm_name = parsed
-            value_raw = raw.get("value") if isinstance(raw, dict) and "value" in raw else raw
-            try:
-                value = int(float(value_raw))
-            except (TypeError, ValueError):
-                value = 0
-            topic = f"igw/{bucket}/{key}"
-            prev = ms._alarm_values.get(topic, 0)
-            if prev == value:
-                continue
-            ms._alarm_values[topic] = value
-            nid = f"victron-alarm-{service_id}-{alarm_name}"
-            if value not in (1, 2):
-                changed = mqtt_remove_notification_id(ms, nid) or changed
-                continue
-            notif = alarm_notification(
-                service_id,
-                alarm_name,
-                value,
-                pretty_service=pretty_service,
-                pretty_alarm=pretty_alarm,
+            changed = (
+                _sync_alarm_leaf(ms, bucket, key, raw, pretty_service, pretty_alarm) or changed
             )
-            if notif:
-                ms.push_notification(notif)
-                changed = True
     return changed
 
 
@@ -377,7 +389,7 @@ def mqtt_handle_platform_notification(ms: Any, topic: str, payload: bytes) -> bo
     key = f"{inst}/Notifications/{slot_n}/{field}"
     try:
         raw = json.loads(payload.decode(), parse_float=str if field == "DateTime" else float)
-    except (ValueError, UnicodeDecodeError):
+    except ValueError:
         return False
     value = raw.get("value") if isinstance(raw, dict) else raw
     ms._platform_seen = True

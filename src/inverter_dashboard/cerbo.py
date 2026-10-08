@@ -182,7 +182,7 @@ def parse_cerbo_payload(payload: bytes) -> Any:
     """Return the Venus ``value`` field, or None for malformed messages."""
     try:
         data = json.loads(payload)
-    except (ValueError, UnicodeDecodeError):
+    except ValueError:
         return None
     return data.get("value") if isinstance(data, dict) else None
 
@@ -437,7 +437,7 @@ class CerboOverlayMixin:
                 return False
             try:
                 data = json.loads(payload)
-            except (ValueError, UnicodeDecodeError):
+            except ValueError:
                 return False
             if not isinstance(data, dict) or "value" not in data:
                 return False

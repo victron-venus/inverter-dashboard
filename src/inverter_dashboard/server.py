@@ -263,7 +263,7 @@ class MqttState(CerboOverlayMixin):
         ):
             try:
                 discovery = json.loads(payload)
-            except (ValueError, UnicodeDecodeError):
+            except ValueError:
                 return False
             value = discovery.get("value") if isinstance(discovery, dict) else None
             if (isinstance(value, str) and value.strip()) or number(value) is not None:
