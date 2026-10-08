@@ -288,6 +288,32 @@ def test_native_key_boundaries(certificates, name, expected):
     assert policy.certificate_key_meets_minimum(certificates[name]) is expected
 
 
+@pytest.mark.parametrize("name, accepted", [("rsa2047", False), ("rsa2048", True)])
+def test_native_server_identity(native_pki, monkeypatch, name, accepted):
+    from inverter_dashboard import server_tls, tls_policy
+
+    folder, _, certificates = native_pki
+    certificate = folder / f"server-{name}.pem"
+    certificate.write_text(ssl.DER_cert_to_PEM_cert(certificates[name]))
+    config = SimpleNamespace(ssl_certfile=str(certificate), ssl_keyfile=str(folder / f"{name}.key"))
+    # Retain production dispatch on Intel; use its native backend explicitly on ARM.
+    if sys.platform == "darwin" and platform.machine() != "x86_64":
+        monkeypatch.setattr(server_tls, "_certificate_key_ok", policy.certificate_key_meets_minimum)
+    else:
+        assert server_tls._certificate_key_ok is tls_policy._certificate_key_ok
+
+    def load_identity():
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(config.ssl_certfile, config.ssl_keyfile)
+        return context
+
+    if accepted:
+        assert isinstance(server_tls.server_context(config, load_identity), ssl.SSLContext)
+    else:
+        with pytest.raises(ssl.SSLError, match="below the security minimum"):
+            server_tls.server_context(config, load_identity)
+
+
 def test_native_malformed_der(certificates):
     for value in (b"not a certificate", certificates["rsa2048"][:24]):
         with pytest.raises(ValueError, match="valid DER"):

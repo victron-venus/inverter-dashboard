@@ -7,6 +7,8 @@ import http.client
 import os
 import ssl
 
+from inverter_dashboard.tls_policy import enforce_peer_key_policy
+
 
 def main() -> int:
     config = os.environ.get("INVERTER_DASHBOARD_CONFIG", "/app/config")
@@ -27,6 +29,7 @@ def main() -> int:
             # as an IP SAN, so the handshake against https://127.0.0.1 succeeds.
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             ctx.load_verify_locations(cafile=crt)
+            enforce_peer_key_policy(ctx)
             connection = http.client.HTTPSConnection(
                 "127.0.0.1", port, context=ctx, timeout=timeout
             )

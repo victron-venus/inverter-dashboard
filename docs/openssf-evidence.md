@@ -46,12 +46,13 @@ Do not equate a green metadata or release job with successful application tests.
 
 ## Items requiring explicit verification before submission
 
-The [TLS client policy](tls-policy.md) and real loopback tests document the exact
-RSA 2048-bit boundary for HTTPX connections. OpenSSL security level 2 alone was
-insufficient: it accepted a trusted 2047-bit RSA root. This repair covers Home
-Assistant, gateway and update metadata, including HTTPS proxies. MQTT, Web Push,
-server-side certificates and other cryptographic operations require their own
-evidence before `crypto_keylength` can be marked Met for the whole project.
+The [TLS policy](tls-policy.md) and real loopback tests document the exact RSA
+2048-bit boundary. OpenSSL security level 2 alone was insufficient: it accepted
+trusted 2047-bit RSA certificates. Repairs cover Home Assistant, gateway and
+update metadata including HTTPS proxies, MQTT, Web Push, the HTTPS health probe
+and the built-in server's configured identity. Review the final merged revision,
+platform CI and remaining cryptographic operations before marking
+`crypto_keylength` Met for the whole project.
 
 - Confirm the private reporting channel works and examine issue/advisory history. Historical response-time claims require actual reports and responses, including any reports outside GitHub.
 - Obtain primary-developer attestations about secure-design and vulnerability-prevention knowledge; repository text cannot establish a person's knowledge.

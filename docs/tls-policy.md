@@ -1,4 +1,4 @@
-# HTTPS client certificate policy
+# TLS certificate policy
 
 The Home Assistant client, gateway snapshot/command client and update-metadata
 client use the shared policy in `src/inverter_dashboard/tls_policy.py`. Before
@@ -47,6 +47,34 @@ restart the relevant client or process after changing a CA bundle.
 
 ## Validation and maintenance boundaries
 
+### MQTT, Web Push and the loopback health probe
+
+The same verified-chain check also runs before MQTT CONNECT credentials, Web
+Push authorization/payloads and the HTTPS health request are sent. MQTT retains
+Paho's CA-file/default-root selection and verification flags. Plain MQTT remains
+unchanged. Web Push retains its provider allowlist, validated DNS addresses,
+timeouts, disabled redirects and disabled environment-proxy support. The health
+probe remains bound to loopback and trusts only its configured certificate file.
+
+### Built-in HTTPS server
+
+When `--ssl-cert` is supplied, the built-in server checks every certificate in
+that PEM file against the same key minima before loading the identity or opening
+the listener. A separately supplied `--ssl-key` or a private key in the combined
+PEM file is supported. OpenSSL still checks that the key matches the certificate.
+
+The loader captures the certificate/key once and passes an immutable snapshot
+to [Uvicorn's SSL context factory](https://uvicorn.dev/settings/#https). This
+prevents file replacement between the key-size check and OpenSSL loading from
+substituting an unchecked identity. Temporary files are mode 0600 in a private
+0700 directory and are removed after loading, including on errors. Existing
+Uvicorn TLS options are retained, with TLS 1.2 and security level 2 as minimums.
+Operators must reissue weak server chains before upgrading and restart the
+server when rotating certificates. External reverse proxies have their own TLS
+configuration and are outside this loader.
+
+### Regression coverage
+
 `tests/test_tls_policy.py` performs actual TLS 1.2 and 1.3 handshakes over both
 stdlib sockets and HTTPX memory BIOs. It covers weak leaf, intermediate and root
 keys, the 2047-bit RSA boundary, strong controls, wrong names, unknown CAs,
@@ -61,13 +89,18 @@ dependency profile. A test on Apple Silicon alone does not establish Intel
 compatibility. Release builds additionally perform the existing frozen-binary
 smoke checks.
 
+`tests/test_additional_tls.py` tests actual MQTT CONNECT and encrypted Web Push
+requests, including hostname and CA failures. `tests/test_server_tls.py` covers
+server startup rejection, real TLS 1.2/1.3 requests, combined/separate PEM files,
+concurrent identity replacement, failed-load cleanup and the real health probe.
+
 CPython 3.12 exposes its verified chain through a private SSL API; newer runtimes
 may expose it publicly. HTTPX's environment-proxy mapping helper is also private.
 The dependency lock and regression tests make both boundaries explicit. Rerun
 these tests after Python, HTTPX or HTTP Core upgrades; an unavailable chain API
 must remain a connection failure.
 
-This policy covers only the HTTPX clients listed above. MQTT, Web Push, inbound
-TLS, external TLS terminators and hardware behavior have separate boundaries.
+This policy covers the application paths listed above. Packaging tools, external
+TLS terminators and hardware behavior have separate boundaries.
 These tests alone do not establish a whole-project OpenSSF badge or validate an
 operator's deployment.
