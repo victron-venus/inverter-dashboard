@@ -811,72 +811,78 @@ async def _wait_override_ack(
         await asyncio.sleep(0.05 if not remote else 0.25)
 
 
-async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Client):
-    """Dispatch a single WebSocket action."""
-    if action in ("set_setpoint_override", "electricity_tariff"):
-        await _send_controller_command(
-            "setpoint_override" if action == "set_setpoint_override" else action, data, mqtt_client
-        )
-    elif action == "set_ess_mode":
-        await _select_ess_mode(data, mqtt_client)
-    elif action == "water_mode":
-        await _set_water_mode(data, mqtt_client)
-    elif action in ("number_set", "set_cover_position", "media_player", "scene_activate"):
-        if not await ha_client.perform_action(action, data.get("entity"), data):
-            raise RuntimeError("Home Assistant action failed")
+async def _dispatch_ha_action(action: str, data: dict[str, Any]) -> None:
+    """Apply a direct Home Assistant action before refreshing its overlay."""
+    if not await ha_client.perform_action(action, data.get("entity"), data):
+        raise RuntimeError("Home Assistant action failed")
+    fresh = await ha_client.fetch_states_once()
+    if fresh.get("ha_direct_connected"):
+        ha_client.replace_overlay(fresh)
+    await broadcast_state()
+
+
+async def _perform_direct_toggle(entity: str) -> None:
+    """Use the configured direct action and refresh only after success."""
+    if ha_client.domain_for_press(entity):
+        succeeded = await ha_client.press_entity(entity)
+    else:
+        succeeded = await ha_client.toggle_entity(entity)
+    if not succeeded:
+        raise RuntimeError("Home Assistant action failed")
+    fresh = await ha_client.fetch_states_once()
+    if fresh.get("ha_direct_connected"):
+        ha_client.replace_overlay(fresh)
+    await broadcast_state()
+
+
+async def _dispatch_toggle(data: dict[str, Any], mqtt_client: Client) -> None:
+    """Keep controller flags ahead of direct Home Assistant toggle routing."""
+    entity = data.get("entity")
+    if not isinstance(entity, str) or not entity:
+        raise ValueError("Entity is required for toggle")
+    flag = _control_flag_key(entity if isinstance(entity, str) else None)
+    if flag:
+        # Mirror desktop: Cerbo MQTT inverter/cmd/toggle with bare flag key.
+        payload = {"entity": flag}
+        if "state" in data:
+            payload["state"] = data["state"]
+        await mqtt_publish(mqtt_client, "toggle", payload)
+        return
+    if "." in entity and (
+        not ha_client.is_direct_mode() or not ha_client.is_toggle_allowed(entity)
+    ):
+        raise ValueError("Home entity is not configured for direct Home Assistant control")
+    if entity and ha_client.is_direct_mode() and ha_client.is_toggle_allowed(entity):
+        await _perform_direct_toggle(entity)
+        return
+    await mqtt_publish(mqtt_client, "toggle", {"entity": entity})
+
+
+async def _dispatch_press(data: dict[str, Any], mqtt_client: Client) -> None:
+    """Validate a direct button before sending, otherwise use legacy MQTT."""
+    entity = data.get("entity")
+    if isinstance(entity, str) and "." in entity and not ha_client.is_direct_mode():
+        raise ValueError("Home entity is not configured for direct Home Assistant control")
+    if ha_client.is_direct_mode():
+        if (
+            not isinstance(entity, str)
+            or not ha_client.is_toggle_allowed(entity)
+            or ha_client.domain_for_press(entity) is None
+        ):
+            raise ValueError("Button is not configured for direct Home Assistant control")
+        if not await ha_client.press_entity(entity):
+            raise RuntimeError("Home Assistant button press failed")
         fresh = await ha_client.fetch_states_once()
         if fresh.get("ha_direct_connected"):
             ha_client.replace_overlay(fresh)
         await broadcast_state()
-    elif action == "toggle":
-        entity = data.get("entity")
-        if not isinstance(entity, str) or not entity:
-            raise ValueError("Entity is required for toggle")
-        flag = _control_flag_key(entity if isinstance(entity, str) else None)
-        if flag:
-            # Mirror desktop: Cerbo MQTT inverter/cmd/toggle with bare flag key.
-            payload = {"entity": flag}
-            if "state" in data:
-                payload["state"] = data["state"]
-            await mqtt_publish(mqtt_client, "toggle", payload)
-            return
-        if "." in entity and (
-            not ha_client.is_direct_mode() or not ha_client.is_toggle_allowed(entity)
-        ):
-            raise ValueError("Home entity is not configured for direct Home Assistant control")
-        if entity and ha_client.is_direct_mode() and ha_client.is_toggle_allowed(entity):
-            if ha_client.domain_for_press(entity):
-                succeeded = await ha_client.press_entity(entity)
-            else:
-                succeeded = await ha_client.toggle_entity(entity)
-            if not succeeded:
-                raise RuntimeError("Home Assistant action failed")
-            fresh = await ha_client.fetch_states_once()
-            if fresh.get("ha_direct_connected"):
-                ha_client.replace_overlay(fresh)
-            await broadcast_state()
-            return
-        await mqtt_publish(mqtt_client, "toggle", {"entity": entity})
-    elif action == "press":
-        entity = data.get("entity")
-        if isinstance(entity, str) and "." in entity and not ha_client.is_direct_mode():
-            raise ValueError("Home entity is not configured for direct Home Assistant control")
-        if ha_client.is_direct_mode():
-            if (
-                not isinstance(entity, str)
-                or not ha_client.is_toggle_allowed(entity)
-                or ha_client.domain_for_press(entity) is None
-            ):
-                raise ValueError("Button is not configured for direct Home Assistant control")
-            if not await ha_client.press_entity(entity):
-                raise RuntimeError("Home Assistant button press failed")
-            fresh = await ha_client.fetch_states_once()
-            if fresh.get("ha_direct_connected"):
-                ha_client.replace_overlay(fresh)
-            await broadcast_state()
-            return
-        await mqtt_publish(mqtt_client, "press", {"entity": entity})
-    elif action == "setpoint":
+        return
+    await mqtt_publish(mqtt_client, "press", {"entity": entity})
+
+
+async def _dispatch_legacy_action(action: str, data: dict[str, Any], mqtt_client: Client) -> None:
+    """Preserve the payload defaults of the five legacy scalar actions."""
+    if action == "setpoint":
         await mqtt_publish(mqtt_client, "setpoint", {"value": data.get("value")})
     elif action == "dry_run":
         payload = {"value": data["value"]} if "value" in data else {}
@@ -898,28 +904,56 @@ async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Clien
             "loop_interval",
             {"interval": data.get("interval", DEFAULT_LOOP_INTERVAL)},
         )
-    elif action == "set_settings":
-        try:
-            saved = settings_store.save_settings(
-                {key: value for key, value in data.items() if key not in ("action", "request_id")}
-            )
-        except ValueError:
-            raise ValueError("Invalid settings patch") from None
-        set_ui_settings(saved)
-        await broadcast_state()
-    elif action == "dismiss_notification":
-        # Wired from Vue NotificationBanner X — same UX as inverter-desktop.
-        nid = data.get("id")
-        ms = _state.get("mqtt_state")
-        if not isinstance(nid, str) or not nid or ms is None:
-            return
-        ms.dismiss_notification(nid)
-        try:
-            await _dismiss_native_notification(nid, mqtt_client)
-        finally:
-            # Local banner dismissal remains separate from physical ACK success.
-            await broadcast_state()
 
+
+async def _dispatch_settings(data: dict[str, Any]) -> None:
+    """Persist a validated settings patch before updating clients."""
+    try:
+        saved = settings_store.save_settings(
+            {key: value for key, value in data.items() if key not in ("action", "request_id")}
+        )
+    except ValueError:
+        raise ValueError("Invalid settings patch") from None
+    set_ui_settings(saved)
+    await broadcast_state()
+
+
+async def _dispatch_dismissal(data: dict[str, Any], mqtt_client: Client) -> None:
+    """Dismiss locally while keeping physical acknowledgment and broadcast separate."""
+    nid = data.get("id")
+    ms = _state.get("mqtt_state")
+    if not isinstance(nid, str) or not nid or ms is None:
+        return
+    ms.dismiss_notification(nid)
+    try:
+        await _dismiss_native_notification(nid, mqtt_client)
+    finally:
+        # Local banner dismissal remains separate from physical ACK success.
+        await broadcast_state()
+
+
+async def _dispatch_action(action: str, data: dict[str, Any], mqtt_client: Client):
+    """Dispatch a single WebSocket action."""
+    if action in ("set_setpoint_override", "electricity_tariff"):
+        await _send_controller_command(
+            "setpoint_override" if action == "set_setpoint_override" else action, data, mqtt_client
+        )
+    elif action == "set_ess_mode":
+        await _select_ess_mode(data, mqtt_client)
+    elif action == "water_mode":
+        await _set_water_mode(data, mqtt_client)
+    elif action in ("number_set", "set_cover_position", "media_player", "scene_activate"):
+        await _dispatch_ha_action(action, data)
+    elif action == "toggle":
+        await _dispatch_toggle(data, mqtt_client)
+    elif action == "press":
+        await _dispatch_press(data, mqtt_client)
+    elif action in ("setpoint", "dry_run", "limits", "ess_mode", "loop_interval"):
+        await _dispatch_legacy_action(action, data, mqtt_client)
+    elif action == "set_settings":
+        await _dispatch_settings(data)
+    elif action == "dismiss_notification":
+        await _dispatch_dismissal(data, mqtt_client)
     else:
         raise ValueError("Unsupported dashboard action")
 
