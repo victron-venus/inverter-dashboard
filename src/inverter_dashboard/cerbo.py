@@ -376,6 +376,34 @@ def _apply_bank_shunt(out, system, batteries) -> None:
                 out[f"battery_{field}"] = shunt[field]
 
 
+def _apply_ac_phase(out, system, vebus, grid, use_input, i) -> None:
+    """Project one phase while retaining the source precedence and unknown values."""
+    path = f"Ac/Grid/L{i}/Power"
+    if path in system:
+        value = number(system[path])
+    else:
+        value = _first_number(
+            grid.get(f"Ac/L{i}/Power"),
+            vebus.get(f"Ac/ActiveIn/L{i}/P") if use_input else None,
+            vebus.get(f"Ac/ActiveIn/L{i}/Power") if use_input else None,
+        )
+    if path in system or value is not None:
+        out[f"grid_l{i}_available"] = value is not None
+        out[f"g{i}"] = value
+    consumption = _sum_known(
+        [
+            system.get(f"Ac/ConsumptionOnInput/L{i}/Power"),
+            system.get(f"Ac/ConsumptionOnOutput/L{i}/Power"),
+        ]
+    )
+    value = _first_number(
+        system.get(f"Ac/Consumption/L{i}/Power"),
+        consumption,
+    )
+    if value is not None:
+        out[f"t{i}"] = value
+
+
 class CerboOverlayMixin:
     """Native telemetry reducer used by the MQTT server and IGW snapshot path."""
 
@@ -657,31 +685,7 @@ class CerboOverlayMixin:
             and number(system.get("Ac/ActiveIn/Source")) in (1, 3)
         )
         for i in (1, 2, 3):
-            path = f"Ac/Grid/L{i}/Power"
-            value = (
-                number(system[path])
-                if path in system
-                else _first_number(
-                    grid.get(f"Ac/L{i}/Power"),
-                    vebus.get(f"Ac/ActiveIn/L{i}/P") if use_input else None,
-                    vebus.get(f"Ac/ActiveIn/L{i}/Power") if use_input else None,
-                )
-            )
-            if path in system or value is not None:
-                out[f"grid_l{i}_available"] = value is not None
-                out[f"g{i}"] = value
-            consumption = _sum_known(
-                [
-                    system.get(f"Ac/ConsumptionOnInput/L{i}/Power"),
-                    system.get(f"Ac/ConsumptionOnOutput/L{i}/Power"),
-                ]
-            )
-            value = _first_number(
-                system.get(f"Ac/Consumption/L{i}/Power"),
-                consumption,
-            )
-            if value is not None:
-                out[f"t{i}"] = value
+            _apply_ac_phase(out, system, vebus, grid, use_input, i)
         total = _sum_known(out.get(f"g{i}") for i in (1, 2, 3))
         # A meter aggregate is useful when no phase powers were published.
         if total is None and not any(f"Ac/Grid/L{i}/Power" in system for i in (1, 2, 3)):
