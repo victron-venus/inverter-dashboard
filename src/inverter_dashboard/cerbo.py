@@ -231,6 +231,85 @@ def _identity(instance: str, leaves: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _invalid_grid_keys(kind: str, path: str) -> set[str]:
+    keys: set[str] = set()
+    for i in (1, 2, 3):
+        if path in (f"Ac/L{i}/Power", f"Ac/ActiveIn/L{i}/Power", f"Ac/ActiveIn/L{i}/P"):
+            keys.update((f"g{i}", "gt"))
+    if kind == "grid" and path == VE_AC_POWER_PATH:
+        keys.add("gt")
+    return keys
+
+
+def _invalid_water_keys(instance: str, path: str) -> set[str]:
+    keys: set[str] = set()
+    if instance == str(config.WATER_PUMP_INSTANCE):
+        keys.update(("pump_mode", "water_pump_mode") if path == "Mode" else ("pump_switch",))
+    elif instance == str(config.WATER_VALVE_INSTANCE):
+        keys.update(("water_valve_mode",) if path == "Mode" else ("water_valve",))
+    return keys
+
+
+def _invalid_system_keys(path: str) -> set[str]:
+    keys: set[str] = set()
+    for i in (1, 2, 3):
+        if path == f"Ac/Grid/L{i}/Power":
+            keys.update((f"g{i}", "gt"))
+        if path in (
+            f"Ac/Consumption/L{i}/Power",
+            f"Ac/ConsumptionOnInput/L{i}/Power",
+            f"Ac/ConsumptionOnOutput/L{i}/Power",
+        ):
+            keys.update((f"t{i}", "tt"))
+    if path == "Dc/Pv/Power":
+        keys.update(("mppt_total", "pv_total", "solar_total"))
+    if path.startswith("Ac/PvOn") and path.endswith("/Power"):
+        keys.update(("pv_inverter_total", "solar_total"))
+    return keys
+
+
+def _invalid_battery_keys(kind: str, path: str) -> set[str]:
+    keys: set[str] = set()
+    if path == ("Dc/Battery/Voltage" if kind == "system" else VE_DC_VOLTAGE_PATH):
+        keys.add("battery_soc")
+    prefix = "Dc/Battery/" if kind == "system" else "Dc/0/"
+    for field, leaf, alias in (
+        ("soc", "Soc", None),
+        ("voltage", "Voltage", "bv"),
+        ("current", "Current", "bc"),
+        ("power", "Power", "bp"),
+    ):
+        expected = "Soc" if field == "soc" and kind == "battery" else prefix + leaf
+        if path == expected:
+            keys.add(f"battery_{field}")
+            if alias:
+                keys.add(alias)
+    return keys
+
+
+def _invalid_service_keys(kind: str, path: str) -> set[str]:
+    keys: set[str] = set()
+    if kind == "solarcharger" and path in (VE_YIELD_POWER_PATH, VE_DC_POWER_PATH):
+        keys.update(("mppt_total", "pv_total", "solar_total"))
+    if kind == "pvinverter" and path.endswith("/Power"):
+        keys.update(("pv_inverter_total", "solar_total"))
+    if kind == "vebus":
+        if path == "State":
+            keys.add("inverter_state")
+        if path.startswith("Hub4/") and path.endswith("/AcPowerSetpoint"):
+            keys.add("setpoint")
+    for service, leaf, fields in (
+        ("ev", "Soc", ("car_soc",)),
+        ("ev", VE_AC_POWER_PATH, ("ev_power", "car_charging_power")),
+        ("evcharger", VE_AC_POWER_PATH, ("ev_charging_kw", "ev_charging_power")),
+        ("evcharger", "Soc", ("car_soc",)),
+        ("tank", "Level", ("water_level",)),
+    ):
+        if kind == service and path == leaf:
+            keys.update(fields)
+    return keys
+
+
 class CerboOverlayMixin:
     """Native telemetry reducer used by the MQTT server and IGW snapshot path."""
 
@@ -406,65 +485,14 @@ class CerboOverlayMixin:
         ):
             return
         if kind in ("grid", "vebus"):
-            for i in (1, 2, 3):
-                if path in (f"Ac/L{i}/Power", f"Ac/ActiveIn/L{i}/Power", f"Ac/ActiveIn/L{i}/P"):
-                    keys.update((f"g{i}", "gt"))
-            if kind == "grid" and path == VE_AC_POWER_PATH:
-                keys.add("gt")
+            keys.update(_invalid_grid_keys(kind, path))
         if kind == "pump":
-            if instance == str(config.WATER_PUMP_INSTANCE):
-                keys.update(
-                    ("pump_mode", "water_pump_mode") if path == "Mode" else ("pump_switch",)
-                )
-            elif instance == str(config.WATER_VALVE_INSTANCE):
-                keys.update(("water_valve_mode",) if path == "Mode" else ("water_valve",))
+            keys.update(_invalid_water_keys(instance, path))
         if kind == "system":
-            for i in (1, 2, 3):
-                if path == f"Ac/Grid/L{i}/Power":
-                    keys.update((f"g{i}", "gt"))
-                if path in (
-                    f"Ac/Consumption/L{i}/Power",
-                    f"Ac/ConsumptionOnInput/L{i}/Power",
-                    f"Ac/ConsumptionOnOutput/L{i}/Power",
-                ):
-                    keys.update((f"t{i}", "tt"))
-            if path == "Dc/Pv/Power":
-                keys.update(("mppt_total", "pv_total", "solar_total"))
-            if path.startswith("Ac/PvOn") and path.endswith("/Power"):
-                keys.update(("pv_inverter_total", "solar_total"))
+            keys.update(_invalid_system_keys(path))
         if kind in ("battery", "system"):
-            if path == ("Dc/Battery/Voltage" if kind == "system" else VE_DC_VOLTAGE_PATH):
-                keys.add("battery_soc")
-            prefix = "Dc/Battery/" if kind == "system" else "Dc/0/"
-            for field, leaf, alias in (
-                ("soc", "Soc", None),
-                ("voltage", "Voltage", "bv"),
-                ("current", "Current", "bc"),
-                ("power", "Power", "bp"),
-            ):
-                expected = "Soc" if field == "soc" and kind == "battery" else prefix + leaf
-                if path == expected:
-                    keys.add(f"battery_{field}")
-                    if alias:
-                        keys.add(alias)
-        if kind == "solarcharger" and path in (VE_YIELD_POWER_PATH, VE_DC_POWER_PATH):
-            keys.update(("mppt_total", "pv_total", "solar_total"))
-        if kind == "pvinverter" and path.endswith("/Power"):
-            keys.update(("pv_inverter_total", "solar_total"))
-        if kind == "vebus":
-            if path == "State":
-                keys.add("inverter_state")
-            if path.startswith("Hub4/") and path.endswith("/AcPowerSetpoint"):
-                keys.add("setpoint")
-        for service, leaf, fields in (
-            ("ev", "Soc", ("car_soc",)),
-            ("ev", VE_AC_POWER_PATH, ("ev_power", "car_charging_power")),
-            ("evcharger", VE_AC_POWER_PATH, ("ev_charging_kw", "ev_charging_power")),
-            ("evcharger", "Soc", ("car_soc",)),
-            ("tank", "Level", ("water_level",)),
-        ):
-            if kind == service and path == leaf:
-                keys.update(fields)
+            keys.update(_invalid_battery_keys(kind, path))
+        keys.update(_invalid_service_keys(kind, path))
         if kind == "settings" and path in ESS_PATHS:
             keys.add("ess_mode")
         self._cerbo_claimed_keys.update(keys)
