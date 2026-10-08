@@ -157,3 +157,94 @@ def test_igw_alarm_fallback_when_no_platform():
     assert len(notifs) == 1
     assert notifs[0]["level"] == "alarm"
     assert "High Voltage" in notifs[0]["body"]
+
+
+def test_snapshot_alarm_updates_keep_bucket_order_and_continue_after_first_change():
+    from inverter_dashboard import notifications
+
+    ms = server.MqttState()
+    calls = []
+
+    def pretty_service(value):
+        calls.append(("service", value))
+        return value
+
+    def pretty_alarm(value):
+        calls.append(("alarm", value))
+        return value
+
+    snapshot = {
+        "battery": {"1/Alarms/High": {"value": 2}, "2/Alarms/Low": 1},
+        "vebus": {"0/Alarms/Grid": 2},
+    }
+    assert notifications.mqtt_sync_alarms_from_snapshot(ms, snapshot, pretty_service, pretty_alarm)
+    assert calls == [
+        ("service", "battery_1"),
+        ("alarm", "High"),
+        ("service", "battery_2"),
+        ("alarm", "Low"),
+        ("service", "vebus_0"),
+        ("alarm", "Grid"),
+    ]
+    assert [n["id"] for n in ms.notifications] == [
+        "victron-alarm-battery_1-High",
+        "victron-alarm-battery_2-Low",
+        "victron-alarm-vebus_0-Grid",
+    ]
+    calls.clear()
+    snapshot["battery"]["1/Alarms/High"] = {"value": 0}
+    snapshot["vebus"]["0/Alarms/Grid"] = 1
+    assert notifications.mqtt_sync_alarms_from_snapshot(ms, snapshot, pretty_service, pretty_alarm)
+    assert calls == [("service", "vebus_0"), ("alarm", "Grid")]
+    assert [n["id"] for n in ms.notifications] == [
+        "victron-alarm-battery_2-Low",
+        "victron-alarm-vebus_0-Grid",
+    ]
+    assert ms.notifications[-1]["level"] == "warning"
+
+
+def test_platform_notifications_skip_alarm_snapshot_access():
+    from inverter_dashboard import notifications
+
+    class UnreadableSnapshot(dict):
+        def get(self, *_args):
+            raise AssertionError("Platform notifications must bypass alarm fallback")
+
+    ms = server.MqttState()
+    ms._platform_seen = True
+    snapshot = UnreadableSnapshot()
+    assert not notifications.mqtt_sync_alarms_from_snapshot(ms, snapshot, str, str)
+    assert ms._alarm_values == {}
+
+
+def test_alarm_callback_failure_preserves_value_update_order():
+    import pytest
+
+    from inverter_dashboard import notifications
+
+    ms = server.MqttState()
+    snapshot = {"battery": {"1/Alarms/High": 2}}
+    failure = RuntimeError("name lookup failed")
+
+    def fail_name(_value):
+        raise failure
+
+    with pytest.raises(RuntimeError, match="name lookup failed") as caught:
+        notifications.mqtt_sync_alarms_from_snapshot(ms, snapshot, fail_name, str)
+    assert caught.value is failure
+    assert ms._alarm_values == {"igw/battery/1/Alarms/High": 2}
+    assert ms.notifications == []
+
+
+def test_alarm_numeric_overflow_preserves_previous_leaf_value():
+    import pytest
+
+    from inverter_dashboard import notifications
+
+    ms = server.MqttState()
+    ms._alarm_values["igw/battery/1/Alarms/High"] = 1
+    snapshot = {"battery": {"1/Alarms/High": float("inf")}}
+    with pytest.raises(OverflowError):
+        notifications.mqtt_sync_alarms_from_snapshot(ms, snapshot, str, str)
+    assert ms._alarm_values == {"igw/battery/1/Alarms/High": 1}
+    assert ms.notifications == []
