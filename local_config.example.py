@@ -61,6 +61,15 @@ HA_BOOLEAN_ENTITIES = {
 # Empty means no Home buttons. Equal orders preserve declaration order; disabled
 # entries are neither displayed nor polled nor permitted as Home toggle targets.
 HA_SWITCH_ENTITIES = {}
+# Optional example for existing installations after outlet replacement:
+# HA_SWITCH_ENTITIES = {
+#     "home_recliner": ("switch.recliner", "Recliner"),
+#     "home_garage": ("switch.garage_door_power", "Garage Door Power"),
+#     "laundry_outlet": ("switch.laundry", "Laundry"),
+# }
+# Garage Door Power supplies the drive; its remote controls door movement.
+# Update local_config.py and deployment copies when adopting new entity IDs.
+# A shared KMC meter is not an individual washer-power measurement.
 
 # Optional extra overrides if you still use plain string values above (HA_SWITCH_LABELS wins over embedded labels).
 HA_SWITCH_LABELS = {}
