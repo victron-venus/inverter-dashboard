@@ -1,5 +1,7 @@
 # Inverter Dashboard
 
+[![Fuzzing: RC only](https://img.shields.io/badge/Fuzzing-RC%20only-blue)](docs/fuzzing.md)
+
 [![Docker Hub](https://img.shields.io/docker/v/alvit/inverter-dashboard?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/alvit/inverter-dashboard)
 [![Docker Pulls](https://img.shields.io/docker/pulls/alvit/inverter-dashboard?label=Docker%20Pulls&logo=docker)](https://hub.docker.com/r/alvit/inverter-dashboard)
 [![CI](https://github.com/victron-venus/inverter-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/victron-venus/inverter-dashboard/actions/workflows/ci.yml)
@@ -699,3 +701,9 @@ requires authoritative acknowledgement before the editor reports a saved plan.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for reports, development checks and pull requests,
 [SECURITY.md](SECURITY.md) for private vulnerability reporting and deployment trust boundaries,
 and the [OpenSSF evidence index](docs/openssf-evidence.md) for assessment references and remaining verification.
+
+## Release-candidate fuzzing
+
+The production controller override and tariff-command validators receive arbitrary JSON. Accepted commands must preserve their meaning through the exact transport encoder and revalidation. It never sends MQTT or HTTP requests.
+
+[RC-only fuzzing policy, local reproduction and failure handling](docs/fuzzing.md).
