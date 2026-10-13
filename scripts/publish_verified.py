@@ -17,27 +17,42 @@ import argparse
 import fnmatch
 import json
 import re
-# CI tools use fixed executable choices and argv; no shell interpolation.
-import subprocess  # nosec B404
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
-from release_control import (
-    MANIFEST,
-    GitHub,
-    ReleaseError,
-    download_asset,
-    positive,
-    repository_info,
-    require,
-    require_release_policy,
-    source_policy_snapshot,
-    validate_manifest,
-    validate_run,
-    verify_evidence,
-)
+if __package__:
+    from .release_control import (
+        MANIFEST,
+        GitHub,
+        ReleaseError,
+        download_asset,
+        positive,
+        repository_info,
+        require,
+        require_release_policy,
+        source_policy_snapshot,
+        validate_manifest,
+        validate_run,
+        verify_evidence,
+    )
+else:
+    from release_control import (
+        MANIFEST,
+        GitHub,
+        ReleaseError,
+        download_asset,
+        positive,
+        repository_info,
+        require,
+        require_release_policy,
+        source_policy_snapshot,
+        validate_manifest,
+        validate_run,
+        verify_evidence,
+    )
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCKER_TRANSPORT = "docker://"
@@ -91,7 +106,10 @@ def verified_assets(gh, tag, directory):
     if manifest["channel"] == "stable":
         # Legacy consumers do not vendor optional versioning modules.
         # pylint: disable-next=import-outside-toplevel
-        from release_versioned import verified_rc
+        if __package__:
+            from .release_versioned import verified_rc
+        else:
+            from release_versioned import verified_rc
 
         _, parent = verified_rc(gh, manifest["derived_from_rc"]["tag"], info, run)
         require(
@@ -117,7 +135,10 @@ def verified_assets(gh, tag, directory):
         )
     if manifest.get("version_plan"):
         # pylint: disable-next=import-outside-toplevel
-        from version_receipt import verify_declared_artifacts, verify_receipts
+        if __package__:
+            from .version_receipt import verify_declared_artifacts, verify_receipts
+        else:
+            from version_receipt import verify_declared_artifacts, verify_receipts
 
         verify_receipts(
             directory,
@@ -146,8 +167,7 @@ def verified_publication_config(policy, manifest, field):
 
 def require_unpublished_version(image, version):
     """Fail closed unless registry inventory proves the version is unpublished."""
-    # Build/verification command from checked repository policy; argv remains data.
-    check = subprocess.run(  # nosec B603, B607
+    check = subprocess.run(
         ["skopeo", "list-tags", DOCKER_TRANSPORT + image],
         capture_output=True,
         text=True,
@@ -158,9 +178,14 @@ def require_unpublished_version(image, version):
             version not in json.loads(check.stdout).get("Tags", []),
             f"Container version already exists: {image}:{version}",
         )
-    elif (
-        "NAME_UNKNOWN" not in check.stderr
-        and "repository does not exist" not in check.stderr
+    # Skopeo can render the registry's NAME_UNKNOWN code as "name unknown".
+    # Require an unambiguous terminal diagnostic: a missing-repository phrase
+    # followed by a login or permission warning is not proof of absence.
+    elif not re.search(
+        r"(?:\bNAME_UNKNOWN\b(?:: repository name not known to registry)?"
+        r"|\bname unknown\b|\brepository does not exist\b)[\"']?\s*$",
+        check.stderr,
+        re.IGNORECASE,
     ):
         raise ReleaseError(
             "Cannot establish registry tag inventory; authenticate and retry: " + image
@@ -267,8 +292,7 @@ def main():
             )
             if args.execute:
                 for command in commands:
-                    # Build/verification command from checked repository policy; argv remains data.
-                    subprocess.run(command, check=True)  # nosec B603
+                    subprocess.run(command, check=True)
         return 0
     except (
         ReleaseError,
