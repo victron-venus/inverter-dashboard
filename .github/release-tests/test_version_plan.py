@@ -67,6 +67,8 @@ class PlanTest(unittest.TestCase):
             "２０２６１００８１２３４５６.1.1",
             "20261008123456.١.1",
             "20261008123456.1.𝟙",
+            "20261008123456.1١.1",
+            "20261008123456.1.1𝟙",
         )
         for invalid in invalid_sequences:
             with self.subTest(sequence=invalid), self.assertRaises(ValueError):
@@ -663,7 +665,7 @@ version = "2.5.42"
         for name in (
             "../escape",
             # Malicious absolute-path fixture verifies rejection; no file is created.
-            "/tmp/escape",  # nosec B108
+            "/outside-checkout/escape",
             "sub/../original.json",
             "alias.json",
             "linked/original.json",
