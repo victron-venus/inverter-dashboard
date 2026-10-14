@@ -29,7 +29,25 @@
         "-max_len=4096"
       ],
       "seconds": 60,
-      "corpus": "fuzz/corpus/commands"
+      "corpus": "fuzz/corpus/commands",
+      "instrumentation": [
+        {
+          "module": "inverter_dashboard.controller_commands",
+          "functions": [
+            "validate_override",
+            "validate_tariff",
+            "encode_body"
+          ]
+        }
+      ]
     }
+  ],
+  "preflight-paths": [
+    ".github/requirements-fuzz.in",
+    "Dockerfile",
+    "fuzz",
+    "pyproject.toml",
+    "src",
+    "uv.lock"
   ]
 }
