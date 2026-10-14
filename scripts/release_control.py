@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Vendored release toolkit; change the toolkit source, then render again.
+# ruff: noqa
+# mypy: ignore-errors
+# pylint: skip-file
+# fmt: off
 """Publish candidates and promote checked RCs inside the guarded Actions workflow."""
 
 # Keep the audited engine self-contained when vendored into application repos.
@@ -13,6 +18,7 @@ import hashlib
 import io
 import json
 import os
+import random
 import re
 import stat
 
@@ -22,8 +28,10 @@ import sys
 import tempfile
 import time
 import zipfile
-from datetime import UTC, datetime
+from collections.abc import Iterable, Iterator, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import BinaryIO, TypedDict, cast
 from urllib.parse import quote, unquote
 
 WORKFLOW = ".github/workflows/release-pipeline.yml"
@@ -31,11 +39,45 @@ GITHUB_HOSTNAME = "github.com"
 MANIFEST = "release-manifest.json"
 POLICY = ".release-policy.json"
 EVIDENCE = Path(".release-evidence") / MANIFEST
+
+
+class AssetRestriction(TypedDict):
+    suffixes: Sequence[str]
+    reason: str
+
+
+class AssetIdentity(TypedDict):
+    size: int
+    sha256: str
+
+
+JSONObject = dict[str, object]
+ReleaseSnapshot = tuple[JSONObject, JSONObject, list[JSONObject]]
+ASSET_RESTRICTIONS: tuple[AssetRestriction, ...]
 ASSET_RESTRICTIONS = ()
+RELEASE_SIGNATURES_REQUIRED = False
+
+
+def verify_required_signatures(directory: Path, repo: str, sha: str) -> None:
+    """Fail closed before publication when this reviewed consumer requires signing."""
+    if not RELEASE_SIGNATURES_REQUIRED:
+        return
+    # Only signed consumers vendor this optional verifier, from the same checkout.
+    if __package__:
+        from .release_signing import read_json, verify  # pylint: disable=import-outside-toplevel
+    else:
+        from release_signing import read_json, verify  # pylint: disable=import-outside-toplevel
+
+    policy = read_json(Path(POLICY))
+    if policy.get("repository") != repo or policy.get("sign_releases") is not True:
+        raise ReleaseError("Trusted release-signing policy does not match this repository")
+    verify(directory, policy, sha)
 VERSION_PATTERN = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 VERSION_RE = re.compile(VERSION_PATTERN, re.ASCII)
 TAG_RE = re.compile(
-    "v" + VERSION_PATTERN + r"(?:-(?:beta|rc)\.[1-9]\d*|-nightly\.\d{14}\.[1-9]\d*\.[1-9]\d*)?",
+    "v"
+    + VERSION_PATTERN
+    + r"(?:-(?:beta|rc)\.[1-9]\d*|-nightly\.\d{14}\.[1-9]\d*\.[1-9]\d*)?",
     re.ASCII,
 )
 API_PATHS = {
@@ -65,6 +107,8 @@ NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,199}\Z")
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 ASSET_CHUNK_SIZE = 1024 * 1024
 ASSET_DOWNLOAD_TIMEOUT = 900
+API_READ_TIMEOUT = 30
+API_READ_ATTEMPTS = 3
 
 
 class ReleaseError(RuntimeError):
@@ -96,9 +140,11 @@ def version(value: str) -> str:
 
 def positive(value: object, name: str) -> int:
     """Parse a positive integer identifier without accepting booleans."""
-    require(isinstance(value, (str, int)) and not isinstance(value, bool), f"Invalid {name}")
+    require(
+        isinstance(value, (str, int)) and not isinstance(value, bool), f"Invalid {name}"
+    )
     require(bool(re.fullmatch(r"[1-9]\d*", str(value), re.ASCII)), f"Invalid {name}")
-    return int(value)
+    return int(cast(str | int, value))
 
 
 def digest(data: bytes) -> str:
@@ -110,7 +156,7 @@ def atomic_write_bytes(destination: Path, data: bytes) -> None:
     """Replace a plain output file without writing through existing hard links."""
     destination = Path(destination)
 
-    def plain_mode():
+    def plain_mode() -> int | None:
         try:
             mode = destination.lstat().st_mode
         except FileNotFoundError:
@@ -135,7 +181,9 @@ def atomic_write_bytes(destination: Path, data: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def stream_identity(source, destination=None) -> dict:
+def stream_identity(
+    source: BinaryIO, destination: BinaryIO | None = None
+) -> AssetIdentity:
     """Hash exact bytes in bounded chunks, optionally copying to private staging."""
     checksum = hashlib.sha256()
     size = 0
@@ -147,7 +195,7 @@ def stream_identity(source, destination=None) -> dict:
     return {"size": size, "sha256": checksum.hexdigest()}
 
 
-def download_asset(gh, asset_id: int, destination: Path) -> dict:
+def download_asset(gh: GitHub, asset_id: object, destination: Path) -> AssetIdentity:
     """Stage one asset exclusively and discard incomplete or failed downloads."""
     path = f"releases/assets/{positive(asset_id, 'asset ID')}"
     output = destination.open("xb+")
@@ -169,8 +217,8 @@ def json_bytes(value: object) -> bytes:
 def parse_json(data: bytes, label: str) -> object:
     """Decode JSON while rejecting duplicate fields and invalid encoding."""
 
-    def no_duplicates(pairs):
-        result = {}
+    def no_duplicates(pairs: list[tuple[str, object]]) -> JSONObject:
+        result: JSONObject = {}
         for key, value in pairs:
             require(key not in result, f"Duplicate JSON field in {label}: {key}")
             result[key] = value
@@ -189,22 +237,20 @@ def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, b
     gh normalizes those server-generated objects (including duplicate keys);
     nonpaginated bodies retain their exact bytes and strict JSON validation.
     """
-
     def read_head(data: bytes) -> tuple[int, bytes]:
         separator = re.search(rb"\r?\n\r?\n", data)
         if separator is None:
             raise GitHubError("GitHub response headers are missing or truncated")
-        lines = data[: separator.start()].splitlines()
-        status = (
-            re.fullmatch(rb"HTTP/(?:1\.[01]|2(?:\.0)?) ([1-5]\d{2})(?: [^\r\n]*)?", lines[0])
-            if lines
-            else None
-        )
+        lines = data[:separator.start()].splitlines()
+        status = re.fullmatch(
+            rb"HTTP/(?:1\.[01]|2(?:\.0)?) ([1-5]\d{2})(?: [^\r\n]*)?", lines[0]
+        ) if lines else None
         if status is None or any(
-            not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+:[^\r\n]*", line) for line in lines[1:]
+            not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+:[^\r\n]*", line)
+            for line in lines[1:]
         ):
             raise GitHubError("GitHub response headers are invalid")
-        return int(status.group(1)), data[separator.end() :]
+        return int(status.group(1)), data[separator.end():]
 
     status, body = read_head(stdout)
     if not paginated:
@@ -232,7 +278,7 @@ def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, b
         separator = re.compile(r"\r?\n\r?\n").search(text, position)
         if separator is None:
             raise GitHubError("GitHub response headers are missing or truncated")
-        header = text[position : separator.end()].encode("utf-8", errors="surrogateescape")
+        header = text[position:separator.end()].encode("utf-8", errors="surrogateescape")
         status, _ = read_head(header)
         position = separator.end()
     # A failed page invalidates every preceding page from the same attempt.
@@ -280,9 +326,11 @@ class GitHub:
             check=False,
         )
         require(result.returncode == 0, "Publication token permission probe failed")
-        headers, separator, body = result.stdout.replace(b"\r\n", b"\n").partition(b"\n\n")
+        headers, separator, body = result.stdout.replace(b"\r\n", b"\n").partition(
+            b"\n\n"
+        )
         require(bool(separator), "Publication token permission headers are missing")
-        scopes = set()
+        scopes: set[str] = set()
         for line in headers.decode("utf-8", errors="replace").splitlines():
             key, colon, value = line.partition(":")
             if colon and key.lower() == "x-oauth-scopes":
@@ -297,17 +345,20 @@ class GitHub:
             and repository["permissions"].get("push") is True,
             "Publication token cannot write the expected repository",
         )
+        repository = cast(JSONObject, repository)
         require(
             "workflow" in scopes
-            and ("repo" in scopes or (repository["private"] is False and "public_repo" in scopes)),
+            and (
+                "repo" in scopes
+                or (repository["private"] is False and "public_repo" in scopes)
+            ),
             "Publication token requires verified workflow and repo/public_repo OAuth scopes",
         )
         self.workflow_scope_verified = True
 
     @staticmethod
     def response(
-        result: subprocess.CompletedProcess[bytes],
-        operation: str = "",
+        result: subprocess.CompletedProcess[bytes], operation: str = "",
         http: tuple[int, bytes] | None = None,
     ) -> bytes:
         """Translate a completed fixed-form command without retrying failed writes."""
@@ -321,7 +372,13 @@ class GitHub:
             raise GitHubError(context + message, status == 404)
         return body
 
-    def request(self, path: str, method="GET", body=None, mode="json") -> bytes:
+    def request(
+        self,
+        path: str,
+        method: str = "GET",
+        body: JSONObject | None = None,
+        mode: str = "json",
+    ) -> bytes:
         """Call only allowed REST routes with fixed flags and one positional endpoint."""
         require(method in API_PATHS, "Unsupported API method")
         require(
@@ -338,6 +395,7 @@ class GitHub:
             "API body does not match its method",
         )
         if method == "PUT":
+            body = cast(JSONObject, body)
             require(
                 body.get("branch") == "release-version-state"
                 and set(body) <= {"branch", "content", "message", "sha"},
@@ -345,10 +403,14 @@ class GitHub:
             )
         modes = {
             "json": [],
+            # Canonical JSON framing prevents a malformed page body from spoofing
+            # the next --include HTTP header when a later request fails.
             "pages": ["--paginate", "--jq", "tojson"],
             "asset": ["-H", "Accept: application/octet-stream"],
         }
-        require(mode in modes and (mode == "json" or method == "GET"), "Invalid API mode")
+        require(
+            mode in modes and (mode == "json" or method == "GET"), "Invalid API mode"
+        )
         endpoint = f"{self.base}/{path}".rstrip("/")
         if mode == "pages":
             endpoint += ("&" if "?" in endpoint else "?") + "per_page=100"
@@ -359,17 +421,15 @@ class GitHub:
             "PUT": ["--method", "PUT"],
         }[method]
         command = [
-            "gh",
-            "api",
-            "--hostname",
-            GITHUB_HOSTNAME,
-            "--include",
-            *method_args,
-            *modes[mode],
+            "gh", "api", "--hostname", GITHUB_HOSTNAME, "--include",
+            *method_args, *modes[mode],
             *(["--input", "-"] if body is not None else []),
-            "--",
-            endpoint,
+            "--", endpoint,
         ]
+        # Metadata is small and replayable. Binary transfers retain their own
+        # timeout/cleanup policy; publication writes must never be replayed.
+        if method == "GET" and mode != "asset" and not path.endswith("/zip"):
+            return self._metadata_read(command, endpoint, mode == "pages")
         # Developer/CI toolchain selected by the invoking operator via PATH.
         result = subprocess.run(  # nosec B603
             command,
@@ -377,18 +437,46 @@ class GitHub:
             capture_output=True,
             check=False,
         )
-        return self.response(
-            result,
-            f"{method} {endpoint}",
-            github_http_response(result.stdout, mode == "pages"),
-        )
+        return self.response(result, f"{method} {endpoint}", github_http_response(result.stdout))
 
-    def api(self, path: str, method: str = "GET", body: dict | None = None):
+    def _metadata_read(self, command: list[str], endpoint: str, paginated: bool = False) -> bytes:
+        """Retry transient GET failures for at most three 30-second attempts.
+
+        Jitter adds at most six seconds total. Authentication, authorization,
+        rate limits and missing resources keep their original fail-closed result.
+        A failed paginated response is discarded before replaying the whole read.
+        """
+        for attempt in range(API_READ_ATTEMPTS):
+            try:
+                result = subprocess.run(  # nosec B603
+                    command, input=None, capture_output=True, check=False,
+                    timeout=API_READ_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired as error:
+                if attempt == API_READ_ATTEMPTS - 1:
+                    raise GitHubError(
+                        f"GET {endpoint}: metadata read timed out after "
+                        f"{API_READ_ATTEMPTS} attempts"
+                    ) from error
+            else:
+                http = github_http_response(result.stdout, paginated)
+                transient = (
+                    result.returncode and http[0] in {500, 502, 503, 504}
+                )
+                if not result.returncode or not transient or attempt == API_READ_ATTEMPTS - 1:
+                    return self.response(result, f"GET {endpoint}", http)
+            # Scheduling jitter is not used for security decisions.
+            time.sleep(random.uniform(1, 2 ** (attempt + 1)))  # nosec B311
+        raise AssertionError("Metadata retry loop must return or raise")
+
+    def api(
+        self, path: str, method: str = "GET", body: JSONObject | None = None
+    ) -> object:
         """Read or mutate a permitted repository endpoint with optional JSON input."""
         raw = self.request(path, method, body)
         return parse_json(raw, path) if raw.strip() else None
 
-    def optional(self, path: str):
+    def optional(self, path: str) -> object:
         """Return None only when GitHub explicitly reports a missing resource."""
         try:
             return self.api(path)
@@ -397,16 +485,16 @@ class GitHub:
                 return None
             raise
 
-    def pages(self, path: str, field: str | None = None) -> list:
+    def pages(self, path: str, field: str | None = None) -> list[JSONObject]:
         """Fetch and flatten every page so later jobs or artifacts are not skipped."""
         raw = self.request(path, mode="pages")
         pages = parse_json(raw, path)
         require(isinstance(pages, list), f"Invalid pagination response: {path}")
-        records = []
-        for page in pages:
+        records: list[JSONObject] = []
+        for page in cast(list[object], pages):
             values = page.get(field) if field and isinstance(page, dict) else page
             require(isinstance(values, list), f"Invalid paginated records: {path}")
-            records.extend(values)
+            records.extend(cast(list[JSONObject], values))
         return records
 
     def binary(self, path: str) -> bytes:
@@ -420,7 +508,7 @@ class GitHub:
         )
         return self.request(path, mode="asset")
 
-    def download_asset(self, path: str, output) -> None:
+    def download_asset(self, path: str, output: BinaryIO) -> None:
         """Stream an allowlisted asset to disk without capturing installer bytes."""
         require(
             re.fullmatch(r"releases/assets/[1-9]\d*", path, re.ASCII),
@@ -456,8 +544,12 @@ class GitHub:
     def upload(self, tag: str, path: Path) -> None:
         """Upload a canonical tag's staged regular file, with no overwrite option."""
         require(TAG_RE.fullmatch(tag), "Unsupported release upload tag")
-        require(path.is_absolute() and NAME_RE.fullmatch(path.name), "Unsafe upload path")
-        require(path.is_file() and not path.is_symlink(), "Upload must be a regular file")
+        require(
+            path.is_absolute() and NAME_RE.fullmatch(path.name), "Unsafe upload path"
+        )
+        require(
+            path.is_file() and not path.is_symlink(), "Upload must be a regular file"
+        )
         parent = path.parent.resolve(strict=True)
         require(
             parent.parent == Path(tempfile.gettempdir()).resolve()
@@ -487,26 +579,54 @@ class GitHub:
         )
 
 
-def repository_info(gh: GitHub) -> dict:
+def repository_info(gh: GitHub) -> JSONObject:
     """Read the repository identity and authoritative default branch."""
-    info = gh.api("")
+    info = cast(JSONObject, gh.api(""))
     require(isinstance(info, dict), "Invalid repository response")
     require(
-        info.get("full_name", "").lower() == gh.repo.lower(),
+        cast(str, info.get("full_name", "")).lower() == gh.repo.lower(),
         "Repository identity mismatch",
     )
     require(bool(info.get("default_branch")), "Repository has no default branch")
     return info
 
 
+def require_fuzzing_policy(policy: JSONObject) -> None:
+    """Validate an adopted fuzz policy without importing it for legacy policies."""
+    if "fuzzing" not in policy:
+        return
+    if __package__:
+        from .release_fuzz import configuration
+    else:
+        from release_fuzz import configuration
+
+    try:
+        configuration(policy)
+    except ValueError as error:
+        raise ReleaseError(str(error)) from error
+
+
 def require_release_policy(policy: object, repo: str, qualified: bool) -> None:
     """Check policy identity, release mode, and required eligibility blockers."""
     require(isinstance(policy, dict), "Source release policy must be an object")
+    policy = cast(JSONObject, policy)
     require(
-        isinstance(policy.get("repository"), str) and policy["repository"].lower() == repo.lower(),
+        isinstance(policy.get("repository"), str)
+        and cast(str, policy["repository"]).lower() == repo.lower(),
         "Source policy repository mismatch",
     )
     require(policy.get("mode") == "release", "Source policy mode must be release")
+    require_fuzzing_policy(policy)
+    if "channel_validation_workflows" in policy:
+        if __package__:
+            from .release_validation import channel_workflows
+        else:
+            from release_validation import channel_workflows
+
+        try:
+            channel_workflows(policy)
+        except ValueError as error:
+            raise ReleaseError(str(error)) from error
     for field in ("release_blockers", "stable_blockers"):
         blockers = policy.get(field, [])
         require(
@@ -521,10 +641,102 @@ def require_release_policy(policy: object, repo: str, qualified: bool) -> None:
             )
 
 
-def source_policy_snapshot(gh: GitHub, sha: str) -> dict:
+def validation_profile(policy: JSONObject, channel: str) -> JSONObject | None:
+    """Keep legacy policies self-contained and require explicit new profiles."""
+    if "channel_validation_workflows" not in policy:
+        return None
+    if __package__:
+        from .release_validation import profile
+    else:
+        from release_validation import profile
+
+    try:
+        return profile(policy, channel)
+    except ValueError as error:
+        raise ReleaseError(str(error)) from error
+
+
+def validate_fuzz_manifest(manifest: JSONObject, policy: JSONObject) -> None:
+    """Bind the optional fuzz profile and RC receipt to the immutable inventory."""
+    if "fuzzing" not in policy:
+        return
+    if __package__:
+        from .release_fuzz import profile
+    else:
+        from release_fuzz import profile
+
+    require(
+        json_bytes(manifest.get("fuzzing_profile")) == json_bytes(profile(policy, cast(str, manifest["channel"]))),
+        "Manifest fuzzing profile differs from its source policy/channel",
+    )
+    if manifest["channel"] == "rc":
+        assets = {item["name"]: item for item in cast(list[JSONObject], manifest["assets"])}
+        receipt = assets.get("release-inputs-fuzz.json", {})
+        require(
+            "fuzz-report.json" in assets and bool(receipt)
+            and manifest.get("validation_receipts") == [{"name": "release-inputs-fuzz.json", "sha256": receipt.get("sha256")}],
+            "RC fuzz validation evidence is absent from the immutable asset inventory",
+        )
+
+
+def validate_validation_manifest(manifest: JSONObject) -> None:
+    """A candidate's profile must match the policy frozen at its source SHA."""
+    policy = cast(JSONObject, cast(JSONObject, manifest["source_policy"])["data"])
+    expected = validation_profile(policy, cast(str, manifest["channel"]))
+    require(
+        json_bytes(manifest.get("validation_profile")) == json_bytes(expected),
+        "Manifest validation profile differs from its source policy/channel",
+    )
+    validate_fuzz_manifest(manifest, policy)
+
+
+def require_current_fuzzing(gh: GitHub, candidate_policy: JSONObject, current_sha: str) -> None:
+    """An adopted project cannot qualify an older RC that predates fuzzing."""
+    current = cast(JSONObject, source_policy_snapshot(gh, current_sha)["data"])
+    if "fuzzing" in current:
+        if __package__:
+            from .release_fuzz import configuration
+        else:
+            from release_fuzz import configuration
+
+        require(configuration(candidate_policy) is not None,
+                "Current release policy requires fuzzing; create a new RC after adoption")
+
+
+def validate_validation_run(
+    gh: GitHub, run: JSONObject, policy: JSONObject, channel: str
+) -> None:
+    """Require the selected profile and CI gate in the exact run attempt."""
+    has_profile = validation_profile(policy, channel) is not None
+    if not has_profile and "fuzzing" not in policy:
+        return
+    if __package__:
+        from .release_validation import check_run_jobs
+    else:
+        from release_validation import check_run_jobs
+
+    jobs = gh.pages(
+        f"actions/runs/{positive(run.get('id'), 'run ID')}/attempts/{positive(run.get('run_attempt'), 'run attempt')}/jobs",
+        "jobs",
+    )
+    try:
+        if has_profile:
+            check_run_jobs(jobs, channel, cast(str, run["head_sha"]))
+        if "fuzzing" in policy:
+            if __package__:
+                from .release_fuzz import check_run_jobs as check_fuzz_jobs
+            else:
+                from release_fuzz import check_run_jobs as check_fuzz_jobs
+
+            check_fuzz_jobs(jobs, channel, cast(str, run["head_sha"]))
+    except ValueError as error:
+        raise ReleaseError(str(error)) from error
+
+
+def source_policy_snapshot(gh: GitHub, sha: str) -> JSONObject:
     """Bind eligibility to the policy at the exact candidate source commit."""
     require(SHA_RE.fullmatch(sha), "Invalid source policy commit SHA")
-    response = gh.api(f"contents/{POLICY}?ref={sha}")
+    response = cast(JSONObject, gh.api(f"contents/{POLICY}?ref={sha}"))
     require(
         isinstance(response, dict)
         and response.get("type") == "file"
@@ -538,7 +750,7 @@ def source_policy_snapshot(gh: GitHub, sha: str) -> dict:
         "Invalid or oversized source policy content",
     )
     try:
-        raw = base64.b64decode("".join(encoded.split()), validate=True)
+        raw = base64.b64decode("".join(cast(str, encoded).split()), validate=True)
     except ValueError as exc:
         raise ReleaseError("Invalid source policy base64 content") from exc
     require(
@@ -571,11 +783,12 @@ def validate_policy_snapshot(snapshot: object, repo: str) -> None:
         and snapshot.get("path") == POLICY,
         "Manifest requires a versioned source policy snapshot",
     )
+    snapshot = cast(JSONObject, snapshot)
     require(
         isinstance(snapshot.get("git_blob_sha"), str)
-        and SHA_RE.fullmatch(snapshot["git_blob_sha"])
+        and SHA_RE.fullmatch(cast(str, snapshot["git_blob_sha"]))
         and isinstance(snapshot.get("sha256"), str)
-        and re.fullmatch(SHA256_PATTERN, snapshot["sha256"]),
+        and re.fullmatch(SHA256_PATTERN, cast(str, snapshot["sha256"])),
         "Invalid source policy snapshot hashes",
     )
     require_release_policy(snapshot.get("data"), repo, qualified=True)
@@ -583,13 +796,15 @@ def validate_policy_snapshot(snapshot: object, repo: str) -> None:
 
 def check_ancestry(gh: GitHub, sha: str, default_branch: str) -> None:
     """Require the source commit to remain on the current default branch."""
-    comparison = gh.api(f"compare/{sha}...{quote(default_branch, safe='')}")
+    comparison = cast(
+        JSONObject, gh.api(f"compare/{sha}...{quote(default_branch, safe='')}")
+    )
     require(
         comparison.get("status") in ("ahead", "identical"),
         "Source commit is not an ancestor of the current default branch",
     )
     require(
-        comparison.get("merge_base_commit", {}).get("sha") == sha,
+        cast(JSONObject, comparison.get("merge_base_commit", {})).get("sha") == sha,
         "Source/default branch ancestry could not be verified",
     )
 
@@ -606,7 +821,7 @@ def checked_out_sha() -> str:
 
 def workflow_tree(gh: GitHub, sha: str) -> str:
     """Read the immutable workflow tree without a truncated recursive Git diff."""
-    entries = gh.api(f"contents/.github?ref={sha}")
+    entries = cast(list[JSONObject], gh.api(f"contents/.github?ref={sha}"))
     require(
         isinstance(entries, list)
         and len(entries) < 1000
@@ -624,10 +839,10 @@ def workflow_tree(gh: GitHub, sha: str) -> str:
         and matches[0].get("path") == ".github/workflows"
         and matches[0].get("type") == "dir"
         and isinstance(matches[0].get("sha"), str)
-        and SHA_RE.fullmatch(matches[0]["sha"]),
+        and SHA_RE.fullmatch(cast(str, matches[0]["sha"])),
         "Cannot verify a regular source .github/workflows directory",
     )
-    return matches[0]["sha"]
+    return cast(str, matches[0]["sha"])
 
 
 def check_workflow_publication(gh: GitHub, sha: str) -> None:
@@ -636,23 +851,25 @@ def check_workflow_publication(gh: GitHub, sha: str) -> None:
     GitHub cannot atomically bind this read-only preflight to release creation.
     A later default-branch change can still fail closed after partial writes.
     """
-    require(isinstance(sha, str) and SHA_RE.fullmatch(sha), "Invalid release source SHA")
+    require(
+        isinstance(sha, str) and SHA_RE.fullmatch(sha), "Invalid release source SHA"
+    )
     if getattr(gh, "workflow_scope_verified", False) is True:
         return
     info = repository_info(gh)
-    branch = info["default_branch"]
+    branch = cast(str, info["default_branch"])
     path = f"git/ref/heads/{quote(branch, safe='')}"
-    ref = gh.api(path)
+    ref = cast(JSONObject, gh.api(path))
     require(
         isinstance(ref, dict)
         and ref.get("ref") == f"refs/heads/{branch}"
         and isinstance(ref.get("object"), dict)
-        and ref["object"].get("type") == "commit"
-        and isinstance(ref["object"].get("sha"), str)
-        and SHA_RE.fullmatch(ref["object"]["sha"]),
+        and cast(JSONObject, ref["object"]).get("type") == "commit"
+        and isinstance(cast(JSONObject, ref["object"]).get("sha"), str)
+        and SHA_RE.fullmatch(cast(str, cast(JSONObject, ref["object"])["sha"])),
         "Cannot verify default HEAD before release publication",
     )
-    head = ref["object"]["sha"]
+    head = cast(str, cast(JSONObject, ref["object"])["sha"])
     if sha == head:
         return
     require(
@@ -661,14 +878,17 @@ def check_workflow_publication(gh: GitHub, sha: str) -> None:
         "create and accept a new candidate before publication",
     )
     require(
-        repository_info(gh)["default_branch"] == branch and gh.api(path) == ref,
+        repository_info(gh)["default_branch"] == branch
+        and cast(JSONObject, gh.api(path)) == ref,
         "Default branch changed during publication preflight; retry at current HEAD",
     )
 
 
 # Verify each independently supplied identity before recording supersession.
 # pylint: disable-next=too-many-locals
-def superseded_candidate(gh: GitHub, info: dict, run: dict, channel: str):
+def superseded_candidate(
+    gh: GitHub, info: JSONObject, run: JSONObject, channel: str
+) -> JSONObject | None:
     """Skip only automatic candidates with a proven newer default-branch run.
 
     This is not a publication claim about the successor: its checks may still
@@ -677,35 +897,39 @@ def superseded_candidate(gh: GitHub, info: dict, run: dict, channel: str):
     """
     if (run["event"], channel) not in {("push", "beta"), ("schedule", "nightly")}:
         return None
-    branch = info["default_branch"]
+    branch = cast(str, info["default_branch"])
     require(
         repository_info(gh)["default_branch"] == branch,
         "Default branch changed during this run; dispatch a fresh release",
     )
     path = f"git/ref/heads/{quote(branch, safe='')}"
-    ref = gh.api(path)
+    ref = cast(JSONObject, gh.api(path))
     require(
         isinstance(ref, dict)
         and ref.get("ref") == f"refs/heads/{branch}"
         and isinstance(ref.get("object"), dict)
-        and ref["object"].get("type") == "commit"
-        and isinstance(ref["object"].get("sha"), str)
-        and SHA_RE.fullmatch(ref["object"]["sha"]),
+        and cast(JSONObject, ref["object"]).get("type") == "commit"
+        and isinstance(cast(JSONObject, ref["object"]).get("sha"), str)
+        and SHA_RE.fullmatch(cast(str, cast(JSONObject, ref["object"])["sha"])),
         "Cannot verify current default branch for automatic publication",
     )
-    head = ref["object"]["sha"]
+    head = cast(str, cast(JSONObject, ref["object"])["sha"])
     if head == run["head_sha"]:
         return None
-    comparison = gh.api(f"compare/{run['head_sha']}...{head}")
+    comparison = cast(JSONObject, gh.api(f"compare/{run['head_sha']}...{head}"))
     require(
         isinstance(comparison, dict)
         and comparison.get("status") == "ahead"
-        and comparison.get("merge_base_commit", {}).get("sha") == run["head_sha"],
+        and cast(JSONObject, comparison.get("merge_base_commit", {})).get("sha")
+        == run["head_sha"],
         "Automatic release source is not a verified ancestor of current default HEAD",
     )
-    replacement = gh.api(
-        "actions/workflows/release-pipeline.yml/runs"
-        f"?branch={quote(branch, safe='')}&event=push&head_sha={head}&per_page=100"
+    replacement = cast(
+        JSONObject,
+        gh.api(
+            "actions/workflows/release-pipeline.yml/runs"
+            f"?branch={quote(branch, safe='')}&event=push&head_sha={head}&per_page=100"
+        ),
     )
     # A boolean is not an authoritative API count.
     # pylint: disable-next=unidiomatic-typecheck
@@ -714,11 +938,11 @@ def superseded_candidate(gh: GitHub, info: dict, run: dict, channel: str):
         and type(replacement.get("total_count")) is int
         and replacement["total_count"] == 1
         and isinstance(replacement.get("workflow_runs"), list)
-        and len(replacement["workflow_runs"]) == 1,
+        and len(cast(list[object], replacement["workflow_runs"])) == 1,
         "Default branch advanced without one proven replacement release run; "
         "inspect its release workflow and dispatch a fresh run at current HEAD",
     )
-    successor = replacement["workflow_runs"][0]
+    successor = cast(list[JSONObject], replacement["workflow_runs"])[0]
     require(isinstance(successor, dict), "Invalid replacement release run")
     validate_run_provenance(
         gh, successor, info, head, positive(successor.get("run_attempt"), "run attempt")
@@ -734,7 +958,7 @@ def superseded_candidate(gh: GitHub, info: dict, run: dict, channel: str):
         "Replacement must be a newer automatic run of the default-branch release workflow",
     )
     require(
-        gh.api(path) == ref,
+        cast(JSONObject, gh.api(path)) == ref,
         "Default branch changed while verifying replacement; retry at current HEAD",
     )
     return {
@@ -746,7 +970,9 @@ def superseded_candidate(gh: GitHub, info: dict, run: dict, channel: str):
     }
 
 
-def check_execution(gh: GitHub, run_id: int, channel: str, info: dict, run: dict) -> None:
+def check_execution(
+    gh: GitHub, run_id: int, channel: str, info: JSONObject, run: JSONObject
+) -> None:
     """Bind publication to the expected Actions repository, ref, run and event."""
     require(
         os.environ.get("GITHUB_ACTIONS") == "true",
@@ -786,27 +1012,40 @@ def check_execution(gh: GitHub, run_id: int, channel: str, info: dict, run: dict
     if event == "workflow_dispatch":
         event_file = os.environ.get("GITHUB_EVENT_PATH")
         require(bool(event_file), "Missing workflow dispatch event")
-        payload = parse_json(Path(event_file).read_bytes(), "workflow dispatch event")
+        payload = parse_json(
+            Path(cast(str, event_file)).read_bytes(), "workflow dispatch event"
+        )
         require(
-            isinstance(payload, dict) and payload.get("inputs", {}).get("channel") == channel,
+            isinstance(payload, dict)
+            and payload.get("inputs", {}).get("channel") == channel,
             f"Workflow dispatch input channel must be {channel}",
         )
 
 
-def validate_run_provenance(gh: GitHub, run: dict, info: dict, sha: str, attempt: int) -> None:
+def validate_run_provenance(
+    gh: GitHub, run: JSONObject, info: JSONObject, sha: str, attempt: int
+) -> None:
     """Check immutable run identity before considering its changing status."""
     require(
-        run.get("repository", {}).get("full_name", "").lower() == gh.repo.lower(),
+        cast(
+            str, cast(JSONObject, run.get("repository", {})).get("full_name", "")
+        ).lower()
+        == gh.repo.lower(),
         "Source run belongs to another repository",
     )
     require(
-        run.get("head_repository", {}).get("full_name", "").lower() == gh.repo.lower(),
+        cast(
+            str, cast(JSONObject, run.get("head_repository", {})).get("full_name", "")
+        ).lower()
+        == gh.repo.lower(),
         "Source run comes from another repository",
     )
-    require(run.get("head_sha") == sha and SHA_RE.fullmatch(sha), "Source run SHA mismatch")
+    require(
+        run.get("head_sha") == sha and SHA_RE.fullmatch(sha), "Source run SHA mismatch"
+    )
     require(run.get("path") == WORKFLOW, "Source run uses an unexpected workflow path")
     require(
-        run.get("head_branch") == info["default_branch"],
+        run.get("head_branch") == cast(str, info["default_branch"]),
         "Source run does not target the default branch",
     )
     require(
@@ -823,8 +1062,8 @@ def validate_run_provenance(gh: GitHub, run: dict, info: dict, sha: str, attempt
 # pylint: disable-next=too-many-arguments
 def validate_run(
     gh: GitHub,
-    run: dict,
-    info: dict,
+    run: JSONObject,
+    info: JSONObject,
     sha: str,
     attempt: int,
     completed: bool,
@@ -838,7 +1077,9 @@ def validate_run(
             "Source run has not completed successfully",
         )
     else:
-        require(run.get("status") == "in_progress", "Publication run is not in progress")
+        require(
+            run.get("status") == "in_progress", "Publication run is not in progress"
+        )
     if gate:
         jobs = gh.pages(
             f"actions/runs/{positive(run.get('id'), 'run ID')}/attempts/{attempt}/jobs",
@@ -860,11 +1101,11 @@ def wait_for_executing_run(
     gh: GitHub,
     run_id: int,
     channel: str,
-    info: dict,
+    info: JSONObject,
     sha: str,
     attempt: int,
     gate: bool = True,
-) -> dict:
+) -> JSONObject:
     """Wait at most 60 seconds for Actions' aggregate status to catch up.
 
     A running job may still be reported as queued or waiting after environment
@@ -873,12 +1114,14 @@ def wait_for_executing_run(
     """
     deadline = time.monotonic() + 60
     while True:
-        run = gh.api(f"actions/runs/{run_id}")
+        run = cast(JSONObject, gh.api(f"actions/runs/{run_id}"))
         require(run.get("id") == run_id, "Execution run identity mismatch")
         check_execution(gh, run_id, channel, info, run)
         validate_run_provenance(gh, run, info, sha, attempt)
         status = run.get("status")
-        require(run.get("conclusion") is None, "Publication run already has a conclusion")
+        require(
+            run.get("conclusion") is None, "Publication run already has a conclusion"
+        )
         if status == "in_progress":
             validate_run(gh, run, info, sha, attempt, completed=False, gate=gate)
             return run
@@ -895,13 +1138,13 @@ def wait_for_executing_run(
         time.sleep(min(2, remaining))
 
 
-def closed_push_cycle(gh: GitHub, base: str, kind: str) -> dict | None:
+def closed_push_cycle(gh: GitHub, base: str, kind: str) -> JSONObject | None:
     """Stop automatic betas for an occupied stable version before any build."""
     if kind != "push":
         return None
     tag = f"v{version(base)}"
     try:
-        ref = gh.api(f"git/ref/tags/{quote(tag, safe='')}")
+        ref = cast(JSONObject, gh.api(f"git/ref/tags/{quote(tag, safe='')}"))
     except GitHubError as error:
         if error.not_found:
             return None
@@ -910,9 +1153,11 @@ def closed_push_cycle(gh: GitHub, base: str, kind: str) -> dict | None:
         isinstance(ref, dict)
         and ref.get("ref") == f"refs/tags/{tag}"
         and isinstance(ref.get("object"), dict)
-        and ref["object"].get("type") in {"commit", "tag"}
-        and isinstance(ref["object"].get("sha"), str)
-        and re.fullmatch(r"[0-9a-f]{40}", ref["object"]["sha"]),
+        and cast(JSONObject, ref["object"]).get("type") in {"commit", "tag"}
+        and isinstance(cast(JSONObject, ref["object"]).get("sha"), str)
+        and re.fullmatch(
+            r"[0-9a-f]{40}", cast(str, cast(JSONObject, ref["object"])["sha"])
+        ),
         "Invalid stable tag response during automatic beta preparation",
     )
     return {
@@ -950,10 +1195,12 @@ def next_sequence(gh: GitHub, base_version: str, channel: str) -> int:
     require(channel in ("beta", "rc"), "Sequence only applies to beta and rc")
     prefix = f"v{version(base_version)}-{channel}."
     numbers = []
-    tags = [item.get("name", "") for item in gh.pages("tags")]
-    tags += [item.get("tag_name", "") for item in gh.pages("releases")]
+    tags = [cast(str, item.get("name", "")) for item in gh.pages("tags")]
+    tags += [cast(str, item.get("tag_name", "")) for item in gh.pages("releases")]
     for tag in tags:
-        if tag.startswith(prefix) and re.fullmatch(r"[1-9]\d*", tag[len(prefix) :], re.ASCII):
+        if tag.startswith(prefix) and re.fullmatch(
+            r"[1-9]\d*", tag[len(prefix) :], re.ASCII
+        ):
             numbers.append(int(tag[len(prefix) :]))
     return max(numbers, default=0) + 1
 
@@ -981,7 +1228,7 @@ def candidate_tag(
     )
 
 
-def reject_restricted_assets(names) -> None:
+def reject_restricted_assets(names: Iterable[str]) -> None:
     """Reject retired package types using the current repository's static policy."""
     for name in names:
         for restriction in ASSET_RESTRICTIONS:
@@ -989,7 +1236,7 @@ def reject_restricted_assets(names) -> None:
                 raise ReleaseError(f"{restriction['reason']}: {name}")
 
 
-def stage_assets(source: Path, destination: Path) -> list[dict]:
+def stage_assets(source: Path, destination: Path) -> list[JSONObject]:
     """Snapshot flat regular payload files and hash the private staged bytes."""
     require(
         source.is_dir() and not source.is_symlink(),
@@ -1005,7 +1252,8 @@ def stage_assets(source: Path, destination: Path) -> list[dict]:
             f"Assets must be flat regular files: {entry.name}",
         )
         require(
-            NAME_RE.fullmatch(entry.name) and entry.name.casefold() != MANIFEST.casefold(),
+            NAME_RE.fullmatch(entry.name)
+            and entry.name.casefold() != MANIFEST.casefold(),
             f"Unsafe or reserved asset name: {entry.name}",
         )
         require(
@@ -1026,7 +1274,7 @@ def stage_assets(source: Path, destination: Path) -> list[dict]:
     return assets
 
 
-def verify_uploaded_asset(gh: GitHub, item: dict, path: Path) -> None:
+def verify_uploaded_asset(gh: GitHub, item: JSONObject, path: Path) -> None:
     """Re-download every uploaded byte before making the draft public."""
     with path.open("rb") as source:
         local = stream_identity(source)
@@ -1035,7 +1283,9 @@ def verify_uploaded_asset(gh: GitHub, item: dict, path: Path) -> None:
         "Incomplete asset upload; draft left unpublished",
     )
     with tempfile.TemporaryFile() as downloaded:
-        gh.download_asset(f"releases/assets/{positive(item.get('id'), 'asset ID')}", downloaded)
+        gh.download_asset(
+            f"releases/assets/{positive(item.get('id'), 'asset ID')}", downloaded
+        )
         downloaded.seek(0)
         remote = stream_identity(downloaded)
     require(remote == local, "Uploaded bytes differ; draft left unpublished")
@@ -1056,8 +1306,8 @@ def _release_fence(line: str) -> tuple[str, int, str] | None:
 def _release_code_span_ends(line: str) -> dict[int, int]:
     """Find equal-length inline backtick pairs in one linear scan and reverse pass."""
     runs = [(match.start(), match.end()) for match in re.finditer(r"`+", line)]
-    following = {}
-    ends = {}
+    following: dict[int, int] = {}
+    ends: dict[int, int] = {}
     for start, end in reversed(runs):
         length = end - start
         if length in following:
@@ -1091,7 +1341,9 @@ def _release_comment_line(line: str, comment: bool) -> tuple[str, bool]:
     return "".join(visible), comment
 
 
-def _release_fence_closes(candidate, fence) -> bool:
+def _release_fence_closes(
+    candidate: tuple[str, int, str] | None, fence: tuple[str, int]
+) -> bool:
     return (
         candidate is not None
         and candidate[0] == fence[0]
@@ -1100,7 +1352,7 @@ def _release_fence_closes(candidate, fence) -> bool:
     )
 
 
-def _release_lines(text: str):
+def _release_lines(text: str) -> Iterator[tuple[str, bool, bool]]:
     """Yield offset-preserving text, heading eligibility and visible guidance."""
     fence = None
     comment = False
@@ -1154,7 +1406,7 @@ def _release_headings(text: str) -> list[tuple[int, str, int, int]]:
     return headings
 
 
-def _release_sections(text: str, level: int):
+def _release_sections(text: str, level: int) -> Iterator[tuple[str, str, str]]:
     """Keep original bodies plus comment-masked bodies for validation."""
     visible = "".join(line for line, _, _ in _release_lines(text))
     headings = [heading for heading in _release_headings(text) if heading[0] <= level]
@@ -1220,21 +1472,23 @@ def _release_has_setext_heading(text: str) -> bool:
                 return True
             paragraph = False
         else:
-            paragraph = bool(line.strip()) and not re.match(r" {0,3}#{1,6}(?:[ \t\r\n]|$)", line)
+            paragraph = bool(line.strip()) and not re.match(
+                r" {0,3}#{1,6}(?:[ \t\r\n]|$)", line
+            )
     return False
 
 
 # pylint: disable-next=too-many-arguments
 def release_notes(gh: GitHub, tag: str, sha: str, provenance: str) -> str:
     """Use reviewed notes at the package source commit, retaining build evidence."""
-    policy = source_policy_snapshot(gh, sha)["data"]
+    policy = cast(JSONObject, source_policy_snapshot(gh, sha)["data"])
     source = policy.get("release_notes")
     if source is None:
         return provenance
     require(source == "CHANGELOG.md", "Unsupported release notes source")
     require(TAG_RE.fullmatch(tag), "Invalid release notes tag")
-    base_version = VERSION_RE.match(tag[1:]).group(0)
-    response = gh.api(f"contents/CHANGELOG.md?ref={sha}")
+    base_version = cast(re.Match[str], VERSION_RE.match(tag[1:])).group(0)
+    response = cast(JSONObject, gh.api(f"contents/CHANGELOG.md?ref={sha}"))
     require(
         isinstance(response, dict)
         and response.get("type") == "file"
@@ -1248,7 +1502,7 @@ def release_notes(gh: GitHub, tag: str, sha: str, provenance: str) -> str:
         "Invalid or oversized release notes content",
     )
     try:
-        raw = base64.b64decode("".join(encoded.split()), validate=True)
+        raw = base64.b64decode("".join(cast(str, encoded).split()), validate=True)
         changelog = raw.decode("utf-8").replace("\r\n", "\n")
     except ValueError as exc:
         raise ReleaseError("Invalid release notes encoding") from exc
@@ -1268,7 +1522,10 @@ def release_notes(gh: GitHub, tag: str, sha: str, provenance: str) -> str:
             title,
         )
     ]
-    require(len(matches) == 1 and matches[0][0], "Release needs one nonempty changelog section")
+    require(
+        len(matches) == 1 and matches[0][0],
+        "Release needs one nonempty changelog section",
+    )
     notes, visible_notes = matches[0]
     require(
         not _release_has_setext_heading(notes),
@@ -1286,7 +1543,9 @@ def release_notes(gh: GitHub, tag: str, sha: str, provenance: str) -> str:
     return body
 
 
-def publish(gh: GitHub, tag: str, sha: str, directory: Path, prerelease: bool, body: str) -> dict:
+def publish(
+    gh: GitHub, tag: str, sha: str, directory: Path, prerelease: bool, body: str
+) -> JSONObject:
     """Keep draft creation, exact-byte upload checks and publication in one transaction."""
     reject_restricted_assets(path.name for path in directory.iterdir())
     body = release_notes(gh, tag, sha, body)
@@ -1295,28 +1554,34 @@ def publish(gh: GitHub, tag: str, sha: str, directory: Path, prerelease: bool, b
 
 def _publish_prepared(
     gh: GitHub, tag: str, sha: str, directory: Path, prerelease: bool, body: str
-) -> dict:
+) -> JSONObject:
     """Internal transaction after callers validate immutable source-bound notes.
 
     Callers that maintain publication state prepare notes before their first
     persistent write. Keep mutable tag/workflow authorization checks here too.
     """
+    verify_required_signatures(directory, gh.repo, sha)
     reject_restricted_assets(path.name for path in directory.iterdir())
     ensure_absent(gh, tag)
     check_workflow_publication(gh, sha)
-    gh.api("git/refs", "POST", {"ref": f"refs/tags/{tag}", "sha": sha})
-    release = gh.api(
-        "releases",
-        "POST",
-        {
-            "tag_name": tag,
-            "target_commitish": sha,
-            "name": tag,
-            "body": body,
-            "draft": True,
-            "prerelease": prerelease,
-            "make_latest": "false",
-        },
+    cast(
+        JSONObject, gh.api("git/refs", "POST", {"ref": f"refs/tags/{tag}", "sha": sha})
+    )
+    release = cast(
+        JSONObject,
+        gh.api(
+            "releases",
+            "POST",
+            {
+                "tag_name": tag,
+                "target_commitish": sha,
+                "name": tag,
+                "body": body,
+                "draft": True,
+                "prerelease": prerelease,
+                "make_latest": "false",
+            },
+        ),
     )
     require(
         release.get("draft") is True and release.get("tag_name") == tag,
@@ -1328,19 +1593,23 @@ def _publish_prepared(
     uploaded = gh.pages(f"releases/{release_id}/assets")
     expected = {path.name: path for path in directory.iterdir()}
     require(
-        len(uploaded) == len(expected) and {item.get("name") for item in uploaded} == set(expected),
+        len(uploaded) == len(expected)
+        and {item.get("name") for item in uploaded} == set(expected),
         "Uploaded asset inventory mismatch; draft left unpublished",
     )
     for item in uploaded:
-        verify_uploaded_asset(gh, item, expected[item["name"]])
-    result = gh.api(
-        f"releases/{release_id}",
-        "PATCH",
-        {
-            "draft": False,
-            "prerelease": prerelease,
-            "make_latest": "false" if prerelease else "true",
-        },
+        verify_uploaded_asset(gh, item, expected[cast(str, item["name"])])
+    result = cast(
+        JSONObject,
+        gh.api(
+            f"releases/{release_id}",
+            "PATCH",
+            {
+                "draft": False,
+                "prerelease": prerelease,
+                "make_latest": "false" if prerelease else "true",
+            },
+        ),
     )
     require(
         result.get("draft") is False
@@ -1351,7 +1620,7 @@ def _publish_prepared(
     return result
 
 
-def emit_result(result: dict) -> None:
+def emit_result(result: JSONObject) -> None:
     """Print the result and write validated single-line Actions outputs."""
     print(json.dumps(result, sort_keys=True))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -1387,7 +1656,7 @@ def emit_result(result: dict) -> None:
 
 # Keep validation, immutable staging and publication in one auditable sequence.
 # pylint: disable-next=too-many-locals
-def candidate(args) -> dict:
+def candidate(args: argparse.Namespace) -> JSONObject:
     """Validate the active run and source policy before publishing a prerelease."""
     gh = GitHub(args.repo)
     base_version = version(args.version)
@@ -1402,12 +1671,16 @@ def candidate(args) -> dict:
     info = repository_info(gh)
     run = wait_for_executing_run(gh, run_id, args.channel, info, args.sha, attempt)
     policy_snapshot = source_policy_snapshot(gh, args.sha)
-    require_release_policy(policy_snapshot["data"], gh.repo, qualified=args.channel == "rc")
+    require_release_policy(
+        cast(JSONObject, policy_snapshot["data"]),
+        gh.repo,
+        qualified=args.channel == "rc",
+    )
     require(
-        not policy_snapshot["data"].get("versioning"),
+        not cast(JSONObject, policy_snapshot["data"]).get("versioning"),
         "Versioned policies require the frozen-plan publisher, not post-build allocation",
     )
-    check_ancestry(gh, args.sha, info["default_branch"])
+    check_ancestry(gh, args.sha, cast(str, info["default_branch"]))
     superseded = superseded_candidate(gh, info, run, args.channel)
     if superseded:
         return superseded
@@ -1415,8 +1688,10 @@ def candidate(args) -> dict:
         # Once a base version is final, further candidates would mislabel new
         # code as an already released version. Nightlies retain run identities.
         ensure_absent(gh, f"v{base_version}")
-    now = datetime.now(UTC)
-    tag = candidate_tag(gh, args.channel, base_version, run_id, attempt, args.sequence, now)
+    now = datetime.now(timezone.utc)
+    tag = candidate_tag(
+        gh, args.channel, base_version, run_id, attempt, args.sequence, now
+    )
     with tempfile.TemporaryDirectory(prefix="release-candidate-") as temp:
         stage = Path(temp)
         assets = stage_assets(Path(args.assets), stage)
@@ -1465,11 +1740,11 @@ def candidate(args) -> dict:
     }
 
 
-def _validate_manifest_assets(manifest):
+def _validate_manifest_assets(manifest: JSONObject) -> None:
     assets = manifest.get("assets")
     require(isinstance(assets, list) and assets, "Manifest contains no assets")
     names = set()
-    for item in assets:
+    for item in cast(list[JSONObject], assets):
         require(isinstance(item, dict), "Invalid manifest asset")
         name = item.get("name")
         require(
@@ -1478,22 +1753,48 @@ def _validate_manifest_assets(manifest):
             and name.casefold() != MANIFEST.casefold(),
             "Unsafe manifest asset name",
         )
+        name = cast(str, name)
         require(name.casefold() not in names, "Duplicate manifest asset name")
         names.add(name.casefold())
         require(
             # Reject JSON booleans, which isinstance(value, int) would accept.
             type(item.get("size")) is int  # pylint: disable=unidiomatic-typecheck
-            and item["size"] >= 0,
+            and cast(int, item["size"]) >= 0,
             "Invalid manifest asset size",
         )
         require(
-            isinstance(item.get("sha256"), str) and re.fullmatch(SHA256_PATTERN, item["sha256"]),
+            isinstance(item.get("sha256"), str)
+            and re.fullmatch(SHA256_PATTERN, cast(str, item["sha256"])),
             "Invalid asset checksum",
         )
 
 
+def _validate_manifest_plan(manifest: JSONObject, base_version: str) -> None:
+    # Optional imports preserve the standalone legacy engine contract.
+    # pylint: disable-next=import-outside-toplevel
+    if __package__:
+        from .version_plan import plan_digest, validate_plan
+    else:
+        from version_plan import plan_digest, validate_plan
+
+    plan = validate_plan(
+        manifest.get("version_plan"),
+        cast(JSONObject, cast(JSONObject, manifest["source_policy"])["data"]),
+        cast(str, manifest["source_sha"]),
+    )
+    require(
+        plan["tag"] == manifest["tag"]
+        and plan["channel"] == manifest["channel"]
+        and plan["base_version"] == base_version
+        and manifest.get("plan_sha256") == plan_digest(plan),
+        "Manifest differs from the frozen version plan",
+    )
+
+
 # pylint: disable-next=too-many-locals
-def validate_manifest(raw: bytes, repo: str, rc_tag: str, allow_final: bool = False) -> dict:
+def validate_manifest(
+    raw: bytes, repo: str, rc_tag: str, allow_final: bool = False
+) -> JSONObject:
     """Reject malformed or ineligible RC manifests before trusting their assets."""
     require(len(raw) <= 2_000_000, "Manifest is unreasonably large")
     manifest = parse_json(raw, MANIFEST)
@@ -1504,13 +1805,15 @@ def validate_manifest(raw: bytes, repo: str, rc_tag: str, allow_final: bool = Fa
         and manifest["schema"] == 1,
         "Unsupported manifest schema",
     )
+    manifest = cast(JSONObject, manifest)
     require(
         isinstance(manifest.get("repository"), str)
-        and manifest["repository"].lower() == repo.lower(),
+        and cast(str, manifest["repository"]).lower() == repo.lower(),
         "Manifest repository mismatch",
     )
     base_version = manifest.get("version")
     require(isinstance(base_version, str), "Missing manifest version")
+    base_version = cast(str, base_version)
     version(base_version)
     final = allow_final and manifest.get("channel") == "stable"
     if final:
@@ -1519,39 +1822,35 @@ def validate_manifest(raw: bytes, repo: str, rc_tag: str, allow_final: bool = Fa
             "Final tag/version mismatch",
         )
     else:
-        require(manifest.get("channel") == "rc", "Only release candidates can be promoted")
+        require(
+            manifest.get("channel") == "rc", "Only release candidates can be promoted"
+        )
         require(
             manifest.get("tag") == rc_tag
-            and re.fullmatch(rf"v{re.escape(base_version)}-rc\.[1-9]\d*", rc_tag, re.ASCII),
+            and re.fullmatch(
+                rf"v{re.escape(base_version)}-rc\.[1-9]\d*", rc_tag, re.ASCII
+            ),
             "Manifest RC tag/version mismatch",
         )
     require(
-        isinstance(manifest.get("source_sha"), str) and SHA_RE.fullmatch(manifest["source_sha"]),
+        isinstance(manifest.get("source_sha"), str)
+        and SHA_RE.fullmatch(cast(str, manifest["source_sha"])),
         "Invalid manifest source SHA",
     )
-    require(manifest.get("workflow_path") == WORKFLOW, "Manifest workflow path mismatch")
+    require(
+        manifest.get("workflow_path") == WORKFLOW, "Manifest workflow path mismatch"
+    )
     positive(manifest.get("run_id"), "manifest run ID")
     positive(manifest.get("run_attempt"), "manifest run attempt")
     validate_policy_snapshot(manifest.get("source_policy"), repo)
-    versioning = manifest["source_policy"]["data"].get("versioning")
+    validate_validation_manifest(manifest)
+    versioning = cast(
+        JSONObject, cast(JSONObject, manifest["source_policy"])["data"]
+    ).get("versioning")
     if versioning:
-        # Optional imports preserve the standalone legacy engine contract.
-        # pylint: disable-next=import-outside-toplevel
-        from version_plan import plan_digest, validate_plan
-
-        plan = validate_plan(
-            manifest.get("version_plan"),
-            manifest["source_policy"]["data"],
-            manifest["source_sha"],
-        )
-        require(
-            plan["tag"] == manifest["tag"]
-            and plan["channel"] == manifest["channel"]
-            and plan["base_version"] == base_version
-            and manifest.get("plan_sha256") == plan_digest(plan),
-            "Manifest differs from the frozen version plan",
-        )
+        _validate_manifest_plan(manifest, base_version)
     if final:
+        versioning = cast(JSONObject, versioning)
         require(
             versioning and versioning.get("promotion") == "final-build",
             "Final package policy is missing",
@@ -1562,10 +1861,11 @@ def validate_manifest(raw: bytes, repo: str, rc_tag: str, allow_final: bool = Fa
             and set(parent) == {"tag", "manifest_sha256", "source_sha", "run_id"},
             "Final manifest needs accepted RC provenance",
         )
+        parent = cast(JSONObject, parent)
         require(
             isinstance(parent["tag"], str)
             and re.fullmatch(rf"v{re.escape(base_version)}-rc\.[1-9]\d*", parent["tag"])
-            and parent["source_sha"] == manifest["source_sha"]
+            and parent["source_sha"] == cast(str, manifest["source_sha"])
             and isinstance(parent["manifest_sha256"], str)
             and re.fullmatch(SHA256_PATTERN, parent["manifest_sha256"]),
             "Invalid final RC provenance",
@@ -1578,14 +1878,15 @@ def validate_manifest(raw: bytes, repo: str, rc_tag: str, allow_final: bool = Fa
     return manifest
 
 
-def release_snapshot(gh: GitHub, tag: str) -> tuple[dict, dict, list[dict]]:
+def release_snapshot(gh: GitHub, tag: str) -> ReleaseSnapshot:
     """Read a candidate tag, release metadata and its complete asset inventory."""
-    ref = gh.api(f"git/ref/tags/{quote(tag, safe='')}")
+    ref = cast(JSONObject, gh.api(f"git/ref/tags/{quote(tag, safe='')}"))
     require(
-        ref.get("ref") == f"refs/tags/{tag}" and ref.get("object", {}).get("type") == "commit",
+        ref.get("ref") == f"refs/tags/{tag}"
+        and cast(JSONObject, ref.get("object", {})).get("type") == "commit",
         "Candidate must have a lightweight commit tag",
     )
-    release = gh.api(f"releases/tags/{quote(tag, safe='')}")
+    release = cast(JSONObject, gh.api(f"releases/tags/{quote(tag, safe='')}"))
     require(
         release.get("tag_name") == tag
         and release.get("draft") is False
@@ -1603,13 +1904,13 @@ def release_snapshot(gh: GitHub, tag: str) -> tuple[dict, dict, list[dict]]:
         "Unsafe release asset name",
     )
     require(
-        len(names) == len({name.casefold() for name in names}),
+        len(names) == len({name.casefold() for name in cast(list[str], names)}),
         "Duplicate release assets",
     )
     return ref, release, assets
 
 
-def snapshot_identity(snapshot: tuple) -> bytes:
+def snapshot_identity(snapshot: ReleaseSnapshot) -> bytes:
     """Encode the immutable identity fields used to detect candidate changes."""
     ref, release, assets = snapshot
     return json_bytes(
@@ -1630,16 +1931,20 @@ def snapshot_identity(snapshot: tuple) -> bytes:
             # field, including unknown metadata, when checking for replacement.
             "assets": sorted(
                 (
-                    {key: value for key, value in asset.items() if key != "download_count"}
+                    {
+                        key: value
+                        for key, value in asset.items()
+                        if key != "download_count"
+                    }
                     for asset in assets
                 ),
-                key=lambda asset: asset["id"],
+                key=lambda asset: cast(int, cast(JSONObject, asset)["id"]),
             ),
         }
     )
 
 
-def verify_evidence(gh: GitHub, manifest: dict, raw: bytes) -> None:
+def verify_evidence(gh: GitHub, manifest: JSONObject, raw: bytes) -> None:
     """Match the manifest to the digest-verified immutable Actions evidence ZIP."""
     artifacts = gh.pages(f"actions/runs/{manifest['run_id']}/artifacts", "artifacts")
     matching = [
@@ -1653,11 +1958,15 @@ def verify_evidence(gh: GitHub, manifest: dict, raw: bytes) -> None:
     )
     artifact = matching[0]
     require(
-        artifact.get("workflow_run", {}).get("id") == manifest["run_id"]
-        and artifact.get("workflow_run", {}).get("head_sha") == manifest["source_sha"],
+        cast(JSONObject, artifact.get("workflow_run", {})).get("id")
+        == manifest["run_id"]
+        and cast(JSONObject, artifact.get("workflow_run", {})).get("head_sha")
+        == cast(str, manifest["source_sha"]),
         "Evidence artifact provenance mismatch",
     )
-    archive = gh.binary(f"actions/artifacts/{positive(artifact.get('id'), 'artifact ID')}/zip")
+    archive = gh.binary(
+        f"actions/artifacts/{positive(artifact.get('id'), 'artifact ID')}/zip"
+    )
     require(
         artifact.get("digest") == f"sha256:{digest(archive)}",
         "Evidence must have a matching immutable v4 artifact digest",
@@ -1683,18 +1992,23 @@ def verify_evidence(gh: GitHub, manifest: dict, raw: bytes) -> None:
 
 def require_reviewers(gh: GitHub) -> None:
     """Require the release environment to configure at least one reviewer."""
-    environment = gh.api("environments/release")
-    require(environment.get("name") == "release", "Protected release environment is missing")
+    environment = cast(JSONObject, gh.api("environments/release"))
+    require(
+        environment.get("name") == "release", "Protected release environment is missing"
+    )
     rules = environment.get("protection_rules", [])
     require(
-        any(rule.get("type") == "required_reviewers" and rule.get("reviewers") for rule in rules),
+        any(
+            rule.get("type") == "required_reviewers" and rule.get("reviewers")
+            for rule in cast(list[JSONObject], rules)
+        ),
         "The release environment must have required reviewers configured",
     )
 
 
 # Preserve the ordered security checks and staged bytes within one transaction.
 # pylint: disable-next=too-many-locals,too-many-statements
-def promote(args) -> dict:
+def promote(args: argparse.Namespace) -> JSONObject:
     """Verify an approved RC and publish the same bytes under a new stable tag."""
     gh = GitHub(args.repo)
     require(
@@ -1719,66 +2033,82 @@ def promote(args) -> dict:
     require_reviewers(gh)
     initial = release_snapshot(gh, args.rc)
     ref, candidate_release, release_assets = initial
-    manifest_assets = [asset for asset in release_assets if asset.get("name") == MANIFEST]
+    manifest_assets = [
+        asset for asset in release_assets if asset.get("name") == MANIFEST
+    ]
     require(len(manifest_assets) == 1, "Candidate manifest is missing")
     raw = gh.binary(
         f"releases/assets/{positive(manifest_assets[0].get('id'), 'manifest asset ID')}"
     )
     manifest = validate_manifest(raw, gh.repo, args.rc)
-    policy_snapshot = source_policy_snapshot(gh, manifest["source_sha"])
-    require_release_policy(policy_snapshot["data"], gh.repo, qualified=True)
+    policy_snapshot = source_policy_snapshot(gh, cast(str, manifest["source_sha"]))
+    require_release_policy(
+        cast(JSONObject, policy_snapshot["data"]), gh.repo, qualified=True
+    )
+    require_current_fuzzing(gh, cast(JSONObject, policy_snapshot["data"]), checked_out_sha())
     require(
-        policy_snapshot["data"].get("versioning", {}).get("promotion") != "final-build",
+        cast(
+            JSONObject, cast(JSONObject, policy_snapshot["data"]).get("versioning", {})
+        ).get("promotion")
+        != "final-build",
         "This RC requires a separately validated final build; byte promotion is disabled",
     )
     if manifest.get("version_plan"):
         # pylint: disable-next=import-outside-toplevel
-        from release_state import verify_promotion_order
+        if __package__:
+            from .release_state import verify_promotion_order
+        else:
+            from release_state import verify_promotion_order
 
-        verify_promotion_order(gh, manifest["version_plan"])
+        verify_promotion_order(gh, cast(JSONObject, manifest["version_plan"]))
     require(
         policy_snapshot == manifest["source_policy"],
         "Manifest policy snapshot differs from the policy at the candidate source commit",
     )
     require(
-        ref["object"].get("sha") == manifest["source_sha"],
+        cast(JSONObject, ref["object"]).get("sha") == cast(str, manifest["source_sha"]),
         "Candidate tag SHA differs from manifest",
     )
     require(
         manifest["run_id"] != current_id,
         "Candidate and promotion must use separate runs",
     )
-    source_run = gh.api(f"actions/runs/{manifest['run_id']}")
+    source_run = cast(JSONObject, gh.api(f"actions/runs/{manifest['run_id']}"))
+    validate_validation_run(gh, source_run, cast(JSONObject, policy_snapshot["data"]), "rc")
     require(source_run.get("id") == manifest["run_id"], "Source run identity mismatch")
     validate_run(
         gh,
         source_run,
         info,
-        manifest["source_sha"],
-        manifest["run_attempt"],
+        cast(str, manifest["source_sha"]),
+        cast(int, manifest["run_attempt"]),
         completed=True,
     )
     require(
         source_run.get("event") == "workflow_dispatch",
         "RC must originate from a manual workflow dispatch",
     )
-    check_ancestry(gh, manifest["source_sha"], info["default_branch"])
+    check_ancestry(
+        gh, cast(str, manifest["source_sha"]), cast(str, info["default_branch"])
+    )
     verify_evidence(gh, manifest, raw)
     tag = f"v{manifest['version']}"
     ensure_absent(gh, tag)
-    expected = {item["name"]: item for item in manifest["assets"]}
+    expected = {
+        item["name"]: item for item in cast(list[JSONObject], manifest["assets"])
+    }
     require(
         {item["name"] for item in release_assets} == set(expected) | {MANIFEST},
         "Candidate assets differ from manifest inventory",
     )
-    check_workflow_publication(gh, manifest["source_sha"])
+    check_workflow_publication(gh, cast(str, manifest["source_sha"]))
     with tempfile.TemporaryDirectory(prefix="release-promote-") as temp:
         stage = Path(temp)
         for asset in release_assets:
-            name = asset["name"]
+            name = cast(str, asset["name"])
             if name == MANIFEST:
                 (stage / name).write_bytes(raw)
-                identity = {"size": len(raw), "sha256": digest(raw)}
+                identity: AssetIdentity = {"size": len(raw), "sha256": digest(raw)}
             else:
                 identity = download_asset(gh, asset.get("id"), stage / name)
             require(
@@ -1792,25 +2122,28 @@ def promote(args) -> dict:
                     f"Candidate checksum mismatch: {name}",
                 )
         require(
-            snapshot_identity(release_snapshot(gh, args.rc)) == snapshot_identity(initial),
+            snapshot_identity(release_snapshot(gh, args.rc))
+            == snapshot_identity(initial),
             "Candidate changed during verification",
         )
+        verify_required_signatures(stage, gh.repo, cast(str, manifest["source_sha"]))
         # Recheck mutable authorization/provenance just before the first write.
-        latest_run = gh.api(f"actions/runs/{manifest['run_id']}")
+        latest_run = cast(JSONObject, gh.api(f"actions/runs/{manifest['run_id']}"))
+        validate_validation_run(gh, latest_run, cast(JSONObject, policy_snapshot["data"]), "rc")
         validate_run(
             gh,
             latest_run,
             info,
-            manifest["source_sha"],
-            manifest["run_attempt"],
+            cast(str, manifest["source_sha"]),
+            cast(int, manifest["run_attempt"]),
             completed=True,
         )
         require_reviewers(gh)
-        check_workflow_publication(gh, manifest["source_sha"])
+        check_workflow_publication(gh, cast(str, manifest["source_sha"]))
         body = release_notes(
             gh,
             tag,
-            manifest["source_sha"],
+            cast(str, manifest["source_sha"]),
             f"Promoted unchanged from [{args.rc}]({candidate_release['html_url']}).\n\n"
             f"Source: `{manifest['source_sha']}`\n\n"
             f"Validation: https://github.com/{gh.repo}/actions/runs/{manifest['run_id']}\n\n"
@@ -1818,15 +2151,23 @@ def promote(args) -> dict:
             f"Assets and `{MANIFEST}` are byte-for-byte copies of the verified release candidate.",
         )
         if manifest.get("version_plan"):
-            verify_promotion_order(gh, manifest["version_plan"])
+            verify_promotion_order(gh, cast(JSONObject, manifest["version_plan"]))
             # pylint: disable-next=import-outside-toplevel
-            from release_state import begin_publication
+            if __package__:
+                from .release_state import begin_publication
+            else:
+                from release_state import begin_publication
 
-            begin_publication(gh, manifest["version_plan"], current_id, promotion=True)
+            begin_publication(
+                gh,
+                cast(JSONObject, manifest["version_plan"]),
+                current_id,
+                promotion=True,
+            )
         release = _publish_prepared(
             gh,
             tag,
-            manifest["source_sha"],
+            cast(str, manifest["source_sha"]),
             stage,
             False,
             body,
@@ -1861,7 +2202,9 @@ def parser() -> argparse.ArgumentParser:
     sequence.add_argument("--repo", required=True)
     sequence.add_argument("--channel", choices=("beta", "rc"), required=True)
     sequence.add_argument("--version", required=True)
-    verify = commands.add_parser("verify-manifest", help="Validate a local RC manifest's structure")
+    verify = commands.add_parser(
+        "verify-manifest", help="Validate a local RC manifest's structure"
+    )
     verify.add_argument("--repo", required=True)
     verify.add_argument("--rc", required=True)
     verify.add_argument("--manifest", type=Path, required=True)
@@ -1877,7 +2220,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "promote":
             result = promote(args)
         elif args.command == "next":
-            result = {"sequence": next_sequence(GitHub(args.repo), args.version, args.channel)}
+            result = {
+                "sequence": next_sequence(GitHub(args.repo), args.version, args.channel)
+            }
         else:
             result = validate_manifest(args.manifest.read_bytes(), args.repo, args.rc)
         emit_result(result)
