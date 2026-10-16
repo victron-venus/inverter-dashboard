@@ -8,6 +8,8 @@ Dit project is bedoeld voor een Python-server, container of NAS. Er zijn ook een
 
 ![Architectuur met afzonderlijke paden voor browser, Python, native telemetrie, controller, Home Assistant en Web Push](docs/assets/architecture.svg)
 
+[Proces en resultaten](docs/process-and-results.md): kleurendiagrammen van de werkwijze en gebeurtenistijd, concrete correcties en grenzen van de validatie.
+
 ## Functies
 
 - Net en verbruik per fase, DC-/AC-zonne-energie, batterijapparaten, EV-laden, native verbruikers, waterniveau, pomp en klep. Ontbrekende meetwaarden blijven onderscheiden van gemeten nul.

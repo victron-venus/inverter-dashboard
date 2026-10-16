@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="642" viewBox="0 0 1280 642" role="img" aria-labelledby="title desc">
+  <title id="title">Synthetic event-time comparison: 75 minutes old, not just now</title>
+  <desc id="desc">Illustrative same-day and same-time-zone example, not a captured incident or benchmark. A source event at 11:00 arrives at 12:15, so it is 75 minutes old or one hour and fifteen minutes. Substituting the 12:15 receipt as occurrence gives zero and mislabels the event as just now. Unknown occurrence time stays unknown. The banner lifecycle is separate from push expiry.</desc>
+  <defs><style>text{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#172b4d}.title{font-size:34px;font-weight:750}.subtitle{font-size:18px}.label{font-size:23px;font-weight:700}.body{font-size:18px}.small{font-size:16px}.number{font-size:20px;font-weight:750}.big{font-size:34px;font-weight:750}.formula{font-size:25px;font-weight:650}.line{fill:none;stroke:#49617f;stroke-width:3;marker-end:url(#arrow)}</style><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#49617f"/></marker></defs>
+  <rect width="1280" height="642" rx="24" fill="#f5f8fc"/>
+  <rect x="40" y="30" width="375" height="34" rx="17" fill="#fff0dc"/>
+  <text x="56" y="53" class="small">SYNTHETIC EXAMPLE • NOT AN INCIDENT</text>
+  <text x="40" y="110" class="title">Show when the event happened</text>
+  <text x="40" y="146" class="subtitle">An old event received after reconnect must not become a new event.</text>
+  <path d="M 164 233 H 1118" class="line"/>
+  <circle cx="160" cy="233" r="11" fill="#e1f3ef" stroke="#359385" stroke-width="3"/>
+  <circle cx="1120" cy="233" r="11" fill="#e4edff" stroke="#5a83da" stroke-width="3"/>
+  <text x="91" y="203" class="big">11:00</text>
+  <text x="1045" y="203" class="big">12:15</text>
+  <text x="82" y="276" class="body">Source occurrence</text>
+  <text x="1033" y="276" class="body">Dashboard receipt</text>
+  <rect x="478" y="213" width="324" height="40" rx="20" fill="#eee6fb"/>
+  <text x="523" y="239" class="body">75 minutes have elapsed</text>
+  <rect x="40" y="318" width="586" height="206" rx="20" fill="#e1f3ef" stroke="#359385" stroke-width="2"/>
+  <text x="65" y="358" class="label">Use source occurrence time</text>
+  <text x="65" y="409" class="formula">12:15 − 11:00 = 75 minutes</text>
+  <text x="65" y="460" class="big">Age shown: 1 h 15 min</text>
+  <text x="65" y="499" class="small">The receipt does not reset the source timestamp.</text>
+  <rect x="654" y="318" width="586" height="206" rx="20" fill="#fff0dc" stroke="#c18b3e" stroke-width="2"/>
+  <text x="679" y="358" class="label">Do not substitute receipt time</text>
+  <text x="679" y="409" class="formula">12:15 − 12:15 = 0 minutes</text>
+  <text x="679" y="460" class="big">Misleading: “just now”</text>
+  <text x="679" y="499" class="small">Zero here measures receipt age, not event age.</text>
+  <text x="40" y="572" class="body">Same day and time zone in this example. Missing source time remains unknown.</text>
+  <text x="40" y="609" class="small">Banner eligibility and push expiry are separate: this 75-minute-old event is outside the 300-second push lifetime.</text>
+
+</svg>

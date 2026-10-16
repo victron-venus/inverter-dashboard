@@ -26,3 +26,5 @@ A zero is a measurement; unknown and stale are separate conditions. Warning ages
 The repository provides English, Russian, Ukrainian, German, French and Dutch READMEs. UI translation availability depends on the separately released and adopted Vue package. Consult the [repository language guide](https://github.com/victron-venus/inverter-dashboard/blob/main/docs/i18n.md) and its current `source-info.json` before claiming a language is installed.
 
 Detailed source-linked guides and editable SVG diagrams live in the [repository documentation](https://github.com/victron-venus/inverter-dashboard/tree/main/docs). Security reports follow the [private reporting policy](https://github.com/victron-venus/inverter-dashboard/blob/main/SECURITY.md).
+
+[Process and results](Process-and-results.md) explains the source-to-installation workflow, the MQTT CLI and Home dictionary corrections, and a synthetic event-time comparison. Each diagram distinguishes the intended process from evidence of completion.

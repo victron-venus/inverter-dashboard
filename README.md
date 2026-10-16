@@ -8,6 +8,8 @@ Use this repository for a Python service, container or NAS installation. [invert
 
 ![Architecture: browser connected to Python, with separate native telemetry, controller, Home Assistant and Web Push paths](docs/assets/architecture.svg)
 
+[Process and results](docs/process-and-results.md): colorful workflow and event-time diagrams, concrete corrections, and the limits of validation.
+
 ## What it shows and controls
 
 - Grid/consumption phases, DC and AC solar, battery devices, EV charging, native AC loads, water level and pump/valve state. Unavailable readings remain distinct from measured zero.
