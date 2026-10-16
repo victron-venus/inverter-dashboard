@@ -55,7 +55,7 @@ security changes. Test counts and coverage belong to their exact source and run;
 Python coverage does not establish frontend or whole-project 80% coverage.
 Passing tests do not establish electrical safety or absence of vulnerabilities.
 
-## Roadmap and limitations
+## Roadmap: October 2026–October 2027
 
 Priorities are complete maintained-source coverage accounting, retained browser
 and native-platform regression evidence, comprehensive input-boundary review,
@@ -68,3 +68,11 @@ There is currently no backup maintainer or one-week access recovery arrangement;
 [governance](../GOVERNANCE.md) records this explicitly. The
 [OpenSSF evidence index](openssf-evidence.md) points to the live self-assessment;
 its awarded level does not replace target-system acceptance.
+
+During this period, the project will not add unreviewed remote-control paths or
+claim new hardware compatibility without target-system acceptance. Upstream
+services and operating systems remain separate security responsibilities.
+
+The [README](../README.md) links the live OpenSSF badge. Update achievement
+links there within 48 hours of public recognition; the changelog records
+software changes rather than the badge level.
