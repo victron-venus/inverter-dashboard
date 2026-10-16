@@ -1,34 +1,37 @@
 {
   "schema": 1,
   "repository": "https://github.com/victron-venus/inverter-dashboard-vue",
-  "source_commit": "3d4a03fd3401334ac9e69f6d103caff41dc243ae",
-  "package_version": "2.2.7-beta.9",
-  "package_lock_sha256": "16824b47509405b6148109acd527cced19321058758633eec0a2d17901af5a8b",
-  "build_command": "Official GitHub Actions beta publication; extracted without rebuilding",
-  "release_tag": "v2.2.7-beta.9",
-  "release_run_id": 37497241690,
-  "release_receipt_sha256": "167faafc9d570fdb00944fbc30e9bfa32dcad8175c35019dcf403d22ae5c5ccc",
-  "archive_sha256": "7933cd9c1b7786a480cd3bea04e274883aea9a1372a6b58f6223d6bc2580c6eb",
+  "source_commit": "ff3865d373cc3819b83db0328d9855a2bdec9859",
+  "package_version": "2.2.8",
+  "package_lock_sha256": "86ef403641b7edd5a0a2ecee3366d367f6f182cdf618a4aedaf2c21ea141aff7",
+  "build_command": "Official GitHub Actions publication; imported without rebuilding",
+  "release_tag": "v2.2.8",
+  "origin_tag": "v2.2.8-rc.1",
+  "release_plan_sha256": "941c277a513922b503424b5faa7f86d7d56d34e3cd2e29055b5a2b8b1c692827",
+  "release_run_id": 38861405495,
+  "release_receipt_sha256": "54901adb3e9be61b67c5a0c5ead6115b4ac463eca5516b5dd4c14ba925aa747a",
+  "release_manifest_sha256": "0638827325079b8a13f3bb0ae051cfd91a45bafe6de828e153aba5467a56bb4c",
+  "archive_sha256": "2d413049f3b6536d24f95227662135fec44944d305d8841d9d47b04d892b0715",
   "files": [
     {
-      "path": "assets/IntervalEnergy-BWfcNZ3e.js",
-      "sha256": "2136cb59f42338d9876328d1cd76f0c41b96870c57b9c45e44bdd81fff7e675b",
-      "size": 10288
+      "path": "assets/IntervalEnergy-BqsvacbW.js",
+      "sha256": "f9fa25bf993f75d2eeb65afb62ca99528db3522043b03c0d9aa1e359eee16e5b",
+      "size": 10313
     },
     {
-      "path": "assets/IntervalEnergy-DZnd1PxA.css",
-      "sha256": "e7f34ba776c8465c821faeccfd40203716db53f77b6724a27b6b1a34d943e6e6",
+      "path": "assets/IntervalEnergy-C1d_McWq.css",
+      "sha256": "0ed7043ff5b5912c36a99328efe47e7634997469d2fd5d93b25d4b5b5dbe95f7",
       "size": 1049
     },
     {
-      "path": "assets/TariffEditor-BO5kDYMX.css",
-      "sha256": "da8d36a6d5f19db14033cc91657ff5edcd96c748c4383a6e2167d8cb641b456c",
-      "size": 122734
+      "path": "assets/TariffEditor-B7b79H83.css",
+      "sha256": "e52de57d2d3b2844d05095bcd5399785490a80173f237a4ac2fd30d96cd9c36d",
+      "size": 122887
     },
     {
-      "path": "assets/TariffEditor-DgsLO45r.js",
-      "sha256": "0834a0ffa32c0c20efccdfa1dab4146bcfc744d2e39bd6ce141f28aa9132b43d",
-      "size": 6622117
+      "path": "assets/TariffEditor-qYKGQAzo.js",
+      "sha256": "5c358d6bb387515b168bcbe2e69d127a773c6d4fc303ab1cdb1322ae7465cc14",
+      "size": 6663309
     },
     {
       "path": "assets/af-DK_CjRn6-CZxsvT2y.js",
@@ -101,9 +104,9 @@
       "size": 264335
     },
     {
-      "path": "assets/echarts-vendor-CqS4mbzr.js",
-      "sha256": "f65e648048610e3ee650c86c6c80eef1a58ae7e503a8f9fda128c5402169d2ef",
-      "size": 418208
+      "path": "assets/echarts-vendor-BzQzv9sW.js",
+      "sha256": "eb571f1d24d13cc634b3879c3a479421278163a0a89fb54c9eff4ad97e9c7821",
+      "size": 418096
     },
     {
       "path": "assets/el-monoton-D3aKqTz2-CuqNQIvE.js",
@@ -206,14 +209,14 @@
       "size": 2434
     },
     {
-      "path": "assets/index-CLZmPnWK.css",
-      "sha256": "5df759f5ba5c95a6a05aeec4bd4e4909aac3eb6bab74012853b2e0c4a20684a5",
-      "size": 35406
+      "path": "assets/index-BtsBC84H.css",
+      "sha256": "39ab95629706660e22c15fe841612e224f7efcd72a39d0797e1c6a91576f81f7",
+      "size": 35448
     },
     {
-      "path": "assets/index-CP8KcguC.js",
-      "sha256": "29001cecbac9525010b31efde5ccc6156f11ae1fc6a675dd247a82b702a9c0dd",
-      "size": 215253
+      "path": "assets/index-DBa-UE6g.js",
+      "sha256": "acfef86357d505d7b9b85d187bffe20f3419b3bc1adb8242454882ee97a4f50c",
+      "size": 216420
     },
     {
       "path": "assets/is-BT8UVRze-DWEBuJpb.js",
@@ -436,18 +439,18 @@
       "size": 1276
     },
     {
-      "path": "assets/zrender-vendor-C0VjOGMM.js",
-      "sha256": "bc5b4ba9030fcc7aa915da7cce288b3c052d0eba91be54b2710bceb8bd33dc3e",
-      "size": 178417
+      "path": "assets/zrender-vendor-BR930KqQ.js",
+      "sha256": "1639e2857329bc277dae383a101a61c36e7aef93851b5bd97a0d5944ccb403c5",
+      "size": 178312
     },
     {
       "path": "build-info.json",
-      "sha256": "11b7443c9dbc7e6d111fb23631b3bb624d2a22753dd10f004aac43f39d3afb3b",
-      "size": 13121
+      "sha256": "ea04195bc15d902a9db41c4bf0555ee0852cb5337c855a023c0fb0ebf2b2ceb9",
+      "size": 13114
     },
     {
       "path": "index.html",
-      "sha256": "8d6846da4e8238c6771eb55c611c1efbbd83c4c0b7a5eb5e89379f0e55edfb91",
+      "sha256": "703238ca9340a809f3b0b9c7831e03eb1b3f9c8d758f85bf365e15cad709166d",
       "size": 1065
     },
     {

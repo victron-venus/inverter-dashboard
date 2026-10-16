@@ -6,6 +6,19 @@ permissions:
   contents: read
 
 jobs:
+  browser-compatibility:
+    name: Embedded frontend browser acceptance
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@5b72b09e8a6bf17b482124891f17fd9662182bf6
+    permissions:
+      contents: read
+    with:
+      node-version: '22'
+      run-node-ci: false
+      browser-matrix-file: .github/browser-compatibility.json
+      browser-release-channel: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.channel || '' }}
+      browser-test-command: node scripts/browser-acceptance.cjs
+      browser-prepare-command: node --check scripts/browser-acceptance.cjs
+      browser-extended: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.channel == '' || github.event.inputs.channel == 'rc')) }}
   tls-macos-intel:
     name: Native TLS (macOS Intel)
     runs-on: macos-15-intel
@@ -51,6 +64,8 @@ jobs:
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Verify published frontend import contracts
+        run: python3 -m unittest discover -s scripts -p 'test_*vue*.py'
       - name: Run locked local validation
         run: bash scripts/ci.sh
       - name: Upload coverage
