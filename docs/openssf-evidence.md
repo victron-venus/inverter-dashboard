@@ -1,6 +1,6 @@
 # OpenSSF Best Practices evidence: inverter-dashboard
 
-This index supports review against the [OpenSSF Passing criteria](https://www.bestpractices.dev/en/criteria/0). It is not an awarded badge, a security guarantee or a completed self-attestation. Initial source inventory: `ed5617f0806b9cd6182ddfc60ef35f2e51e7aace`. Re-check the final merged commit and its CI before submitting an assessment.
+This index supports review against the [OpenSSF Passing criteria](https://www.bestpractices.dev/en/criteria/0). The live assessment is authoritative for the awarded level; repository documentation is not a security guarantee. Review the exact merged revision and its CI before updating answers. [Architecture, security assumptions and roadmap](project-assurance.md), [governance](../GOVERNANCE.md) and [community conduct](../CODE_OF_CONDUCT.md) record the current project practices and remaining limitations.
 
 ## Project and contribution process
 
