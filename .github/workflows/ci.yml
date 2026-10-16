@@ -8,7 +8,7 @@ permissions:
 jobs:
   browser-compatibility:
     name: Embedded frontend browser acceptance
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@eb1ec3a1b978923955c77b478c9a2530846d6bae
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@5b72b09e8a6bf17b482124891f17fd9662182bf6
     permissions:
       contents: read
     with:
