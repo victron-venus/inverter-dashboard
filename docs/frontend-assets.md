@@ -5,6 +5,10 @@ The Python package serves the reviewed Vue SPA committed under
 released bundle locally. Its exact source and published version are recorded in
 `static/source-info.json`; that file is the authoritative current identity.
 
+The backend accepts the flat `static/` layout and the legacy `static/dist/` layout, mounting Vite assets at `/assets` and a compatibility `/static` route. Notification worker/manifest/icon use explicit root routes with no-cache headers and root worker scope. Configuration and private state must never be copied into either static tree.
+
+## Official adoption
+
 Use `python3 scripts/import_vue_release.py v2.2.8-rc.1`, replacing the example
 with an explicit published tag. The command resolves that tag through GitHub,
 downloads only the SPA archive and its two release metadata files, and checks the
@@ -31,3 +35,7 @@ receipt and manifest hashes, archive hash, and hashes/sizes
 of every copied output file. The package and browser checks verify this inventory.
 The importer validates published bytes and provenance; it does not replace the
 release's own acceptance checks.
+
+A local frontend build is useful for development but is not an official release artifact. Backend source, Vue source, Vue release and backend release have separate identities. Localization changes follow this same adoption path; translated repository documentation alone does not install new UI catalogs.
+
+Browser checks need the approved release, expected route/origin and fresh observed UI. A previously registered worker or an old tab does not prove which new build is being served.

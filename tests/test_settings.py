@@ -42,8 +42,15 @@ class TestSettingsStore:
         with pytest.raises(ValueError, match="must be int"):
             settings_store.save_settings({"mqtt_port": "1883"})
 
-    def test_apply_connection_overrides(self):
+    def test_apply_connection_overrides(self, monkeypatch):
         from inverter_dashboard import config as cfgmod
+        from inverter_dashboard import ha_client
+
+        monkeypatch.setattr(cfgmod, "MQTT_HOST", "initial.example.com")
+        monkeypatch.setattr(cfgmod, "MQTT_PORT", 1883)
+        monkeypatch.setattr(ha_client, "_url", "")
+        monkeypatch.setattr(ha_client, "_token", "")
+        monkeypatch.setattr(ha_client, "_configured", False)
 
         settings_store.save_settings(
             {"mqtt_host": "broker.local", "mqtt_port": 8883, "ha_url": "http://ha:8123"}

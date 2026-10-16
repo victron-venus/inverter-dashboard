@@ -963,7 +963,11 @@ async def lifespan(_app: FastAPI):
     global _push_service, _push_observer
     # Startup
     ha_client.load_config()
-    settings_store.apply_connection_overrides()  # file wins over env; CLI applied later wins over file
+    settings_store.apply_connection_overrides()
+    # Uvicorn enters lifespan after main has parsed CLI flags. Apply those
+    # explicit choices last, including an empty host that selects IGW-only.
+    for name, value in getattr(_app.state, "mqtt_cli_overrides", {}).items():
+        setattr(config, name, value)
     websocket_handler.set_ui_settings(settings_store.load_settings())
     ha_task = version_task = None
     try:
@@ -1284,12 +1288,14 @@ def main():
     parser.add_argument("--ssl-key", help="SSL key file")
     args = parser.parse_args()
 
-    # Update config: settings-file overrides already applied via lifespan;
-    # explicit CLI flags win over both.
+    # Preserve explicit choices until lifespan has loaded persisted settings.
+    app.state.mqtt_cli_overrides = {}
     if args.mqtt_host is not None:
         config.MQTT_HOST = args.mqtt_host
+        app.state.mqtt_cli_overrides["MQTT_HOST"] = args.mqtt_host
     if args.mqtt_port is not None:
         config.MQTT_PORT = args.mqtt_port
+        app.state.mqtt_cli_overrides["MQTT_PORT"] = args.mqtt_port
 
     proto = "https" if args.ssl_cert else "http"
     if not DASHBOARD_SECRET:
