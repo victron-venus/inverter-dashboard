@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from import_vue_release import ASSETS, LAYOUTS, REPOSITORY, import_release
+from version_plan import plan_digest
 
 SOURCE = "a" * 40
 TAG = "v2.2.8-rc.1"
@@ -26,10 +27,31 @@ class ImportTests(unittest.TestCase):
         self.base = Path(self.temp.name)
         self.artifacts = self.base / "artifacts"
         self.artifacts.mkdir()
+        self.candidate()
+
+    def candidate(self, channel="rc", promotion="promote-bytes", package_version=None):
+        sequence = None if channel == "stable" else 1
+        version = "2.2.8" if channel == "stable" else f"2.2.8-{channel}.1"
+        if package_version is None:
+            package_version = (
+                "2.2.8" if channel == "rc" and promotion == "promote-bytes" else version
+            )
+        plan = {
+            "schema_version": 1,
+            "base_version": "2.2.8",
+            "version": version,
+            "channel": channel,
+            "sequence": sequence,
+            "tag": "v" + version,
+            "source_sha": SOURCE,
+            "policy_sha256": "d" * 64,
+            "promotion": promotion,
+            "build_number": 123,
+        }
         data = b"<html>Published fixture</html>"
         build = {
             "package": "inverter-dashboard-vue",
-            "version": TAG[1:],
+            "version": package_version,
             "files": [{"path": "index.html", "sha256": hashlib.sha256(data).hexdigest()}],
         }
         with tarfile.open(self.artifacts / ASSETS[0], "w:gz") as tar:
@@ -42,15 +64,20 @@ class ImportTests(unittest.TestCase):
                 tar.addfile(item, io.BytesIO(value))
         receipt = {
             "source_sha": SOURCE,
+            "plan_sha256": plan_digest(plan),
             "artifacts": [self.asset(ASSETS[0])],
             "files": [{"path": "package-lock.json", "after_sha256": "b" * 64}],
         }
         (self.artifacts / ASSETS[1]).write_text(json.dumps(receipt))
         self.manifest = {
             "repository": REPOSITORY,
-            "tag": TAG,
+            "tag": plan["tag"],
+            "version": plan["base_version"],
+            "channel": channel,
             "source_sha": SOURCE,
             "run_id": 123,
+            "version_plan": plan,
+            "plan_sha256": plan_digest(plan),
             "assets": [self.asset(name) for name in ASSETS[:2]],
         }
         self.write_manifest()
@@ -63,7 +90,7 @@ class ImportTests(unittest.TestCase):
         (self.artifacts / ASSETS[2]).write_text(json.dumps(self.manifest))
 
     def repository(self, kind):
-        root = self.base / kind
+        root = self.base / (kind + str(len(list(self.base.glob(kind + "*")))))
         root.mkdir()
         distribution, metadata = LAYOUTS[kind]
         destination = root / distribution
@@ -110,6 +137,53 @@ class ImportTests(unittest.TestCase):
                 self.assertEqual(result["release_receipt_sha256"], self.asset(ASSETS[1])["sha256"])
                 self.assertFalse(list(destination.parent.glob(".frontend-import-*")))
 
+    def test_supported_package_projections_and_stable_byte_promotion(self):
+        for channel, promotion, requested, expected in [
+            ("rc", "promote-bytes", TAG, "2.2.8"),
+            ("rc", "promote-bytes", "v2.2.8", "2.2.8"),
+            ("rc", "final-build", TAG, "2.2.8-rc.1"),
+            ("beta", "promote-bytes", "v2.2.8-beta.1", "2.2.8-beta.1"),
+            ("stable", "final-build", "v2.2.8", "2.2.8"),
+        ]:
+            with self.subTest(channel=channel, promotion=promotion, tag=requested):
+                self.candidate(channel, promotion)
+                root, _, _ = self.repository("go")
+                result = import_release(root, self.artifacts, requested, SOURCE)
+                self.assertEqual(result["package_version"], expected)
+                self.assertEqual(result["release_tag"], requested)
+                self.assertEqual(result["origin_tag"], self.manifest["tag"])
+
+    def test_wrong_package_projection_and_unqualified_promotions_are_rejected(self):
+        for channel, promotion, version, requested in [
+            ("rc", "promote-bytes", "2.2.8-rc.1", TAG),
+            ("beta", "promote-bytes", "2.2.8", "v2.2.8-beta.1"),
+            ("beta", "promote-bytes", "2.2.8-beta.1", "v2.2.8"),
+            ("rc", "final-build", "2.2.8-rc.1", "v2.2.8"),
+        ]:
+            with self.subTest(channel=channel, promotion=promotion, version=version):
+                self.candidate(channel, promotion, version)
+                root, destination, _ = self.repository("go")
+                with self.assertRaises(ValueError):
+                    import_release(root, self.artifacts, requested, SOURCE)
+                self.assertEqual((destination / "old.js").read_text(), "old tracked bytes")
+
+    def test_version_plan_and_receipt_digest_must_match(self):
+        for field in ["source_sha", "channel", "tag", "version", "plan_sha256", "receipt_plan"]:
+            with self.subTest(field=field):
+                self.candidate()
+                if field == "receipt_plan":
+                    receipt = json.loads((self.artifacts / ASSETS[1]).read_text())
+                    receipt["plan_sha256"] = "0" * 64
+                    (self.artifacts / ASSETS[1]).write_text(json.dumps(receipt))
+                    self.manifest["assets"][1] = self.asset(ASSETS[1])
+                else:
+                    self.manifest[field] = "mismatch"
+                self.write_manifest()
+                root, destination, _ = self.repository("go")
+                with self.assertRaises(ValueError):
+                    import_release(root, self.artifacts, TAG, SOURCE)
+                self.assertEqual((destination / "old.js").read_text(), "old tracked bytes")
+
     def test_bad_published_digest_preserves_old_tree(self):
         root, destination, metadata = self.repository("go")
         self.manifest["assets"][0]["sha256"] = "0" * 64
@@ -124,7 +198,9 @@ class ImportTests(unittest.TestCase):
         for tag, sha in [("v2.2.8-rc.2", SOURCE), (TAG, "c" * 40)]:
             with (
                 self.subTest(tag=tag, source=sha),
-                self.assertRaisesRegex(ValueError, "selected repository/tag/source"),
+                self.assertRaisesRegex(
+                    ValueError, "selected repository/tag/source|source SHA mismatch"
+                ),
             ):
                 import_release(root, self.artifacts, tag, sha)
             self.assertEqual((destination / "old.js").read_text(), "old tracked bytes")

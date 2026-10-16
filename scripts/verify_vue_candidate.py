@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 
 MAX_ARCHIVE_BYTES = 200 * 1024 * 1024
 MAX_UNPACKED_BYTES = 1024 * 1024 * 1024
+BUILD_INFO = "build-info.json"
 
 
 def member_path(name):
@@ -19,6 +20,64 @@ def member_path(name):
     if any(part.endswith((".", " ")) for part in path.parts):
         raise ValueError("Nonportable archive path")
     return path.as_posix()
+
+
+def archive_files(bundle):
+    members = bundle.getmembers()
+    if (
+        not members
+        or len(members) > 10_000
+        or sum(item.size for item in members) > MAX_UNPACKED_BYTES
+    ):
+        raise ValueError("Candidate has an invalid unpacked size")
+    files, seen = {}, set()
+    for item in members:
+        name = member_path(item.name)
+        if not (item.isfile() or item.isdir()):
+            raise ValueError("Candidate contains a link or special file")
+        if name == "." and item.isdir():
+            continue
+        if name.casefold() in seen:
+            raise ValueError("Candidate contains duplicate paths")
+        seen.add(name.casefold())
+        if item.isfile():
+            files[name] = item
+    return files
+
+
+def verify_inventory(bundle, files):
+    if "index.html" not in files or BUILD_INFO not in files:
+        raise ValueError("Candidate is not a complete packaged SPA")
+    if files[BUILD_INFO].size > 2_000_000:
+        raise ValueError("Candidate metadata exceeds size limits")
+    metadata = json.load(bundle.extractfile(files[BUILD_INFO]))
+    if metadata.get("package") != "inverter-dashboard-vue" or not re.fullmatch(
+        r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", metadata.get("version", "")
+    ):
+        raise ValueError("Candidate package identity is invalid")
+    inventory = metadata.get("files", [])
+    hashes = {member_path(item["path"]): item["sha256"] for item in inventory}
+    if len(hashes) != len(inventory) or set(hashes) != set(files) - {BUILD_INFO}:
+        raise ValueError("Candidate file inventory differs from metadata")
+    for name, expected in hashes.items():
+        actual = hashlib.sha256(bundle.extractfile(files[name]).read()).hexdigest()
+        if actual != expected:
+            raise ValueError("Candidate file hash differs from metadata")
+    return metadata, hashes
+
+
+def write_payload(bundle, files, destination):
+    destination.mkdir(parents=True)
+    try:
+        # Never extract archive ownership, permissions, symlinks or hard links.
+        for name, item in files.items():
+            output = destination.joinpath(*PurePosixPath(name).parts)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with bundle.extractfile(item) as source, output.open("xb") as target:
+                shutil.copyfileobj(source, target)
+    except BaseException:
+        shutil.rmtree(destination)
+        raise
 
 
 def prepare(artifacts, destination, diagnostics, source_sha):
@@ -47,53 +106,9 @@ def prepare(artifacts, destination, diagnostics, source_sha):
         raise ValueError("Candidate archive differs from its build receipt")
 
     with tarfile.open(archive, "r:gz") as bundle:
-        members = bundle.getmembers()
-        if (
-            not members
-            or len(members) > 10_000
-            or sum(item.size for item in members) > MAX_UNPACKED_BYTES
-        ):
-            raise ValueError("Candidate has an invalid unpacked size")
-        files, seen = {}, set()
-        for item in members:
-            name = member_path(item.name)
-            if not (item.isfile() or item.isdir()):
-                raise ValueError("Candidate contains a link or special file")
-            if name == "." and item.isdir():
-                continue
-            if name.casefold() in seen:
-                raise ValueError("Candidate contains duplicate paths")
-            seen.add(name.casefold())
-            if item.isfile():
-                files[name] = item
-        if "index.html" not in files or "build-info.json" not in files:
-            raise ValueError("Candidate is not a complete packaged SPA")
-        if files["build-info.json"].size > 2_000_000:
-            raise ValueError("Candidate metadata exceeds size limits")
-        metadata = json.load(bundle.extractfile(files["build-info.json"]))
-        if metadata.get("package") != "inverter-dashboard-vue" or not re.fullmatch(
-            r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", metadata.get("version", "")
-        ):
-            raise ValueError("Candidate package identity is invalid")
-        inventory = metadata.get("files", [])
-        hashes = {member_path(item["path"]): item["sha256"] for item in inventory}
-        if len(hashes) != len(inventory) or set(hashes) != set(files) - {"build-info.json"}:
-            raise ValueError("Candidate file inventory differs from metadata")
-        for name, expected in hashes.items():
-            actual = hashlib.sha256(bundle.extractfile(files[name]).read()).hexdigest()
-            if actual != expected:
-                raise ValueError("Candidate file hash differs from metadata")
-        destination.mkdir(parents=True)
-        try:
-            # Never extract archive ownership, permissions, symlinks or hard links.
-            for name, item in files.items():
-                output = destination.joinpath(*PurePosixPath(name).parts)
-                output.parent.mkdir(parents=True, exist_ok=True)
-                with bundle.extractfile(item) as source, output.open("xb") as target:
-                    shutil.copyfileobj(source, target)
-        except BaseException:
-            shutil.rmtree(destination)
-            raise
+        files = archive_files(bundle)
+        metadata, hashes = verify_inventory(bundle, files)
+        write_payload(bundle, files, destination)
     identity = {
         "archive": archive.name,
         "sha256": digest,
