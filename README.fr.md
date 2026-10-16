@@ -8,6 +8,8 @@ Ce dépôt convient à un serveur Python, un conteneur ou un NAS. Il existe auss
 
 ![Architecture séparant navigateur, Python, télémétrie native, contrôleur, Home Assistant et Web Push](docs/assets/architecture.svg)
 
+[Processus et résultats](docs/process-and-results.md) : schémas en couleur du déroulement et de l’heure des événements, corrections concrètes et limites de validation.
+
 ## Fonctionnalités
 
 - Réseau et consommation par phase, solaire DC/AC, batteries, recharge de véhicule, charges natives, niveau d'eau, pompe et vanne. Une mesure absente reste distincte d'un zéro mesuré.
