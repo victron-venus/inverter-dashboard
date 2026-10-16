@@ -67,3 +67,7 @@ release-assets/
 crash-*
 timeout-*
 oom-*
+
+# Synthetic browser traces and local evidence
+.compatibility/
+node_modules/

@@ -707,3 +707,7 @@ and the [OpenSSF evidence index](docs/openssf-evidence.md) for assessment refere
 The production controller override and tariff-command validators receive arbitrary JSON. Accepted commands must preserve their meaning through the exact transport encoder and revalidation. It never sends MQTT or HTTP requests.
 
 [RC-only fuzzing policy, local reproduction and failure handling](docs/fuzzing.md).
+
+## Browser compatibility
+
+The [embedded frontend acceptance suite](docs/browser-compatibility.md) verifies the shipped SPA in real browser engines across Linux, Windows and macOS. Its required matrix is part of the existing CI gate, with expanded version coverage for scheduled and manual release qualification.

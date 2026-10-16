@@ -1,0 +1,5 @@
+{
+  "distribution": "src/inverter_dashboard/static",
+  "manifest": "src/inverter_dashboard/static/source-info.json",
+  "manifestKind": "python"
+}
