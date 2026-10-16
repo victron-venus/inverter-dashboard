@@ -49,6 +49,7 @@ const frontend = {
   archiveSha256: manifest.archive_sha256,
   filesVerified: expected.size,
 }
+assert.match(frontend.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
 assert.match(frontend.sourceCommit, /^[0-9a-f]{40}$/)
 assert.match(frontend.archiveSha256, /^[0-9a-f]{64}$/)
 console.log(`Verified embedded SPA ${frontend.version}, ${frontend.filesVerified} files`)
