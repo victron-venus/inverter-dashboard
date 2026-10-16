@@ -6,7 +6,7 @@ Use a focused branch and reviewed PR. The Python backend and shared Vue UI have 
 
 ## Reproduce safely
 
-Install Python 3.12+ and `uv`, then use the lockfile. A local start with `MQTT_HOST="" GATEWAY_ENABLED=false` disables native source selection; keep the default loopback listener. Isolate test configuration and storage. Normal tests must not discover private credentials or send commands to equipment.
+Install Python 3.12+ and `uv`, then use the lockfile. For a local preview, use `GATEWAY_ENABLED=false uv run --locked inverter-dashboard --mqtt-host ""`; the explicit empty CLI host takes precedence over saved MQTT settings. Keep the default loopback listener and isolate configuration and storage so existing HA credentials are not loaded. Normal tests must not discover private credentials or send commands to equipment.
 
 Add meaningful regressions for bugs: invalid and stale input, source switches around awaits, storage failure, request correlation and before/after state. Run the affected scope, then the repository's required checks. `bash scripts/ci.sh` defines local security/lint/format/test/coverage behavior. Do not change policy thresholds to avoid a failure.
 
