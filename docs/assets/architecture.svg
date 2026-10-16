@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="650" viewBox="0 0 1120 650" role="img" aria-labelledby="title desc">
+  <title id="title">Inverter Dashboard Python architecture and source ownership</title>
+  <desc id="desc">The browser receives filtered current state from FastAPI. One selected native source, direct Cerbo MQTT or HTTPS inverter-gateway, feeds the same reducer. Optional inverter-control supplies policy and history, while configured Home Assistant devices supply only HA-owned fields. Commands recheck the current source and capability before a single write. Private persistent settings and Web Push state are not served as static assets. Web Push delivers through a provider to the browser or operating system.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#41536b"/></marker>
+    <style>text{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#162b45}.heading{font-size:26px;font-weight:700}.label{font-size:18px;font-weight:650}.body{font-size:15px}.note{font-size:14px;fill:#41536b}.box{fill:#fff;stroke:#b8c8d9;stroke-width:2}.blue{fill:#e9f2fe;stroke:#719ed5}.green{fill:#eaf5ed;stroke:#79a887}.line{fill:none;stroke:#41536b;stroke-width:2;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="1120" height="650" rx="20" fill="#f5f8fc"/>
+  <text x="32" y="46" class="heading">One current source. Explicit field ownership.</text>
+  <text x="32" y="73" class="note">Read paths and command authority remain separate; old connection work cannot control a replacement source.</text>
+  <rect x="32" y="110" width="280" height="115" rx="14" class="box blue"/>
+  <text x="50" y="140" class="label">Native telemetry · one source</text>
+  <text x="50" y="168" class="body">Cerbo GX MQTT or HTTPS IGW</text>
+  <text x="50" y="192" class="body">Portal / generation / availability</text>
+  <rect x="32" y="250" width="280" height="95" rx="14" class="box"/>
+  <text x="50" y="281" class="label">inverter-control · optional</text>
+  <text x="50" y="309" class="body">Policy, history, forecasts, tariff</text>
+  <rect x="32" y="370" width="280" height="95" rx="14" class="box"/>
+  <text x="50" y="401" class="label">Home Assistant · optional</text>
+  <text x="50" y="429" class="body">Configured HA-owned fields only</text>
+  <rect x="380" y="150" width="340" height="255" rx="16" class="box blue"/>
+  <text x="402" y="183" class="label">Python / FastAPI</text>
+  <text x="402" y="218" class="body">Shared native reducer</text>
+  <text x="402" y="247" class="body">Freshness + source-generation guards</text>
+  <text x="402" y="276" class="body">Warnings retain source occurrence time</text>
+  <text x="402" y="305" class="body">Filtered WebSocket / HTTP state</text>
+  <text x="402" y="334" class="body">Single command dispatch + correlation</text>
+  <text x="402" y="374" class="note">Accepted ≠ physically confirmed</text>
+  <rect x="790" y="150" width="298" height="255" rx="16" class="box green"/>
+  <text x="814" y="183" class="label">Browser · shared Vue</text>
+  <text x="814" y="218" class="body">Live views + warning banners</text>
+  <text x="814" y="247" class="body">Explicit user controls</text>
+  <text x="814" y="276" class="body">Exact official asset identity</text>
+  <text x="814" y="305" class="body">Optional push subscription</text>
+  <text x="814" y="349" class="note">UI language depends on</text>
+  <text x="814" y="372" class="note">the adopted Vue release</text>
+  <path d="M312 170 H380" class="line"/>
+  <path d="M312 297 H380" class="line"/>
+  <path d="M312 417 H346 V365 H380" class="line"/>
+  <path d="M720 260 H790" class="line"/>
+  <text x="742" y="243" class="note">state</text>
+  <path d="M790 316 H720" class="line"/>
+  <rect x="380" y="480" width="340" height="120" rx="14" class="box"/>
+  <text x="402" y="514" class="label">Private persistent volume</text>
+  <text x="402" y="543" class="body">Settings JSON · separate push store</text>
+  <text x="402" y="571" class="note">Not web content · preserve keys on upgrade</text>
+  <path d="M550 405 V480" class="line"/>
+  <rect x="790" y="480" width="298" height="120" rx="14" class="box green"/>
+  <text x="814" y="514" class="label">Web Push provider → OS</text>
+  <text x="814" y="543" class="body">Encrypted delivery / bounded expiry</text>
+  <text x="814" y="571" class="note">Provider acceptance ≠ OS banner</text>
+  <path d="M680 405 V455 H750 V540 H790" class="line"/>
+  <path d="M938 480 V405" class="line"/>
+</svg>

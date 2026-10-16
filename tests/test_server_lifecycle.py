@@ -58,3 +58,46 @@ async def test_lifespan_joins_all_children_and_clears_client(monkeypatch, body_f
     assert not server._app_state.mqtt_tasks
     assert server._app_state.mqtt_client is None
     assert not server._app_state.mqtt_connected
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ([], ("saved.example.com", 1884)),
+        (["--mqtt-host", "cli.example.com"], ("cli.example.com", 1884)),
+        (["--mqtt-port", "1885"], ("saved.example.com", 1885)),
+        (["--mqtt-host", "", "--mqtt-port", "1885"], ("", 1885)),
+    ],
+)
+def test_explicit_mqtt_cli_flags_win_after_persisted_settings(
+    monkeypatch, tmp_path, arguments, expected
+):
+    """Run main's Uvicorn startup callback without opening any network connection."""
+    import sys
+
+    monkeypatch.setenv("INVERTER_DASHBOARD_SETTINGS_FILE", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(server.config, "MQTT_HOST", "env.example.com")
+    monkeypatch.setattr(server.config, "MQTT_PORT", 1883)
+    monkeypatch.setattr(server.config, "WEB_PUSH_ENABLED", False)
+    monkeypatch.setattr(server.ha_client, "load_config", Mock())
+    monkeypatch.setattr(server.websocket_handler, "set_ui_settings", Mock())
+    monkeypatch.setattr(server, "_start_ha_polling", lambda: None)
+    monkeypatch.setattr(server, "_start_version_check", lambda: None)
+    monkeypatch.setattr(server, "_shutdown_tasks", AsyncMock())
+    monkeypatch.setattr(server, "_clear_mqtt_client", Mock())
+    monkeypatch.setattr(server.app.state, "mqtt_cli_overrides", {}, raising=False)
+    server.settings_store.save_settings({"mqtt_host": "saved.example.com", "mqtt_port": 1884})
+    selected = []
+
+    async def select():
+        selected.append((server.config.MQTT_HOST, server.config.MQTT_PORT))
+
+    async def startup(app):
+        async with server.lifespan(app):
+            pass
+
+    monkeypatch.setattr(server, "_select_and_start_data_source", select)
+    monkeypatch.setattr(server.uvicorn, "run", lambda app, **kwargs: asyncio.run(startup(app)))
+    monkeypatch.setattr(sys, "argv", ["inverter-dashboard", *arguments])
+    server.main()
+    assert selected == [expected]
