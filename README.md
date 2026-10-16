@@ -100,3 +100,7 @@ The [MIT license](LICENSE) applies. Report vulnerabilities privately through [SE
 ## Browser compatibility
 
 The [embedded frontend acceptance suite](docs/browser-compatibility.md) verifies the shipped SPA in real browser engines across Linux, Windows and macOS. Its required matrix is part of the existing CI gate, with expanded version coverage for scheduled and manual release qualification.
+
+## Project practices
+
+See [architecture, security evidence and roadmap](docs/project-assurance.md), [governance](GOVERNANCE.md), [contributing](CONTRIBUTING.md), [community conduct](CODE_OF_CONDUCT.md) and [security reporting](SECURITY.md).

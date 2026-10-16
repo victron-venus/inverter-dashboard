@@ -30,3 +30,7 @@ Automated tests use mocks or controlled fixtures where available. A passing unit
 - [contracts](contracts)
 
 See [README.md](README.md) for acquisition, configuration and usage, and [the evidence index](docs/openssf-evidence.md) for the public development-process references.
+
+## Governance and conduct
+
+See [governance and responsibilities](GOVERNANCE.md) and [community conduct](CODE_OF_CONDUCT.md), including the private reporting contact. Contributions are reviewed under the existing protected-branch process.
