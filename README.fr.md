@@ -50,7 +50,7 @@ Définissez `INVERTER_DASHBOARD_SETTINGS_FILE=/var/lib/inverter-dashboard/settin
 
 Exécutez `bash scripts/init-config.sh`, puis modifiez `local_config.py`, ignoré par Git. Dans un conteneur, `INVERTER_DASHBOARD_CONFIG` choisit son répertoire. Renseignez vos `HA_URL`/`HA_TOKEN` et activez `HA_DIRECT_CONTROLS=True` pour l'intégration directe. Ne publiez pas le jeton.
 
-`HA_SWITCH_ENTITIES` définit les boutons Home : chaîne d'entité, paire `(entity, label)` ou objet avec `entity`, `label`, `order`, `enabled`. Une configuration vide ne crée aucun bouton. Les entrées désactivées ne sont ni affichées, ni interrogées, ni autorisées comme cibles. Les miroirs HA ne remplacent pas les données natives Water/EV/puissance ou les règles du contrôleur. `HA_FILTERED_ENTITIES` choisit les autres cartes.
+`HA_SWITCH_ENTITIES` est un dictionnaire dont les clés sont des noms stables de boutons Home. Chaque valeur peut être un identifiant d'entité sous forme de chaîne, une paire `(entity, label)` ou un objet avec `entity`, `label`, `order`, `enabled`. Un dictionnaire vide (`{}`) ne crée aucun bouton. Les entrées désactivées ne sont ni affichées, ni interrogées, ni autorisées comme cibles. Les miroirs HA ne remplacent pas les données natives Water/EV/puissance ou les règles du contrôleur. `HA_FILTERED_ENTITIES` choisit les autres cartes.
 
 Configurez vos `HA_APPLIANCE_ENTITIES` pour dishwasher/washer/dryer et leurs préférences de visibilité. Un minuteur existant ne prouve pas un cycle actif ; un compteur de prises commun ne mesure pas un appareil individuel. Le [guide HA](docs/configuration.md#home-assistant) détaille les structures et restrictions.
 

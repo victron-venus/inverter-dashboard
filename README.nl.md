@@ -50,7 +50,7 @@ Met `INVERTER_DASHBOARD_SETTINGS_FILE=/var/lib/inverter-dashboard/settings/dashb
 
 Voer `bash scripts/init-config.sh` uit en bewerk de door Git genegeerde `local_config.py`. In een container bepaalt `INVERTER_DASHBOARD_CONFIG` de map. Vul uw eigen `HA_URL`/`HA_TOKEN` in en activeer `HA_DIRECT_CONTROLS=True` voor directe HA-integratie. Publiceer het token niet.
 
-`HA_SWITCH_ENTITIES` definieert Home-knoppen als entiteittekst, `(entity, label)` of object met `entity`, `label`, `order`, `enabled`. Leeg betekent geen knoppen. Uitgeschakelde items worden niet getoond, uitgelezen of als opdrachtdoel toegestaan. HA-spiegels vervangen geen native Water/EV/vermogensgegevens of controllerregels. Andere kaarten kiest u met `HA_FILTERED_ENTITIES`.
+`HA_SWITCH_ENTITIES` is een dictionary met vaste namen van Home-knoppen als sleutels. Elke waarde kan een entiteits-ID als tekst, een paar `(entity, label)` of een object met `entity`, `label`, `order`, `enabled` zijn. Een lege dictionary (`{}`) betekent geen knoppen. Uitgeschakelde items worden niet getoond, uitgelezen of als opdrachtdoel toegestaan. HA-spiegels vervangen geen native Water/EV/vermogensgegevens of controllerregels. Andere kaarten kiest u met `HA_FILTERED_ENTITIES`.
 
 Stel eigen `HA_APPLIANCE_ENTITIES` in voor dishwasher/washer/dryer en hun zichtbaarheid. Een bestaande timer bewijst geen actieve cyclus; een gedeelde stopcontactmeter meet niet één afzonderlijk apparaat. De [HA-gids](docs/configuration.md#home-assistant) legt structuren en beperkingen uit.
 

@@ -50,7 +50,7 @@ Mit `INVERTER_DASHBOARD_SETTINGS_FILE=/var/lib/inverter-dashboard/settings/dashb
 
 Erzeugen Sie mit `bash scripts/init-config.sh` die von Git ignorierte `local_config.py`. Im Container bestimmt `INVERTER_DASHBOARD_CONFIG` deren Verzeichnis. Tragen Sie eigene `HA_URL`/`HA_TOKEN` ein und aktivieren Sie für direkte HA-Integration `HA_DIRECT_CONTROLS=True`. Tokens dürfen nicht veröffentlicht werden.
 
-`HA_SWITCH_ENTITIES` definiert Home-Schaltflächen als Entity-Zeichenfolge, `(entity, label)` oder Objekt mit `entity`, `label`, `order`, `enabled`. Leer bedeutet keine Schaltflächen. Deaktivierte Einträge werden weder angezeigt noch abgefragt oder als Befehlsziele zugelassen. HA-Spiegel dürfen native Wasser-/EV-/Leistungsdaten und Controller-Regeln nicht ersetzen. Weitere Karten werden mit `HA_FILTERED_ENTITIES` ausgewählt.
+`HA_SWITCH_ENTITIES` ist ein Dictionary mit stabilen Namen der Home-Schaltflächen als Schlüsseln. Jeder Wert kann eine Entity-ID als Zeichenfolge, ein Paar `(entity, label)` oder ein Objekt mit `entity`, `label`, `order`, `enabled` sein. Ein leeres Dictionary (`{}`) bedeutet keine Schaltflächen. Deaktivierte Einträge werden weder angezeigt noch abgefragt oder als Befehlsziele zugelassen. HA-Spiegel dürfen native Wasser-/EV-/Leistungsdaten und Controller-Regeln nicht ersetzen. Weitere Karten werden mit `HA_FILTERED_ENTITIES` ausgewählt.
 
 Ordnen Sie dishwasher/washer/dryer über eigene `HA_APPLIANCE_ENTITIES` zu. Ein Timer allein beweist keinen laufenden Waschgang; ein gemeinsamer Steckdosenstromkreis misst nicht ein einzelnes Gerät. Sichtbarkeit, Verfügbarkeit und Aktivität bleiben getrennt. Beispiele enthält der [HA-Abschnitt](docs/configuration.md#home-assistant).
 

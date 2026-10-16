@@ -20,7 +20,7 @@ For Web Push, configure a separate private `WEB_PUSH_DATA_DIR` on persistent loc
 
 ## Add only your HA entities
 
-Create `local_config.py` with `bash scripts/init-config.sh`, then supply your HA URL/token privately. Direct operations require `HA_DIRECT_CONTROLS=True`, successful fresh HA observations and configured targets. `HA_SWITCH_ENTITIES` determines Home buttons and accepts entity strings, pairs or objects with label/order/enabled. Empty means no buttons; disabled entries cannot be commanded. Rich entity lists belong in `HA_FILTERED_ENTITIES`; appliances use `HA_APPLIANCE_ENTITIES`.
+Create `local_config.py` with `bash scripts/init-config.sh`, then supply your HA URL/token privately. Direct operations require `HA_DIRECT_CONTROLS=True`, successful fresh HA observations and configured targets. `HA_SWITCH_ENTITIES` is a dictionary keyed by stable Home button names. Each value may be an entity ID string, an `(entity, label)` pair, or an object with `entity`, `label`, `order` and `enabled`. An empty dictionary (`{}`) means no buttons; disabled entries cannot be commanded. Rich entity lists belong in `HA_FILTERED_ENTITIES`; appliances use `HA_APPLIANCE_ENTITIES`.
 
 Do not map controller flags or native power, Water and EV readings to HA mirrors. An appliance timer or shared outlet meter does not establish individual appliance activity. Visibility settings do not create missing measurements.
 

@@ -54,7 +54,7 @@ Set `INVERTER_DASHBOARD_SETTINGS_FILE=/var/lib/inverter-dashboard/settings/dashb
 
 Run `bash scripts/init-config.sh` once, then edit the ignored `local_config.py`. For containers, mount it in `INVERTER_DASHBOARD_CONFIG`. `HA_URL`, `HA_TOKEN` and `HA_DIRECT_CONTROLS=True` enable the configured direct HA integration. Keep the file private; never commit a real token.
 
-`HA_SWITCH_ENTITIES` defines the Home button list. It accepts an entity string, an `(entity, label)` pair, or an object with `entity`, `label`, `order` and `enabled`. Empty means no Home buttons; disabled entries are not displayed, polled or permitted as toggle targets. Use your actual entities rather than copying somebody else's installation. Native power, Water, EV and controller policy fields retain their own owners and cannot be replaced with HA mirrors.
+`HA_SWITCH_ENTITIES` is a dictionary keyed by stable Home button names. Each value may be an entity ID string, an `(entity, label)` pair, or an object with `entity`, `label`, `order` and `enabled`. An empty dictionary (`{}`) means no Home buttons; disabled entries are not displayed, polled or permitted as toggle targets. Use your actual entities rather than copying somebody else's installation. Native power, Water, EV and controller policy fields retain their own owners and cannot be replaced with HA mirrors.
 
 Map your own `HA_APPLIANCE_ENTITIES` for dishwasher/washer/dryer data. A card does not become a reliable active-state indicator merely because a timer entity exists. Visibility preferences and source availability still apply; a shared outlet meter is not an individual appliance measurement. [The configuration guide](docs/configuration.md#home-assistant) includes a minimal example and rich-entity options.
 

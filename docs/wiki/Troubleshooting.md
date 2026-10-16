@@ -20,7 +20,7 @@ After reconnect, wait for a valid fresh source update. Do not modify a disabled 
 
 ## Home or appliance cards differ from expectations
 
-Review your private `HA_SWITCH_ENTITIES` list and enabled/order values. There is no personal Home list built into the service. Check direct HA configuration and current entity availability. Disabled/unknown entities are not an off state.
+Review your private `HA_SWITCH_ENTITIES` dictionary and the enabled/order values of its entries. An empty dictionary (`{}`) intentionally renders no Home buttons. There is no personal Home mapping built into the service. Check direct HA configuration and current entity availability. Disabled/unknown entities are not an off state.
 
 Review appliance mappings and visibility preferences. A timer alone does not establish active operation, and a shared circuit reading cannot be attributed to one appliance. Do not assign native Water/EV/controller fields to HA mirrors to make a missing card appear.
 
