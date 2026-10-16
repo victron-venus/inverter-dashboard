@@ -1,5 +1,7 @@
 # Inverter Dashboard · Python
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15553/badge)](https://www.bestpractices.dev/en/projects/15553)
+
 [![Fuzzing: RC only](https://img.shields.io/badge/Fuzzing-RC%20only-blue)](docs/fuzzing.md)
 
 [English](README.md) · [Русский](README.ru.md) · [Українська](README.uk.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Nederlands](README.nl.md)
