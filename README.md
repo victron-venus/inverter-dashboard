@@ -1,5 +1,7 @@
 # Inverter Dashboard · Python
 
+[![Fuzzing: RC only](https://img.shields.io/badge/Fuzzing-RC%20only-blue)](docs/fuzzing.md)
+
 [English](README.md) · [Русский](README.ru.md) · [Українська](README.uk.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Nederlands](README.nl.md)
 
 A self-hosted web dashboard for Victron systems. Python/FastAPI connects directly to a Cerbo GX over MQTT or to [inverter-gateway](https://github.com/victron-venus/inverter-gateway) (IGW) over HTTPS and serves the shared Vue interface. [inverter-control](https://github.com/victron-venus/inverter-control) supplies optional policy controls, history, forecasts and tariff metadata; live native telemetry does not require it. Optional Home Assistant integration adds explicitly configured devices and appliances.
