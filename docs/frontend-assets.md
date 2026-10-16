@@ -1,26 +1,27 @@
 # Embedded frontend assets
 
 The Python package serves the reviewed Vue SPA committed under
-`src/inverter_dashboard/static`. Rebuild from a clean checkout of the recorded
-frontend source; do not edit the minified JavaScript.
+`src/inverter_dashboard/static`. Do not edit the minified JavaScript or rebuild a
+released bundle locally. Its exact source and published version are recorded in
+`static/source-info.json`; that file is the authoritative current identity.
 
-The current source is
-[`inverter-dashboard-vue` at `e79054130cca49f919c89e6491bb67769882f3ba`](https://github.com/victron-venus/inverter-dashboard-vue/tree/e79054130cca49f919c89e6491bb67769882f3ba).
-That source carries the page's `token` into both the WebSocket URL and the
-`/api/state` fallback, preserving live telemetry when `DASHBOARD_SECRET` is set.
-Notifications use their source event time, refresh relative age while idle and
-on foreground, and expose the exact local date and timezone. Missing or invalid
-source times remain unknown through replay and reconnect.
+Use `python3 scripts/import_vue_release.py v2.2.8-rc.1`, replacing the example
+with an explicit published tag. The command resolves that tag through GitHub,
+downloads only the SPA archive and its two release metadata files, and checks the
+repository, source commit, tag, packaged version, archive digest and complete
+file inventory before replacing anything. Archive links, traversal paths and
+case collisions are rejected. A failed or unavailable release never creates a
+placeholder or reports success with old files.
 
-Build with `npm ci --ignore-scripts --no-audit --no-fund`, run `npm test`, then
-`npm run build:all`. Copy only the resulting `dist/` contents into this package's
-`static/`, removing obsolete files from that destination. The frontend export
-script also updates other repositories, so use an explicit destination when
-updating only this package.
+The importer refuses modified, untracked or ignored files in the frontend
+paths. It stages the verified bundle separately, removes obsolete output files
+by replacing the complete tree and preserves the previous tree if rollback
+cannot finish. Review the resulting diff and run the required browser and
+package checks before committing. GitHub CLI authentication is required for
+the release lookup/download; no token is embedded in the package.
 
-`static/source-info.json` records the exact clean source commit, lockfile hash,
-Node/npm versions, build command and hashes/sizes of every copied output file.
-Update that record with each new build. The package tests verify its complete
-file inventory and hashes, in addition to serving the SPA's referenced assets.
-These hashes detect incomplete or stale copies; they are local build provenance,
-not a published release qualification or a substitute for release evidence.
+`source-info.json` records the source commit, effective release lockfile hash,
+release/run identity, receipt and manifest hashes, archive hash, and hashes/sizes
+of every copied output file. The package and browser checks verify this inventory.
+The importer validates published bytes and provenance; it does not replace the
+release's own acceptance checks.
