@@ -23,15 +23,13 @@ def member_path(name):
 
 
 def archive_files(bundle):
-    members = bundle.getmembers()
-    if (
-        not members
-        or len(members) > 10_000
-        or sum(item.size for item in members) > MAX_UNPACKED_BYTES
-    ):
-        raise ValueError("Candidate has an invalid unpacked size")
     files, seen = {}, set()
-    for item in members:
+    count, size = 0, 0
+    for item in bundle:
+        count += 1
+        size += item.size
+        if count > 10_000 or item.size < 0 or size > MAX_UNPACKED_BYTES:
+            raise ValueError("Candidate has an invalid unpacked size")
         name = member_path(item.name)
         if not (item.isfile() or item.isdir()):
             raise ValueError("Candidate contains a link or special file")
@@ -42,6 +40,8 @@ def archive_files(bundle):
         seen.add(name.casefold())
         if item.isfile():
             files[name] = item
+    if count == 0:
+        raise ValueError("Candidate has an invalid unpacked size")
     return files
 
 

@@ -2,8 +2,9 @@
 
 The required quality gate calls `ci.yml`, including the shared TypeScript/browser
 workflow. Five required targets exercise Chromium, Firefox and WebKit on Linux,
-Chromium on Windows and WebKit on macOS. Scheduled and manual release runs select
-all 35 targets: three pinned Playwright generations across three operating
+Chromium on Windows and WebKit on macOS. Beta releases retain those five
+required targets. Scheduled source audits, manual audits without a release
+channel and RC release runs select all 35 targets: three pinned Playwright generations across three operating
 systems, plus Chrome/Edge Stable and Linux Beta channels. Hosted runners remain
 the default; this change does not switch runner mode.
 

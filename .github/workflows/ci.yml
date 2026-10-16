@@ -8,16 +8,17 @@ permissions:
 jobs:
   browser-compatibility:
     name: Embedded frontend browser acceptance
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@d1bab20ac35bf75398a6a89ff59db113a2c82301
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@eb1ec3a1b978923955c77b478c9a2530846d6bae
     permissions:
       contents: read
     with:
       node-version: '22'
       run-node-ci: false
       browser-matrix-file: .github/browser-compatibility.json
+      browser-release-channel: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.channel || '' }}
       browser-test-command: node scripts/browser-acceptance.cjs
       browser-prepare-command: node --check scripts/browser-acceptance.cjs
-      browser-extended: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+      browser-extended: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.channel == '' || github.event.inputs.channel == 'rc')) }}
   tls-macos-intel:
     name: Native TLS (macOS Intel)
     runs-on: macos-15-intel

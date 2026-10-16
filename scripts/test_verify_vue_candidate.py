@@ -8,12 +8,35 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from verify_vue_candidate import prepare
+from verify_vue_candidate import MAX_UNPACKED_BYTES, archive_files, prepare
 
 SOURCE = "a" * 40
 
 
 class CandidateTests(unittest.TestCase):
+    def test_rejects_limits_before_scanning_the_remaining_archive(self):
+        class GuardedArchive:
+            def __init__(self, count, size):
+                self.count, self.size, self.visited = count, size, 0
+
+            def __iter__(self):
+                for index in range(self.count):
+                    self.visited += 1
+                    item = tarfile.TarInfo(f"entry-{index}")
+                    item.size = self.size
+                    yield item
+                raise AssertionError("Scanned past the first over-limit member")
+
+            def getmembers(self):
+                return list(self)
+
+        for count, size in [(10_001, 0), (2, MAX_UNPACKED_BYTES)]:
+            with self.subTest(count=count, size=size):
+                archive = GuardedArchive(count, size)
+                with self.assertRaisesRegex(ValueError, "invalid unpacked size"):
+                    archive_files(archive)
+                self.assertEqual(archive.visited, count)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
