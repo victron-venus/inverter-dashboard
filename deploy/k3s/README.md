@@ -120,8 +120,18 @@ before liveness checks take over.
 
 The example uses the image's UID/GID1000, a read-only root filesystem and a bounded
 writable `/tmp`. Self-update is disabled; replace the tested image to upgrade.
-The existing mounted configuration remains read-only, so runtime settings cannot
-be persisted into that Secret volume.
+The mounted connection configuration remains read-only. To persist runtime
+preferences, set `INVERTER_DASHBOARD_SETTINGS_FILE` to a writable persistent path,
+for example `/var/lib/inverter-dashboard/settings/dashboard_settings.json`, and
+mount a volume whose permissions allow the runtime UID to create private files.
+Do not point this variable into the Secret mount. The public example does not
+provision that volume for you.
+
+If enabling Web Push, configure a separate `WEB_PUSH_DATA_DIR` below a persistent
+local volume, use one replica with a Recreate rollout strategy, and preserve its
+VAPID identity/subscriptions across updates. Do not use `emptyDir` for either
+persistent settings or Web Push state. See the [configuration reference](../../docs/configuration.md)
+and [notification lifecycle](../../docs/notifications.md).
 
 Set these variables to your local deployment values:
 
@@ -141,5 +151,5 @@ connectivity from every worker. In IGW-only mode, verify `data_source=igw` and
 `gateway_connected=true`; native MQTT may remain disconnected. Measured zero
 values are valid. Keep deployment-specific results and diagnosis in private notes.
 
-The server accepts both layouts: `frontend/dist` (Dockerfile) and flat `static/`
-plus `templates/` (docker-publish image). Vite assets are mounted at `/assets`.
+The server accepts the recorded `static/` layout and the legacy `static/dist/`
+layout. Vite assets are mounted at `/assets`; see [frontend provenance](../../docs/frontend-assets.md).

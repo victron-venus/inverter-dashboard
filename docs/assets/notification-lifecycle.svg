@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="650" viewBox="0 0 1120 650" role="img" aria-labelledby="title desc">
+  <title id="title">Native warning and Web Push lifecycle</title>
+  <desc id="desc">Source occurrence time stays distinct from local receipt time. Native notification reduction sends current lifecycle state to banners, including inactive unacknowledged warnings. Initial or reconnect snapshots silently prime Web Push. Eligible new events in the current source epoch are deduplicated and queued, sent with bounded retries and expiry to the provider, and then handled by the browser and operating system. Queue acceptance and provider acceptance do not prove OS display. Source retirement cancels pending work; a notification click only opens the dashboard.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#41536b"/></marker>
+    <style>text{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#162b45}.heading{font-size:26px;font-weight:700}.label{font-size:18px;font-weight:650}.body{font-size:15px}.note{font-size:14px;fill:#41536b}.box{fill:#fff;stroke:#b8c8d9;stroke-width:2}.blue{fill:#e9f2fe;stroke:#719ed5}.green{fill:#eaf5ed;stroke:#79a887}.amber{fill:#fff5e3;stroke:#c7a36a}.line{fill:none;stroke:#41536b;stroke-width:2;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="1120" height="650" rx="20" fill="#f5f8fc"/>
+  <text x="32" y="46" class="heading">The event happened then. The connection arrived now.</text>
+  <text x="32" y="73" class="note">Occurrence time is never replaced by reconnect receipt time. Unknown source time stays unknown.</text>
+  <rect x="32" y="110" width="300" height="130" rx="14" class="box blue"/>
+  <text x="52" y="143" class="label">Native source event</text>
+  <text x="52" y="175" class="body">Identity · explicit type · lifecycle</text>
+  <text x="52" y="204" class="body">Original occurrence time + device</text>
+  <rect x="410" y="110" width="310" height="130" rx="14" class="box blue"/>
+  <text x="432" y="143" class="label">Current source reducer</text>
+  <text x="432" y="175" class="body">Validate / retain source semantics</text>
+  <text x="432" y="204" class="body">Reject retired-connection callbacks</text>
+  <rect x="790" y="110" width="298" height="130" rx="14" class="box amber"/>
+  <text x="810" y="143" class="label">In-app warning banner</text>
+  <text x="810" y="175" class="body">Inactive + unacknowledged may show</text>
+  <text x="810" y="204" class="body">Local dismiss ≠ device acknowledge</text>
+  <path d="M332 175 H410" class="line"/>
+  <path d="M720 175 H790" class="line"/>
+  <rect x="32" y="300" width="300" height="150" rx="14" class="box amber"/>
+  <text x="52" y="333" class="label">Initial / reconnect snapshot</text>
+  <text x="52" y="365" class="body">Silent baseline, no historical replay</text>
+  <text x="52" y="394" class="body">Retained or invalid sample</text>
+  <text x="52" y="422" class="body">cannot renew transition authority</text>
+  <rect x="410" y="300" width="310" height="150" rx="14" class="box green"/>
+  <text x="432" y="333" class="label">Eligible new event</text>
+  <text x="432" y="365" class="body">Preferences + same-source baseline</text>
+  <text x="432" y="394" class="body">Persistent dedupe → bounded queue</text>
+  <text x="432" y="422" class="body">Expiry: source time + 300 seconds</text>
+  <rect x="790" y="300" width="298" height="150" rx="14" class="box green"/>
+  <text x="810" y="333" class="label">Encrypted provider delivery</text>
+  <text x="810" y="365" class="body">Up to 3 attempts / remaining TTL</text>
+  <text x="810" y="394" class="body">404 / 410 retires subscription</text>
+  <text x="810" y="422" class="body">No endpoint or key in diagnostics</text>
+  <path d="M565 240 V300" class="line"/>
+  <path d="M465 240 V275 H180 V300" class="line"/>
+  <path d="M720 375 H790" class="line"/>
+  <rect x="410" y="510" width="678" height="100" rx="14" class="box"/>
+  <text x="432" y="545" class="label">Browser worker → operating system → user</text>
+  <text x="432" y="577" class="body">Queued ≠ provider accepted ≠ displayed. Click opens the dashboard only.</text>
+  <path d="M940 450 V510" class="line"/>
+  <text x="32" y="535" class="note">Source retirement cancels pending work.</text>
+  <text x="32" y="561" class="note">Already accepted provider messages</text>
+  <text x="32" y="587" class="note">cannot be recalled.</text>
+</svg>
