@@ -5,7 +5,7 @@
   "package_version": "2.2.8",
   "package_lock_sha256": "86ef403641b7edd5a0a2ecee3366d367f6f182cdf618a4aedaf2c21ea141aff7",
   "build_command": "Official GitHub Actions publication; imported without rebuilding",
-  "release_tag": "v2.2.8-rc.1",
+  "release_tag": "v2.2.8",
   "origin_tag": "v2.2.8-rc.1",
   "release_plan_sha256": "941c277a513922b503424b5faa7f86d7d56d34e3cd2e29055b5a2b8b1c692827",
   "release_run_id": 38861405495,
