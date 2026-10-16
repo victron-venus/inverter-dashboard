@@ -24,6 +24,7 @@ const entries = application.manifestKind === 'python'
 const expected = new Map(entries)
 assert(expected.size > 0 && expected.size === entries.length, 'Frontend inventory must be nonempty and unique')
 const actual = new Map()
+const staticAssets = new Map()
 function inspectFiles(directory) {
   for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
     const file = path.join(directory, item.name)
@@ -33,12 +34,14 @@ function inspectFiles(directory) {
       assert(item.isFile(), 'Frontend must contain only regular files')
       if (file === manifestFile) continue
       const relative = path.relative(dist, file).split(path.sep).join('/')
-      actual.set(relative, crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'))
+      const data = fs.readFileSync(file)
+      actual.set(relative, crypto.createHash('sha256').update(data).digest('hex'))
+      staticAssets.set(`/${relative}`, { data, extension: path.extname(relative) })
     }
   }
 }
 inspectFiles(dist)
-assert.deepEqual([...actual.keys()].sort(), [...expected.keys()].sort(), 'Frontend inventory differs from recorded release')
+assert.deepEqual([...actual.keys()].sort((a, b) => a.localeCompare(b)), [...expected.keys()].sort((a, b) => a.localeCompare(b)), 'Frontend inventory differs from recorded release')
 for (const [file, hash] of expected) {
   assert.match(hash, /^[0-9a-f]{64}$/)
   assert.equal(actual.get(file), hash, `Frontend bytes changed: ${file}`)
@@ -104,24 +107,25 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ system: { '0/Dc/Battery/Soc': 61, '0/Ac/Grid/L1/Power': 123 }, battery: { '0/Soc': 61, '0/CustomName': 'Public fixture battery' } }))
     return
   }
-  const file = path.resolve(dist, `.${route === '/' ? '/index.html' : route}`)
-  if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+  const asset = staticAssets.get(route === '/' ? '/index.html' : route)
+  if (!asset) {
     res.writeHead(404).end('Not found')
     return
   }
-  res.setHeader('Content-Type', mime[path.extname(file)] || 'application/octet-stream')
-  fs.createReadStream(file).pipe(res)
+  res.setHeader('Content-Type', mime[asset.extension] || 'application/octet-stream')
+  res.end(asset.data)
 })
 
 async function eventually(read, check, message) {
   const deadline = Date.now() + 10000
-  let last
-  while (Date.now() < deadline) {
-    last = await read()
-    if (check(last)) return last
+  async function poll() {
+    const value = await read()
+    if (check(value)) return value
+    if (Date.now() >= deadline) assert.fail(`${message}; last value: ${JSON.stringify(value)}`)
     await delay(50)
+    return poll()
   }
-  assert.fail(`${message}; last value: ${JSON.stringify(last)}`)
+  return poll()
 }
 
 async function scenario(name, run) {
@@ -144,6 +148,8 @@ async function main() {
   const origin = `http://127.0.0.1:${server.address().port}`
   let browser, context, page
   try {
+    const denied = await Promise.all(['/package.json', '/.git/config', '/%2e%2e%2fpackage.json'].map(async route => (await fetch(origin + route)).status))
+    assert.deepEqual(denied, [404, 404, 404], 'Only inventoried distribution files may be served')
     browser = await playwright[engine].launch({ headless: true, ...(channel ? { channel } : {}) })
     context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US', serviceWorkers: 'block' })
     context.setDefaultTimeout(10000)
@@ -175,7 +181,7 @@ async function main() {
         }
         ws.send(JSON.stringify({ type: 'command_result', action: command.action, request_id: command.request_id, status: 'accepted' }))
         if (command.action === 'set_settings') {
-          const { action: _action, request_id: _requestId, ...patch } = command
+          const patch = Object.fromEntries(Object.entries(command).filter(([key]) => !['action', 'request_id'].includes(key)))
           Object.assign(fixture.state.ui_config.settings, patch)
           broadcast()
         }
@@ -191,7 +197,7 @@ async function main() {
 
     await scenario('live-telemetry-load-order-and-real-chart', async () => {
       await eventually(() => page.getByTestId('active-load').allTextContents(), rows => rows.length === 3 && rows[0].includes('Fixture refrigerator') && rows[1].includes('-100W'), 'Real load rows should be ordered and preserve generation')
-      assert.equal(await page.getByTestId('transport-status').getAttribute('data-connected'), 'true')
+      assert.equal(await page.getByTestId('transport-status').evaluate(element => element.dataset.connected), 'true')
       await eventually(() => page.locator('canvas').count(), count => count > 0, 'ECharts should render an actual canvas')
       assert(await page.getByText('73%', { exact: true }).count() > 0)
     })
@@ -259,12 +265,12 @@ async function main() {
       fixture.paused = true
       for (const ws of fixture.sockets) ws.close()
       fixture.sockets.clear()
-      await eventually(() => page.getByTestId('transport-status').getAttribute('data-connected'), value => value === 'false', 'Disconnected transport must be visible')
+      await eventually(() => page.getByTestId('transport-status').evaluate(element => element.dataset.connected), value => value === 'false', 'Disconnected transport must be visible')
       fixture.paused = false
       const before = fixture.connections
       await page.evaluate(() => window.dispatchEvent(new Event('online')))
       await eventually(() => fixture.connections, count => count > before, 'Browser should reconnect')
-      await eventually(() => page.getByTestId('transport-status').getAttribute('data-connected'), value => value === 'true', 'New telemetry should be live')
+      await eventually(() => page.getByTestId('transport-status').evaluate(element => element.dataset.connected), value => value === 'true', 'New telemetry should be live')
     })
     await scenario('mobile-layout-keeps-settings-keyboard-accessible', async () => {
       await page.setViewportSize({ width: 390, height: 844 })
