@@ -15,6 +15,14 @@ altered or linked files. Browser evidence includes the frontend source commit,
 release version and original archive digest in addition to the backend commit,
 workflow run and actual browser version.
 
+Published frontend files are marked `-text` in `.gitattributes`. Git must preserve
+these files byte for byte when adding or checking them out, including on Windows
+with `core.autocrlf=true`; otherwise line-ending conversion invalidates the
+release hashes before browser scenarios start. The import-contract suite also
+checks a real disposable Git add/checkout against every manifest hash, preserves
+mixed line endings, and verifies that ordinary files still follow Git's normal
+line-ending setting. The browser's strict inventory check remains unchanged.
+
 The adapter reuses the dashboard user flows developed in
 [inverter-dashboard-vue](https://github.com/victron-venus/inverter-dashboard-vue/blob/00f406c278cdd53c4da68eea68eff6b606f94308/scripts/browser-acceptance.cjs).
 Keep the two backend adapters aligned when those common frontend flows change.

@@ -1,0 +1,2 @@
+# Published frontend files are verified by SHA-256; preserve their exact bytes.
+/src/inverter_dashboard/static/** -text
