@@ -16,7 +16,7 @@ The server sender supports Linux and macOS Apple Silicon. Windows and Intel macO
 
 ## Avoid replay and false events
 
-Existing warnings prime silently on initial connection and reconnect. MQTT has a silent ten-second hydration period. Missing/old/future occurrence times do not create a new push. Additional categories observe selected charger power, pump/valve states and actual native battery SoC after a fresh same-source baseline. Retained/invalid data does not refresh that baseline. Estimated voltage-derived display SoC and near-zero grid watts never invent a low-SoC or grid-loss event.
+Existing warnings prime silently on initial connection and reconnect. MQTT has a silent ten-second hydration period. Missing or old occurrence times do not create a new push; times more than 30 seconds in the future are rejected, allowing a bounded clock difference between the source and server. Additional categories observe selected charger power, pump/valve states and actual native battery SoC after a fresh same-source baseline. Retained/invalid data does not refresh that baseline. Estimated voltage-derived display SoC and near-zero grid watts never invent a low-SoC or grid-loss event.
 
 Messages expire 300 seconds after their source time and use bounded retries. Source retirement cancels its pending/in-flight work; provider-accepted messages cannot be recalled. Subscription deletion or preference changes remove associated pending work. Preserve the private store across upgrades for identity and deduplication.
 
