@@ -1,6 +1,6 @@
 {
   "package": "inverter-dashboard-vue",
-  "version": "2.2.8-beta.2",
+  "version": "2.2.8",
   "files": [
     {
       "path": "assets/IntervalEnergy-BqsvacbW.js",

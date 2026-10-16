@@ -1,17 +1,17 @@
 {
   "schema": 1,
   "repository": "https://github.com/victron-venus/inverter-dashboard-vue",
-  "source_commit": "f57b65532acf6b4142de52b607bca9cfe1ef05c0",
-  "package_version": "2.2.8-beta.2",
-  "package_lock_sha256": "66d76e71f470903e26073b919a7f0e5b5e5155fa1ff53805ed223aafa4ea7098",
+  "source_commit": "ff3865d373cc3819b83db0328d9855a2bdec9859",
+  "package_version": "2.2.8",
+  "package_lock_sha256": "86ef403641b7edd5a0a2ecee3366d367f6f182cdf618a4aedaf2c21ea141aff7",
   "build_command": "Official GitHub Actions publication; imported without rebuilding",
-  "release_tag": "v2.2.8-beta.2",
-  "origin_tag": "v2.2.8-beta.2",
-  "release_plan_sha256": "b6c0911a3990f59d0e3ff8d0d98c23cf778e5e97d29698c8fe21b0cc57c60262",
-  "release_run_id": 38847656530,
-  "release_receipt_sha256": "c5ece36952912068dbade3c9e263a57ac0b3499c93fbd246e25aeed99167b214",
-  "release_manifest_sha256": "9be27066b4ae3f6567c348d7ba8c33372cbf927a514f9b040bc9e7e40b0bf066",
-  "archive_sha256": "f6a853fd6040c8f5a6eb257794f267a362988732ef564414d2cbef315c523363",
+  "release_tag": "v2.2.8-rc.1",
+  "origin_tag": "v2.2.8-rc.1",
+  "release_plan_sha256": "941c277a513922b503424b5faa7f86d7d56d34e3cd2e29055b5a2b8b1c692827",
+  "release_run_id": 38861405495,
+  "release_receipt_sha256": "54901adb3e9be61b67c5a0c5ead6115b4ac463eca5516b5dd4c14ba925aa747a",
+  "release_manifest_sha256": "0638827325079b8a13f3bb0ae051cfd91a45bafe6de828e153aba5467a56bb4c",
+  "archive_sha256": "2d413049f3b6536d24f95227662135fec44944d305d8841d9d47b04d892b0715",
   "files": [
     {
       "path": "assets/IntervalEnergy-BqsvacbW.js",
@@ -445,8 +445,8 @@
     },
     {
       "path": "build-info.json",
-      "sha256": "4226d7d6147d6fc4e85198dcac577f9a9f6fb9db84d28ded197791cf079242cf",
-      "size": 13121
+      "sha256": "ea04195bc15d902a9db41c4bf0555ee0852cb5337c855a023c0fb0ebf2b2ceb9",
+      "size": 13114
     },
     {
       "path": "index.html",
