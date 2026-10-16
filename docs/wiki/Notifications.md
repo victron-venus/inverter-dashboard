@@ -8,6 +8,8 @@ The dashboard preserves a native alarm's occurrence time. Returning to the home 
 
 Inactive but unacknowledged Victron notifications can still appear as warnings. Acknowledged history is not replayed as a new active alarm. Local dismissal affects the dashboard view; device acknowledgement/silence is a separate, guarded command. Clicking a system notification only opens the dashboard and does not operate equipment.
 
+![Source event time, reconnect protection and separate delivery stages](../assets/notification-lifecycle.svg)
+
 ## Enable Web Push deliberately
 
 Enable server push with `WEB_PUSH_ENABLED=true` and a persistent private `WEB_PUSH_DATA_DIR`, then grant browser permission through the settings interface. The browser must confirm subscription registration with the server. Browser/OS secure-context and installation requirements differ; test the actual target platform.

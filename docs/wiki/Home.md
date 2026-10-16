@@ -6,6 +6,8 @@ This is the repository-maintained source of the Python dashboard wiki. It descri
 
 The dashboard displays native Cerbo GX telemetry through direct MQTT or an HTTPS inverter-gateway. The optional inverter-control daemon supplies policy controls, history, daily statistics and forecasts. Home Assistant adds locally configured appliances and devices. These sources have different ownership and freshness rules: a working browser connection alone does not prove that a device reading or command capability is current.
 
+![Python dashboard sources, command boundaries and persistent state](../assets/architecture.svg)
+
 Use [Configuration](Configuration.md) for first installation and persistent state, [Notifications](Notifications.md) for event time and Web Push, [Troubleshooting](Troubleshooting.md) for symptom-based checks, and [Development](Development.md) for source changes and release evidence.
 
 ## Operational essentials
