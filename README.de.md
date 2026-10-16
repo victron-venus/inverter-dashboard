@@ -8,6 +8,8 @@ Dieses Projekt eignet sich für Python-Server, Container und NAS. Daneben gibt e
 
 ![Architektur mit getrennten Pfaden für Browser, Python, native Telemetrie, Controller, Home Assistant und Web Push](docs/assets/architecture.svg)
 
+[Ablauf und Ergebnisse](docs/process-and-results.md): farbige Diagramme zum Arbeitsablauf und zur Ereigniszeit, konkrete Korrekturen und Grenzen der Prüfung.
+
 ## Funktionen
 
 - Netz und Verbrauch je Phase, DC-/AC-Solarleistung, Batteriegeräte, Fahrzeugladung, native Verbraucher, Wasserstand sowie Pumpen- und Ventilzustand. Nicht verfügbare Daten bleiben von gemessenen Nullwerten unterscheidbar.

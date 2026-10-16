@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="628" viewBox="0 0 1280 628" role="img" aria-labelledby="title desc">
+  <title id="title">Update process: source, review, official UI, build and deployment verification</title>
+  <desc id="desc">A five-stage workflow, not a report of completed work. Reproduce a source issue; test and review it; for UI changes adopt verified official Vue bytes; build and verify the complete backend release; then verify the exact installation and preserved state. Source tests, published artifacts and live acceptance are separate evidence.</desc>
+  <defs><style>text{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#172b4d}.title{font-size:34px;font-weight:750}.subtitle{font-size:18px}.label{font-size:23px;font-weight:700}.body{font-size:18px}.small{font-size:16px}.number{font-size:20px;font-weight:750}.big{font-size:34px;font-weight:750}.formula{font-size:25px;font-weight:650}.line{fill:none;stroke:#49617f;stroke-width:3;marker-end:url(#arrow)}</style><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#49617f"/></marker></defs>
+  <rect width="1280" height="628" rx="24" fill="#f5f8fc"/>
+  <rect x="40" y="30" width="355" height="34" rx="17" fill="#e9e3fa"/>
+  <text x="56" y="53" class="small">WORKFLOW • NOT A STATUS REPORT</text>
+  <text x="40" y="111" class="title">From source change to verified delivery</text>
+  <text x="40" y="145" class="subtitle">Evidence belongs to an exact source, artifact and installation — keep those identities separate.</text>
+  <rect x="40" y="190" width="224" height="282" rx="18" fill="#e4edff" stroke="#5a83da" stroke-width="2"/>
+  <circle cx="74" cy="226" r="18" fill="#ffffff"/>
+  <text x="68" y="233" class="number">1</text>
+  <text x="58" y="276" class="label">Source</text>
+  <text x="58" y="314" class="body">Reproduce the issue.</text>
+  <text x="58" y="341" class="body">Identify Python or Vue</text>
+  <text x="58" y="368" class="body">as the change owner.</text>
+  <path d="M 58 388 H 246" stroke="#5a83da" stroke-width="1"/>
+  <text x="58" y="419" class="small">Record the behavior</text>
+  <text x="58" y="444" class="small">and expected result.</text>
+  <path d="M 267 330 H 279" class="line"/>
+  <rect x="284" y="190" width="224" height="282" rx="18" fill="#e1f3ef" stroke="#359385" stroke-width="2"/>
+  <circle cx="318" cy="226" r="18" fill="#ffffff"/>
+  <text x="312" y="233" class="number">2</text>
+  <text x="302" y="276" class="label">Test + review</text>
+  <text x="302" y="314" class="body">Add a regression.</text>
+  <text x="302" y="341" class="body">Run required checks.</text>
+  <text x="302" y="368" class="body">Review exact changes.</text>
+  <path d="M 302 388 H 490" stroke="#359385" stroke-width="1"/>
+  <text x="302" y="419" class="small">Passing source tests</text>
+  <text x="302" y="444" class="small">do not prove delivery.</text>
+  <path d="M 511 330 H 523" class="line"/>
+  <rect x="528" y="190" width="224" height="282" rx="18" fill="#eee6fb" stroke="#9070c8" stroke-width="2"/>
+  <circle cx="562" cy="226" r="18" fill="#ffffff"/>
+  <text x="556" y="233" class="number">3</text>
+  <text x="546" y="276" class="label">Official UI</text>
+  <text x="546" y="314" class="body">If the UI changed:</text>
+  <text x="546" y="341" class="body">verify its official files</text>
+  <text x="546" y="368" class="body">and adopt exact bytes.</text>
+  <path d="M 546 388 H 734" stroke="#9070c8" stroke-width="1"/>
+  <text x="546" y="419" class="small">No UI change?</text>
+  <text x="546" y="444" class="small">Keep recorded assets.</text>
+  <path d="M 755 330 H 767" class="line"/>
+  <rect x="772" y="190" width="224" height="282" rx="18" fill="#fff0dc" stroke="#c18b3e" stroke-width="2"/>
+  <circle cx="806" cy="226" r="18" fill="#ffffff"/>
+  <text x="800" y="233" class="number">4</text>
+  <text x="790" y="276" class="label">Backend build</text>
+  <text x="790" y="314" class="body">Bind source + version.</text>
+  <text x="790" y="341" class="body">Verify every required</text>
+  <text x="790" y="368" class="body">published output.</text>
+  <path d="M 790 388 H 978" stroke="#c18b3e" stroke-width="1"/>
+  <text x="790" y="419" class="small">A partial build is</text>
+  <text x="790" y="444" class="small">not a complete release.</text>
+  <path d="M 999 330 H 1011" class="line"/>
+  <rect x="1016" y="190" width="224" height="282" rx="18" fill="#e2eef8" stroke="#578aa7" stroke-width="2"/>
+  <circle cx="1050" cy="226" r="18" fill="#ffffff"/>
+  <text x="1044" y="233" class="number">5</text>
+  <text x="1034" y="276" class="label">Deployment</text>
+  <text x="1034" y="314" class="body">Match installed bytes.</text>
+  <text x="1034" y="341" class="body">Check routes, data</text>
+  <text x="1034" y="368" class="body">and preserved state.</text>
+  <path d="M 1034 388 H 1222" stroke="#578aa7" stroke-width="1"/>
+  <text x="1034" y="419" class="small">Report observed checks</text>
+  <text x="1034" y="444" class="small">and remaining limits.</text>
+  <rect x="40" y="506" width="1200" height="93" rx="16" fill="#ffffff" stroke="#c7d3e3"/>
+  <text x="60" y="540" class="body">A merged PR is a source change. A verified artifact still needs installation acceptance.</text>
+  <text x="60" y="573" class="small">This diagram does not claim a release, rollout, hardware action or OS notification has completed.</text>
+
+</svg>
