@@ -6,6 +6,10 @@
 
 Цей проєкт призначений для Python-сервера, контейнера або NAS. Є також [реалізація Go](https://github.com/victron-venus/inverter-dashboard-go) та [нативний застосунок](https://github.com/victron-venus/inverter-desktop); їхні пакети не взаємозамінні.
 
+[![Інтерфейс Inverter Dashboard v1.5.0 у перспективі](images/dashboard-hero.png)](images/Screenshot.png)
+
+*Ілюстрація інтерфейсу версії 1.5.0. [Відкрити початковий знімок екрана](images/Screenshot.png).*
+
 ![Архітектура: браузер, Python та окремі джерела телеметрії, керування, Home Assistant і Web Push](docs/assets/architecture.svg)
 
 [Процес і результати](docs/process-and-results.md): кольорові схеми роботи й часу подій, конкретні виправлення та межі перевірки.

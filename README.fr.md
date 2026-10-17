@@ -6,6 +6,10 @@ Un tableau de bord web à héberger soi-même pour les installations Victron. Le
 
 Ce dépôt convient à un serveur Python, un conteneur ou un NAS. Il existe aussi une [version Go](https://github.com/victron-venus/inverter-dashboard-go) et une [application native](https://github.com/victron-venus/inverter-desktop) ; leurs paquets ne sont pas interchangeables.
 
+[![Inverter Dashboard v1.5.0 en perspective](images/dashboard-hero.png)](images/Screenshot.png)
+
+*Illustration de l’interface de la version 1.5.0. [Voir la capture originale](images/Screenshot.png).*
+
 ![Architecture séparant navigateur, Python, télémétrie native, contrôleur, Home Assistant et Web Push](docs/assets/architecture.svg)
 
 [Processus et résultats](docs/process-and-results.md) : schémas en couleur du déroulement et de l’heure des événements, corrections concrètes et limites de validation.
