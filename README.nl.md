@@ -6,6 +6,10 @@ Een zelf te hosten webdashboard voor Victron-installaties. De Python/FastAPI-ser
 
 Dit project is bedoeld voor een Python-server, container of NAS. Er zijn ook een [Go-implementatie](https://github.com/victron-venus/inverter-dashboard-go) en een [native toepassing](https://github.com/victron-venus/inverter-desktop); de pakketten zijn niet onderling uitwisselbaar.
 
+[![Inverter Dashboard v1.5.0 in perspectief](images/dashboard-hero.png)](images/Screenshot.png)
+
+*Illustratie van de interface uit v1.5.0. [Bekijk de oorspronkelijke schermafbeelding](images/Screenshot.png).*
+
 ![Architectuur met afzonderlijke paden voor browser, Python, native telemetrie, controller, Home Assistant en Web Push](docs/assets/architecture.svg)
 
 [Proces en resultaten](docs/process-and-results.md): kleurendiagrammen van de werkwijze en gebeurtenistijd, concrete correcties en grenzen van de validatie.

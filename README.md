@@ -10,6 +10,10 @@ A self-hosted web dashboard for Victron systems. Python/FastAPI connects directl
 
 Use this repository for a Python service, container or NAS installation. [inverter-dashboard-go](https://github.com/victron-venus/inverter-dashboard-go) provides the Go implementation; [inverter-desktop](https://github.com/victron-venus/inverter-desktop) provides the native application. These are related applications, not interchangeable packages.
 
+[![Inverter Dashboard v1.5.0 showing power, battery, solar and home controls in perspective](images/dashboard-hero.png)](images/Screenshot.png)
+
+*Interface illustration from v1.5.0. [View the original screenshot](images/Screenshot.png).*
+
 ![Architecture: browser connected to Python, with separate native telemetry, controller, Home Assistant and Web Push paths](docs/assets/architecture.svg)
 
 [Process and results](docs/process-and-results.md): colorful workflow and event-time diagrams, concrete corrections, and the limits of validation.
