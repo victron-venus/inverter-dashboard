@@ -1,22 +1,22 @@
 {
   "package": "inverter-dashboard-vue",
-  "version": "2.2.8",
+  "version": "2.2.9",
   "files": [
     {
-      "path": "assets/IntervalEnergy-BqsvacbW.js",
-      "sha256": "f9fa25bf993f75d2eeb65afb62ca99528db3522043b03c0d9aa1e359eee16e5b"
+      "path": "assets/IntervalEnergy-BfvpjwGX.js",
+      "sha256": "84f6080bf0eb226d3590067fa6dba43005e4a2c65d93cf1941934392f3e5128b"
     },
     {
-      "path": "assets/IntervalEnergy-C1d_McWq.css",
-      "sha256": "0ed7043ff5b5912c36a99328efe47e7634997469d2fd5d93b25d4b5b5dbe95f7"
+      "path": "assets/IntervalEnergy-CvdBk0Qz.css",
+      "sha256": "77e2493c2bfe2399d8881d9930ccf32655ef1f0c27c14707b8830647fef8aca6"
     },
     {
-      "path": "assets/TariffEditor-B7b79H83.css",
-      "sha256": "e52de57d2d3b2844d05095bcd5399785490a80173f237a4ac2fd30d96cd9c36d"
+      "path": "assets/TariffEditor-Cl3rXhdy.js",
+      "sha256": "51b539ea211920554ebf41c1126b91816aa20bcb96eeb7666e80dac982998128"
     },
     {
-      "path": "assets/TariffEditor-qYKGQAzo.js",
-      "sha256": "5c358d6bb387515b168bcbe2e69d127a773c6d4fc303ab1cdb1322ae7465cc14"
+      "path": "assets/TariffEditor-CmM0qVdn.css",
+      "sha256": "fc4b9e317b04987eddc3644f24650b21019dbe3d5b59e503d68c09e513c98004"
     },
     {
       "path": "assets/af-DK_CjRn6-CZxsvT2y.js",
@@ -159,12 +159,12 @@
       "sha256": "6d9e56f7dc42978594aaaa4a53482112afd08d83f5a3ee787ee730054a660668"
     },
     {
-      "path": "assets/index-BtsBC84H.css",
-      "sha256": "39ab95629706660e22c15fe841612e224f7efcd72a39d0797e1c6a91576f81f7"
+      "path": "assets/index-CWuQHA0X.css",
+      "sha256": "488dd84bc8d72f5ba56eadcbe40039efbd569dc4716dd9b27092a72af81cce6a"
     },
     {
-      "path": "assets/index-DBa-UE6g.js",
-      "sha256": "acfef86357d505d7b9b85d187bffe20f3419b3bc1adb8242454882ee97a4f50c"
+      "path": "assets/index-Qt0NRt0N.js",
+      "sha256": "bc6157ccf6443b839aee93c625b9d0017f86426fa7c09623ccb7b1fa71dbb99a"
     },
     {
       "path": "assets/is-BT8UVRze-DWEBuJpb.js",
@@ -348,7 +348,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "703238ca9340a809f3b0b9c7831e03eb1b3f9c8d758f85bf365e15cad709166d"
+      "sha256": "c2d513a05d681e54027c827bd41c3ca343ece8d06d930b36f2d45be7e986f385"
     },
     {
       "path": "manifest.webmanifest",

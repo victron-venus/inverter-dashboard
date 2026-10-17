@@ -12,8 +12,19 @@ repos:
   rev: v6.0.0
   hooks:
   - id: end-of-file-fixer
+    # Published generated assets are immutable and checked byte-for-byte below.
+    exclude: ^src/inverter_dashboard/static/assets/
   - id: trailing-whitespace
+    exclude: ^src/inverter_dashboard/static/assets/
 - repo: https://github.com/pylint-dev/pylint
   rev: v4.0.6
   hooks:
   - id: pylint
+- repo: local
+  hooks:
+  - id: verify-vue-release-bytes
+    name: Verify published Vue bytes survive Git checkout
+    language: system
+    entry: python3 -B -m unittest discover -s scripts -p test_vue_checkout.py
+    pass_filenames: false
+    always_run: true

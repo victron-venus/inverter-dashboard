@@ -20,7 +20,7 @@ Ce dépôt convient à un serveur Python, un conteneur ou un NAS. Il existe auss
 - Historique, prévisions et énergie quotidienne avec indication de couverture. Une journée incomplète n'est pas présentée comme complète ; les éditeurs de tarif restent hors de la ligne de synthèse compacte.
 - Web Push facultatif, abonnements persistants, déduplication et initialisation silencieuse après reconnexion.
 
-Les traductions des README ne signifient pas que la nouvelle interface à six langues est déjà installée. [source-info.json](src/inverter_dashboard/static/source-info.json) identifie l'artefact Vue embarqué. Le [guide des langues](docs/i18n.md) distingue documentation, sources Vue et publication adoptée.
+L’interface intégrée provient de l’artefact officiel **Vue v2.2.9** (version du paquet `2.2.9`, source `f86943ebc764688c32bc4389f2276bc12682a90e`). La [preuve de provenance](src/inverter_dashboard/static/source-info.json) contient les métadonnées et empreintes des fichiers. Les fichiers sont identiques octet pour octet à la RC validée `v2.2.9-rc.2` (exécution de compilation `39039690585`). Les textes de l’interface, les dates, les heures, les erreurs conservées de l’application et les libellés des thèmes sont disponibles en anglais, russe, ukrainien, allemand, français et néerlandais ; les messages provenant de sources externes conservent leur texte d’origine. Voir le [guide des langues](docs/i18n.md).
 
 ## Démarrage local
 

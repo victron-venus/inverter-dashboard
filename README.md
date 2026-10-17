@@ -24,7 +24,7 @@ Use this repository for a Python service, container or NAS installation. [invert
 - Controller history, forecasts and daily grid-energy provenance when supplied. A partial day is not represented as a complete day; tariff and cost controls live in their dedicated UI rather than inflating the summary row.
 - Optional encrypted Web Push with persistent subscriptions, deduplication and silent reconnect priming. Browser/OS permission is separate from in-app banners.
 
-The bundled UI is identified by [its source manifest](src/inverter_dashboard/static/source-info.json). These README translations do **not** imply that a new six-language UI has already shipped. See [language support](docs/i18n.md) for the distinction between documentation, shared Vue source and adopted release bytes.
+The embedded UI is the official **Vue v2.2.9** artifact (package `2.2.9`, source `f86943ebc764688c32bc4389f2276bc12682a90e`). [Its receipt](src/inverter_dashboard/static/source-info.json) records the exact artifact provenance and file hashes. The files are byte-identical to the accepted RC `v2.2.9-rc.2` (build run `39039690585`). Interface text, dates, times, retained application errors and theme labels support English, Russian, Ukrainian, German, French and Dutch; provider-supplied messages retain their original text. See [language support](docs/i18n.md).
 
 ## Start locally
 

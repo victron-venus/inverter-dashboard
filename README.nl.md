@@ -20,7 +20,7 @@ Dit project is bedoeld voor een Python-server, container of NAS. Er zijn ook een
 - Historie, prognoses en dagenergie met informatie over de dekking. Een onvolledige dag wordt niet als volledig weergegeven; tariefeditors staan buiten de compacte samenvattingsregel.
 - Optionele Web Push met blijvende abonnementen, deduplicatie en stille initialisatie na opnieuw verbinden.
 
-Vertaalde README-bestanden betekenen niet dat de nieuwe interface met zes talen al is geïnstalleerd. Het opgenomen Vue-pakket staat in [source-info.json](src/inverter_dashboard/static/source-info.json). [Taalondersteuning](docs/i18n.md) beschrijft het verschil tussen documentatie, Vue-broncode en opgenomen officiële uitgave.
+Ingebouwd is het officiële artefact **Vue v2.2.9** (pakketversie `2.2.9`, bron `f86943ebc764688c32bc4389f2276bc12682a90e`). Het [herkomstbestand](src/inverter_dashboard/static/source-info.json) bevat metadata en bestandshashes. De bestanden zijn byte-identiek aan de goedgekeurde RC `v2.2.9-rc.2` (buildrun `39039690585`). Interfaceteksten, datums, tijden, bewaarde toepassingsfouten en themalabels ondersteunen Engels, Russisch, Oekraïens, Duits, Frans en Nederlands; berichten van externe bronnen behouden hun oorspronkelijke tekst. Zie [taalondersteuning](docs/i18n.md).
 
 ## Lokaal starten
 
