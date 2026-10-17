@@ -1,172 +1,31 @@
-# System Architecture
+# System architecture
 
-## Data Flow
-
-```mermaid
-flowchart LR
-    subgraph Venus["Venus OS"]
-        MQTT["MQTT Broker"]
-        INV["inverter-control"]
-    end
-
-    subgraph GX["Cerbo GX"]
-        DP["dbus-pump<br/>(water)"]
-    end
-
-    subgraph Dashboard["inverter-dashboard"]
-        WS["WebSocket"]
-        API["API Server"]
-        HA["Home Assistant<br/>(optional, non-water)"]
-    end
-
-    subgraph Client["Browser Clients"]
-        UI["Single Page App"]
-    end
-
-    INV -->|"inverter/state"| MQTT
-    MQTT -->|"subscribe"| WS
-    DP -->|"N/&lt;portal&gt;/tank/21/Level<br/>N/&lt;portal&gt;/pump/*/State<br/>(CERBO_PORTAL_ID)"| MQTT
-    WS -->|"push state"| UI
-    HA -->|"booleans / appliance sensors"| API
-    API -->|"merge"| WS
-
-    style WS fill:#4ecdc4,color:#fff
-    style API fill:#9b59b6,color:#fff
-```
-
-## WebSocket Update Flow
-
-```mermaid
-sequenceDiagram
-    participant Broker as MQTT Broker
-    participant WS as WebSocket Server
-    participant UI as Browser UI
-
-    Broker->>WS: inverter/state JSON
-    WS->>WS: Parse & validate
-    WS->>UI: WebSocket frame
-    UI->>UI: Update charts/cards
-
-    Note over UI: uPlot re-renders
-```
-
-## State Merging
-
-```mermaid
-flowchart TB
-    subgraph Sources["State Sources"]
-        MQTT["inverter/state<br/>from Cerbo"]
-        HA["HA sensors<br/>Direct poll"]
-    end
-
-    subgraph Merge["State Merge"]
-        S1["Base MQTT state"]
-        S2["HA sensor data"]
-        M["Merge logic"]
-    end
-
-    subgraph Output["Final State"]
-        F["Combined state\nfor UI"]
-    end
-
-    MQTT --> S1
-    HA --> S2
-    S1 --> M
-    S2 --> M
-    M --> F
-
-    style M fill:#9b59b6,color:#fff
-    style F fill:#4ecdc4,color:#fff
-```
-
-## Runbook: Troubleshooting
-
-### Dashboard Shows "Connecting..."
-
-**Symptoms:**
-- WebSocket never establishes
-- Dashboard stuck on loading screen
-
-**Actions:**
-```bash
-# Check MQTT connectivity
-docker exec inverter-dashboard nc -zv MQTT_HOST 1883
-
-# Verify broker has data
-docker exec inverter-dashboard mosquitto_sub -v -t 'inverter/state' -C 1
-
-# Check logs
-docker logs inverter-dashboard --tail 50
-```
-
-### Stale Data
-
-**Symptoms:**
-- Dashboard shows old values
-- Charts not updating
-
-**Actions:**
-```bash
-# Verify inverter-control is publishing
-mosquitto_sub -v -t 'inverter/state' -C 5
-
-# Check WebSocket connection
-# Open browser devtools → Network → ws://... → messages
-
-# Restart dashboard
-docker restart inverter-dashboard
-```
-
-### Home Assistant Sensors Missing
-
-**Symptoms:**
-- Appliance status not showing
-
-**Actions:**
-```bash
-# Verify HA is reachable
-curl -s -H "Authorization: Bearer $HA_TOKEN" \
-  $HA_URL/api/states/sensor.home_totalusage_1s | jq
-
-# Check site_config.py has correct entity IDs
-docker exec inverter-dashboard cat /app/config/site_config.py
-```
-
-### Water Level / Valve / Pump Missing
-
-**Symptoms:**
-- Water card not showing values
-
-**Actions:**
-```bash
-# Water comes from dbus-pump via Cerbo MQTT (not HA).
-# Verify dbus-pump publishes on the broker the dashboard connects to:
-mosquitto_sub -v -t 'N/+/tank/+/Level' -t 'N/+/pump/+/State' -C 5
-
-# Check CERBO_PORTAL_ID is set and matches `dbus-send --system --print-reply
-# --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames` output on the GX,
-# and WATER_TANK/PUMP/VALVE_INSTANCE match dbus-pump local_config.py.
-docker exec inverter-dashboard env | grep -E 'CERBO|WATER'
-```
-
-### Water Data Flow
-
-Water is sourced exclusively from [dbus-pump](https://github.com/victron-venus/dbus-pump)
-on the Cerbo GX — no Home Assistant involved:
+The Python backend serves the shared Vue dashboard, combines telemetry from the
+selected native source with controller state and optional Home Assistant data,
+and validates browser commands before dispatch.
 
 ```mermaid
 flowchart LR
-    DP["dbus-pump"] --> TANK["tank.ha_tank21"]
-    DP --> PUMP["pump.startstop1/2"]
-    TANK --> BRK["MQTT broker<br/>(bridged with Cerbo)"]
-    PUMP --> BRK
-    BRK -->|"N/&lt;portal&gt;/tank/21/Level<br/>N/&lt;portal&gt;/pump/*/State"| MS["MqttState._handle_water"]
-    MS --> WS["WebSocket → browser water card"]
+    Native["Cerbo MQTT or HTTPS gateway"] --> Backend["Python backend"]
+    Controller["inverter-control state"] --> Backend
+    HA["Configured Home Assistant entities"] --> Backend
+    Backend -->|"WebSocket state"| Browser["Shared Vue dashboard"]
+    Browser -->|"Authenticated commands"| Backend
+    Backend -->|"Source and freshness checks"| Native
 ```
 
----
+Native services, controller messages and configured HA entities have distinct
+field ownership. Source changes retire the old connection's authority; retained
+or stale telemetry does not grant permission to issue commands. A transport
+accepting a command is separate from observing its physical result.
 
-## Related Documentation
+The detailed [architecture and source map](../../docs/architecture.md) describes the current
+implementation. Use [configuration](../../docs/configuration.md) for supported keys, paths and
+precedence, and [operations and troubleshooting](../../docs/wiki/Troubleshooting.md) for installation
+and read-only checks. The browser bundle is maintained in
+[inverter-dashboard-vue](https://github.com/victron-venus/inverter-dashboard-vue).
 
-- [inverter-control System Architecture](../inverter-control/.github/docs/system-architecture.md)
-- [ADR-001: MQTT Bridge Architecture](../inverter-control/.github/docs/adr-001-grid-zero-architecture.md)
+## Related documentation
+
+- [inverter-control architecture](https://github.com/victron-venus/inverter-control/blob/main/.github/docs/system-architecture.md)
+- [ADR-002: MQTT bridge architecture](https://github.com/victron-venus/inverter-control/blob/main/.github/docs/adr-001-grid-zero-architecture.md#adr-002-mqtt-bridge-architecture)
