@@ -10,14 +10,17 @@ flowchart LR
     Controller["inverter-control state"] --> Backend
     HA["Configured Home Assistant entities"] --> Backend
     Backend -->|"WebSocket state"| Browser["Shared Vue dashboard"]
-    Browser -->|"Authenticated commands"| Backend
-    Backend -->|"Source and freshness checks"| Native
+    Browser -->|"Commands; token auth when configured"| Backend
+    Backend -->|"Command after source and freshness checks"| Native
 ```
 
 Native services, controller messages and configured HA entities have distinct
 field ownership. Source changes retire the old connection's authority; retained
 or stale telemetry does not grant permission to issue commands. A transport
 accepting a command is separate from observing its physical result.
+
+The backend checks command tokens when `DASHBOARD_SECRET` is configured; an empty
+secret disables token authentication.
 
 The detailed [architecture and source map](../../docs/architecture.md) describes the current
 implementation. Use [configuration](../../docs/configuration.md) for supported keys, paths and
