@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.29] - 2026-10-17
+
+### Changed
+
+- Embed the verified official Vue 2.2.9 stable distribution, with interface text in
+  English, Russian, Ukrainian, German, French and Dutch. Localize dates, times,
+  retained application errors and theme labels while keeping provider-supplied
+  messages intact.
+- Update the SHA-pinned shared CI and release toolkit used by the reviewed
+  dependency maintenance changes.
+
+### Fixed
+
+- Wait for the loaded dashboard's expected telemetry and connected transport in
+  browser acceptance checks, instead of waiting for background network traffic
+  to stop. Public pages must expose their read-only marker and expected telemetry.
+- Keep all eleven application scenarios and existing time limits. Add eight
+  isolated browser controls that reject missing JavaScript, unavailable or
+  incorrect telemetry and missing public-mode identification, while allowing
+  noncritical requests to remain active, including when telemetry is requested
+  before the noncritical request arrives.
+- Run readiness controls sequentially in fresh browser contexts so deliberately
+  pending requests cannot exhaust another control's shared connection pool.
+  Preserve per-control traffic diagnostics on failure.
+- Preserve official generated frontend assets during whitespace formatting and
+  verify their published hashes through a Git checkout in every pre-commit run.
+
+### Upgrade
+
+Use the documented installation or container update procedure for the selected
+release channel and retain the previous immutable release for rollback. Preserve local configuration, credentials
+and existing Kubernetes persistent volumes; no configuration-format migration is
+introduced. Reload the browser after updating to load the packaged interface.
+Existing control permissions, connection settings and notification permissions
+remain in effect. Verify the chosen language and live data on the deployment
+before accepting it for normal use.
+
+### Security
+
+Import frontend files only from an explicit official release after verifying its
+archive, file inventory and source-bound release metadata; do not substitute a
+local frontend build. Synthetic browser-control pages are selected from fixed
+HTML rather than interpolating request parameters, and unknown modes return 404.
+These release and browser checks do not establish hardware acceptance or delivery
+of operating-system notifications. Keep the deployment's authentication, network
+isolation and independent equipment safeguards in place.
+
 ## [1.8.28] - 2026-10-14
 
 ### Changed

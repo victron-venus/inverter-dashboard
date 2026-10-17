@@ -20,7 +20,7 @@ Dieses Projekt eignet sich für Python-Server, Container und NAS. Daneben gibt e
 - Verlauf, Prognosen und Tagesenergie mit Angaben zur Datenabdeckung. Ein unvollständiger Tag wird nicht als vollständig ausgegeben. Tarifeditoren stehen außerhalb der kompakten Zusammenfassungszeile.
 - Optionale Web-Push-Benachrichtigungen mit dauerhaften Abonnements, Deduplizierung und stiller Initialisierung nach Wiederverbindung.
 
-Die übersetzten READMEs belegen nicht, dass die neue sechssprachige Oberfläche bereits installiert ist. Maßgeblich ist das eingebundene Vue-Artefakt in [source-info.json](src/inverter_dashboard/static/source-info.json). [Sprachunterstützung](docs/i18n.md) beschreibt diese getrennten Veröffentlichungen.
+Eingebettet ist das offizielle Artefakt **Vue v2.2.9** (Paketversion `2.2.9`, Quellstand `f86943ebc764688c32bc4389f2276bc12682a90e`). Der [Herkunftsnachweis](src/inverter_dashboard/static/source-info.json) enthält Metadaten und Datei-Hashes. Die Dateien sind bytegleich mit der akzeptierten RC `v2.2.9-rc.2` (Build-Lauf `39039690585`). Oberflächentexte, Datum, Uhrzeit, gespeicherte Anwendungsfehler und Designbezeichnungen unterstützen Englisch, Russisch, Ukrainisch, Deutsch, Französisch und Niederländisch; Meldungen externer Quellen behalten ihren Originaltext. Siehe [Sprachunterstützung](docs/i18n.md).
 
 ## Lokal starten
 

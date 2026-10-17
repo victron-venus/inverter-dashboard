@@ -1,37 +1,37 @@
 {
   "schema": 1,
   "repository": "https://github.com/victron-venus/inverter-dashboard-vue",
-  "source_commit": "ff3865d373cc3819b83db0328d9855a2bdec9859",
-  "package_version": "2.2.8",
-  "package_lock_sha256": "86ef403641b7edd5a0a2ecee3366d367f6f182cdf618a4aedaf2c21ea141aff7",
+  "source_commit": "f86943ebc764688c32bc4389f2276bc12682a90e",
+  "package_version": "2.2.9",
+  "package_lock_sha256": "9d501356285abebc3d1d7c643d61798409558a8c0c707bd2824ca6a73b34126b",
   "build_command": "Official GitHub Actions publication; imported without rebuilding",
-  "release_tag": "v2.2.8",
-  "origin_tag": "v2.2.8-rc.1",
-  "release_plan_sha256": "941c277a513922b503424b5faa7f86d7d56d34e3cd2e29055b5a2b8b1c692827",
-  "release_run_id": 38861405495,
-  "release_receipt_sha256": "54901adb3e9be61b67c5a0c5ead6115b4ac463eca5516b5dd4c14ba925aa747a",
-  "release_manifest_sha256": "0638827325079b8a13f3bb0ae051cfd91a45bafe6de828e153aba5467a56bb4c",
-  "archive_sha256": "2d413049f3b6536d24f95227662135fec44944d305d8841d9d47b04d892b0715",
+  "release_tag": "v2.2.9",
+  "origin_tag": "v2.2.9-rc.2",
+  "release_plan_sha256": "79aef07b0b61568be15d666503d959940d4ef68834fa1cd870a175e2290f52b0",
+  "release_run_id": 39039690585,
+  "release_receipt_sha256": "12c450a38c079472f3fae9f08a861e39e4c921f815f63c45617c1da22ab830a9",
+  "release_manifest_sha256": "37e85abfbf847d59b3166bccf01de2a0d236264c278bc9e7f1652a3a464221fa",
+  "archive_sha256": "567a588ea682680704a58d97ecc8f64029c9434eb55952cb2f8e2c195b607a03",
   "files": [
     {
-      "path": "assets/IntervalEnergy-BqsvacbW.js",
-      "sha256": "f9fa25bf993f75d2eeb65afb62ca99528db3522043b03c0d9aa1e359eee16e5b",
-      "size": 10313
+      "path": "assets/IntervalEnergy-BfvpjwGX.js",
+      "sha256": "84f6080bf0eb226d3590067fa6dba43005e4a2c65d93cf1941934392f3e5128b",
+      "size": 10554
     },
     {
-      "path": "assets/IntervalEnergy-C1d_McWq.css",
-      "sha256": "0ed7043ff5b5912c36a99328efe47e7634997469d2fd5d93b25d4b5b5dbe95f7",
+      "path": "assets/IntervalEnergy-CvdBk0Qz.css",
+      "sha256": "77e2493c2bfe2399d8881d9930ccf32655ef1f0c27c14707b8830647fef8aca6",
       "size": 1049
     },
     {
-      "path": "assets/TariffEditor-B7b79H83.css",
-      "sha256": "e52de57d2d3b2844d05095bcd5399785490a80173f237a4ac2fd30d96cd9c36d",
-      "size": 122887
+      "path": "assets/TariffEditor-Cl3rXhdy.js",
+      "sha256": "51b539ea211920554ebf41c1126b91816aa20bcb96eeb7666e80dac982998128",
+      "size": 9208926
     },
     {
-      "path": "assets/TariffEditor-qYKGQAzo.js",
-      "sha256": "5c358d6bb387515b168bcbe2e69d127a773c6d4fc303ab1cdb1322ae7465cc14",
-      "size": 6663309
+      "path": "assets/TariffEditor-CmM0qVdn.css",
+      "sha256": "fc4b9e317b04987eddc3644f24650b21019dbe3d5b59e503d68c09e513c98004",
+      "size": 122887
     },
     {
       "path": "assets/af-DK_CjRn6-CZxsvT2y.js",
@@ -209,14 +209,14 @@
       "size": 2434
     },
     {
-      "path": "assets/index-BtsBC84H.css",
-      "sha256": "39ab95629706660e22c15fe841612e224f7efcd72a39d0797e1c6a91576f81f7",
-      "size": 35448
+      "path": "assets/index-CWuQHA0X.css",
+      "sha256": "488dd84bc8d72f5ba56eadcbe40039efbd569dc4716dd9b27092a72af81cce6a",
+      "size": 36750
     },
     {
-      "path": "assets/index-DBa-UE6g.js",
-      "sha256": "acfef86357d505d7b9b85d187bffe20f3419b3bc1adb8242454882ee97a4f50c",
-      "size": 216420
+      "path": "assets/index-Qt0NRt0N.js",
+      "sha256": "bc6157ccf6443b839aee93c625b9d0017f86426fa7c09623ccb7b1fa71dbb99a",
+      "size": 386526
     },
     {
       "path": "assets/is-BT8UVRze-DWEBuJpb.js",
@@ -445,12 +445,12 @@
     },
     {
       "path": "build-info.json",
-      "sha256": "ea04195bc15d902a9db41c4bf0555ee0852cb5337c855a023c0fb0ebf2b2ceb9",
+      "sha256": "35a5425d40eba89afac8b1dc0a9c4cf8f5514fa43c6026f90e2362c35c4a3015",
       "size": 13114
     },
     {
       "path": "index.html",
-      "sha256": "703238ca9340a809f3b0b9c7831e03eb1b3f9c8d758f85bf365e15cad709166d",
+      "sha256": "c2d513a05d681e54027c827bd41c3ca343ece8d06d930b36f2d45be7e986f385",
       "size": 1065
     },
     {
