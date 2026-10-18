@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.30] - 2026-10-18
+
+### Fixed
+
+- Import the verified Vue 2.2.10 dashboard release, which limits tariff cost intervals to 1–366 inclusive calendar dates across daylight-saving transitions and leap years.
+
+### Changed
+
+- Route Dependabot metadata approval through the trusted default branch while preserving the existing author and review policy.
+
+### Upgrade
+
+Use the documented upgrade procedure and preserve local configuration and data. No data migration is required. Keep the previous immutable release available for rollback.
+
+### Security
+
+The frontend import verifies the published source, manifest, receipt and archive bytes. Existing authentication and release-validation requirements remain in effect; publication does not establish physical-device acceptance.
+
 ## [1.8.29] - 2026-10-17
 
 ### Changed
