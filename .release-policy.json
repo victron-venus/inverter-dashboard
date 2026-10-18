@@ -64,7 +64,7 @@
   },
   "single_entry_ci": true,
   "coverage": {
-    "toolkit_ref": "4e4a68b6954a1d4003b8c85c8fbac8e6a5887dab",
+    "toolkit_ref": "21a366f200f0371a10a6de7ad6ca263af230b842",
     "reports": [
       {
         "name": "python",
@@ -79,6 +79,6 @@
   "release_notes": "CHANGELOG.md",
   "toolkit_revision": "5e413f80a4353d328b4529eae57992ac3987e2dd",
   "fuzzing": {
-    "toolkit_ref": "4e4a68b6954a1d4003b8c85c8fbac8e6a5887dab"
+    "toolkit_ref": "21a366f200f0371a10a6de7ad6ca263af230b842"
   }
 }
