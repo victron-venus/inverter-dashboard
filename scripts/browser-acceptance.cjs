@@ -5,6 +5,8 @@ const fs = require('node:fs')
 const http = require('node:http')
 const path = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
+const { waitForHydratedDashboard } = require('./browser-readiness.cjs')
+const { runReadinessControls } = require('./browser-readiness.test.cjs')
 
 const root = path.resolve(__dirname, '..')
 // User flows follow inverter-dashboard-vue; this adapter serves only the exact
@@ -148,6 +150,8 @@ async function main() {
   const origin = `http://127.0.0.1:${server.address().port}`
   let browser, context, page
   try {
+    const readinessControls = await runReadinessControls()
+    fs.writeFileSync(path.join(diagnostics, 'readiness-controls.json'), `${JSON.stringify(readinessControls, null, 2)}\n`)
     const denied = await Promise.all(['/package.json', '/.git/config', '/%2e%2e%2fpackage.json'].map(async route => (await fetch(origin + route)).status))
     assert.deepEqual(denied, [404, 404, 404], 'Only inventoried distribution files may be served')
     browser = await playwright[engine].launch({ headless: true, ...(channel ? { channel } : {}) })
@@ -193,7 +197,8 @@ async function main() {
     page.on('console', message => {
       if (message.type() === 'error') browserErrors.push(message.text())
     })
-    await page.goto(origin, { waitUntil: 'networkidle' })
+    await page.goto(origin, { waitUntil: 'load' })
+    await waitForHydratedDashboard(page, fixture.state.battery_soc)
 
     await scenario('live-telemetry-load-order-and-real-chart', async () => {
       await eventually(() => page.getByTestId('active-load').allTextContents(), rows => rows.length === 3 && rows[0].includes('Fixture refrigerator') && rows[1].includes('-100W'), 'Real load rows should be ordered and preserve generation')
@@ -211,7 +216,8 @@ async function main() {
     await scenario('theme-persists-across-reload', async () => {
       await page.getByRole('button', { name: 'Switch to dark theme' }).click()
       assert.equal(await page.evaluate(() => localStorage.getItem('theme')), 'dark')
-      await page.reload({ waitUntil: 'networkidle' })
+      await page.reload({ waitUntil: 'load' })
+      await waitForHydratedDashboard(page, fixture.state.battery_soc)
       assert(await page.locator('html').evaluate(node => node.classList.contains('dark')))
       await page.getByRole('button', { name: 'Switch to light theme' }).click()
     })
@@ -245,7 +251,8 @@ async function main() {
       await eventually(() => fixture.state.ui_config.settings.show_active_loads, value => value === false, 'Visibility update should reach the backend fixture')
       await page.getByRole('button', { name: 'Close settings' }).click()
       await page.getByTestId('active-loads').waitFor({ state: 'hidden' })
-      await page.reload({ waitUntil: 'networkidle' })
+      await page.reload({ waitUntil: 'load' })
+      await waitForHydratedDashboard(page, fixture.state.battery_soc)
       assert.equal(await page.getByTestId('active-loads').count(), 0)
       fixture.state.ui_config.settings.show_active_loads = true
       broadcast()
@@ -284,7 +291,8 @@ async function main() {
     await scenario('public-mode-has-telemetry-but-no-write-controls', async () => {
       await page.addInitScript(() => { window.__INVERTER_PUBLIC__ = true })
       const before = fixture.commands.length
-      await page.reload({ waitUntil: 'networkidle' })
+      await page.reload({ waitUntil: 'load' })
+      await waitForHydratedDashboard(page, 61, true)
       await page.getByText('PUBLIC · READ-ONLY', { exact: true }).waitFor()
       await page.getByText('61%', { exact: true }).first().waitFor()
       assert.equal(await page.getByRole('button', { name: 'Settings', exact: true }).count(), 0)

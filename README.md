@@ -10,6 +10,10 @@ A self-hosted web dashboard for Victron systems. Python/FastAPI connects directl
 
 Use this repository for a Python service, container or NAS installation. [inverter-dashboard-go](https://github.com/victron-venus/inverter-dashboard-go) provides the Go implementation; [inverter-desktop](https://github.com/victron-venus/inverter-desktop) provides the native application. These are related applications, not interchangeable packages.
 
+[![Inverter Dashboard v1.5.0 showing power, battery, solar and home controls in perspective](images/dashboard-hero.png)](images/Screenshot.png)
+
+*Interface illustration from v1.5.0. [View the original screenshot](images/Screenshot.png).*
+
 ![Architecture: browser connected to Python, with separate native telemetry, controller, Home Assistant and Web Push paths](docs/assets/architecture.svg)
 
 [Process and results](docs/process-and-results.md): colorful workflow and event-time diagrams, concrete corrections, and the limits of validation.
@@ -24,7 +28,7 @@ Use this repository for a Python service, container or NAS installation. [invert
 - Controller history, forecasts and daily grid-energy provenance when supplied. A partial day is not represented as a complete day; tariff and cost controls live in their dedicated UI rather than inflating the summary row.
 - Optional encrypted Web Push with persistent subscriptions, deduplication and silent reconnect priming. Browser/OS permission is separate from in-app banners.
 
-The bundled UI is identified by [its source manifest](src/inverter_dashboard/static/source-info.json). These README translations do **not** imply that a new six-language UI has already shipped. See [language support](docs/i18n.md) for the distinction between documentation, shared Vue source and adopted release bytes.
+The embedded UI is the official **Vue v2.2.9** artifact (package `2.2.9`, source `f86943ebc764688c32bc4389f2276bc12682a90e`). [Its receipt](src/inverter_dashboard/static/source-info.json) records the exact artifact provenance and file hashes. The files are byte-identical to the accepted RC `v2.2.9-rc.2` (build run `39039690585`). Interface text, dates, times, retained application errors and theme labels support English, Russian, Ukrainian, German, French and Dutch; provider-supplied messages retain their original text. See [language support](docs/i18n.md).
 
 ## Start locally
 
