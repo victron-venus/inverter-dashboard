@@ -12,7 +12,7 @@ Use this repository for a Python service, container or NAS installation. [invert
 
 [![Inverter Dashboard v1.5.0 showing power, battery, solar and home controls in perspective](images/dashboard-hero.png)](images/Screenshot.png)
 
-*Interface illustration from v1.5.0. [View the original screenshot](images/Screenshot.png).*
+*Historical interface illustration from v1.5.0; it does not show the current release. [View the original screenshot](images/Screenshot.png).*
 
 ![Architecture: browser connected to Python, with separate native telemetry, controller, Home Assistant and Web Push paths](docs/assets/architecture.svg)
 
@@ -28,7 +28,7 @@ Use this repository for a Python service, container or NAS installation. [invert
 - Controller history, forecasts and daily grid-energy provenance when supplied. A partial day is not represented as a complete day; tariff and cost controls live in their dedicated UI rather than inflating the summary row.
 - Optional encrypted Web Push with persistent subscriptions, deduplication and silent reconnect priming. Browser/OS permission is separate from in-app banners.
 
-The embedded UI is the official **Vue v2.2.9** artifact (package `2.2.9`, source `f86943ebc764688c32bc4389f2276bc12682a90e`). [Its receipt](src/inverter_dashboard/static/source-info.json) records the exact artifact provenance and file hashes. The files are byte-identical to the accepted RC `v2.2.9-rc.2` (build run `39039690585`). Interface text, dates, times, retained application errors and theme labels support English, Russian, Ukrainian, German, French and Dutch; provider-supplied messages retain their original text. See [language support](docs/i18n.md).
+The embedded UI is the official **Vue v2.2.11-beta.1** artifact (package `2.2.11-beta.1`, source `01eae482124cd958dd110e362769ba5817d44b6e`). [Its receipt](src/inverter_dashboard/static/source-info.json) records the exact artifact provenance and file hashes. This is a beta preview, published by build run `39405183480`; it is not an accepted RC or stable release. Interface text, dates, times, retained application errors and theme labels support English, Russian, Ukrainian, German, French and Dutch; provider-supplied messages retain their original text. See [language support](docs/i18n.md).
 
 ## Start locally
 

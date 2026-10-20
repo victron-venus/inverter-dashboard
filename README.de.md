@@ -8,7 +8,7 @@ Dieses Projekt eignet sich für Python-Server, Container und NAS. Daneben gibt e
 
 [![Inverter Dashboard v1.5.0 in perspektivischer Ansicht](images/dashboard-hero.png)](images/Screenshot.png)
 
-*Oberflächenansicht aus v1.5.0. [Original-Screenshot ansehen](images/Screenshot.png).*
+*Historische Oberflächenansicht aus v1.5.0; sie zeigt nicht die aktuelle Version. [Original-Screenshot ansehen](images/Screenshot.png).*
 
 ![Architektur mit getrennten Pfaden für Browser, Python, native Telemetrie, Controller, Home Assistant und Web Push](docs/assets/architecture.svg)
 
@@ -24,7 +24,7 @@ Dieses Projekt eignet sich für Python-Server, Container und NAS. Daneben gibt e
 - Verlauf, Prognosen und Tagesenergie mit Angaben zur Datenabdeckung. Ein unvollständiger Tag wird nicht als vollständig ausgegeben. Tarifeditoren stehen außerhalb der kompakten Zusammenfassungszeile.
 - Optionale Web-Push-Benachrichtigungen mit dauerhaften Abonnements, Deduplizierung und stiller Initialisierung nach Wiederverbindung.
 
-Eingebettet ist das offizielle Artefakt **Vue v2.2.9** (Paketversion `2.2.9`, Quellstand `f86943ebc764688c32bc4389f2276bc12682a90e`). Der [Herkunftsnachweis](src/inverter_dashboard/static/source-info.json) enthält Metadaten und Datei-Hashes. Die Dateien sind bytegleich mit der akzeptierten RC `v2.2.9-rc.2` (Build-Lauf `39039690585`). Oberflächentexte, Datum, Uhrzeit, gespeicherte Anwendungsfehler und Designbezeichnungen unterstützen Englisch, Russisch, Ukrainisch, Deutsch, Französisch und Niederländisch; Meldungen externer Quellen behalten ihren Originaltext. Siehe [Sprachunterstützung](docs/i18n.md).
+Eingebettet ist das offizielle Artefakt **Vue v2.2.11-beta.1** (Paketversion `2.2.11-beta.1`, Quellstand `01eae482124cd958dd110e362769ba5817d44b6e`). Der [Herkunftsnachweis](src/inverter_dashboard/static/source-info.json) enthält Metadaten und Datei-Hashes. Dies ist eine Beta-Vorschau aus Build-Lauf `39405183480`, keine akzeptierte RC oder stabile Veröffentlichung. Oberflächentexte, Datum, Uhrzeit, gespeicherte Anwendungsfehler und Designbezeichnungen unterstützen Englisch, Russisch, Ukrainisch, Deutsch, Französisch und Niederländisch; Meldungen externer Quellen behalten ihren Originaltext. Siehe [Sprachunterstützung](docs/i18n.md).
 
 ## Lokal starten
 

@@ -5,8 +5,11 @@ worker label and ingress host in a local copy before applying them. Keep real
 addresses, cluster contexts, operational notes and credentials under
 `.local-private/` (ignored by Git) or in a private configuration store.
 
-`kustomization.yaml` pins the verified 1.8.24 image built from source `2476df7`
-by digest. Its registry hostname is a placeholder: set `images[].newName` to
+`kustomization.yaml` retains a historical verified 1.8.24 example image built
+from source `2476df7`, pinned by digest. This does not identify the current
+application release or the image running in your cluster. Choose and verify
+the intended release before updating your local manifests.
+The registry hostname is a placeholder: set `images[].newName` to
 the registry holding that exact image in your ignored local copy. This image
 contains `/health/live`; do not pair these probes with an older image.
 The deployment example selects `worker-1`; choose a worker in your own cluster.

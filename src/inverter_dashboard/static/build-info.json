@@ -1,18 +1,18 @@
 {
   "package": "inverter-dashboard-vue",
-  "version": "2.2.10",
+  "version": "2.2.11-beta.1",
   "files": [
     {
       "path": "assets/IntervalEnergy-CvdBk0Qz.css",
       "sha256": "77e2493c2bfe2399d8881d9930ccf32655ef1f0c27c14707b8830647fef8aca6"
     },
     {
-      "path": "assets/IntervalEnergy-DARpL_NT.js",
-      "sha256": "ec59d298f9317cecbe84cc61426cb16cea725de3372ce1606177688caac3270d"
+      "path": "assets/IntervalEnergy-ORkSxITq.js",
+      "sha256": "0d0ea7ddea3fe5f8e7aad4778b70449ae3375a336e744983c9074fd714bf81f6"
     },
     {
-      "path": "assets/TariffEditor-BUimKNGx.js",
-      "sha256": "c7e75f9f43d7e1eaf84b9a75c560b324153637694fd2886307511e08e93270ff"
+      "path": "assets/TariffEditor-CAtt4WZ_.js",
+      "sha256": "137c918bf1d51d8fb4093917bf53c3347dc40d5c70ee69e22bcf1f3079dfef83"
     },
     {
       "path": "assets/TariffEditor-CmM0qVdn.css",
@@ -75,8 +75,8 @@
       "sha256": "8723ffccafbd8900281c392f23c5f694490f73f1f3e5b22b62753a86115d464a"
     },
     {
-      "path": "assets/echarts-vendor-BzQzv9sW.js",
-      "sha256": "eb571f1d24d13cc634b3879c3a479421278163a0a89fb54c9eff4ad97e9c7821"
+      "path": "assets/echarts-vendor-BMzieQeD.js",
+      "sha256": "d3cf70f9ec7f2ae2d84c887688fcc5a23fb646f5c3ce6f589cd2edec52b18028"
     },
     {
       "path": "assets/el-monoton-D3aKqTz2-CuqNQIvE.js",
@@ -159,12 +159,12 @@
       "sha256": "6d9e56f7dc42978594aaaa4a53482112afd08d83f5a3ee787ee730054a660668"
     },
     {
-      "path": "assets/index-BIxosD0B.js",
-      "sha256": "e34a2b799b7b87140e236448931fb5b39d18c40e0d68fff570b6c369226e4758"
-    },
-    {
       "path": "assets/index-CpgewrFn.css",
       "sha256": "3a24e59ea93a47d9eaf72470e9db2b8966ba9dc430536fd1d0c27731a12ce53e"
+    },
+    {
+      "path": "assets/index-Dfc3h3L3.js",
+      "sha256": "1ec5db8c3e21e9ac42fa7717c49f173d46b8e702ae5768ca5be10d72862d9c52"
     },
     {
       "path": "assets/is-BT8UVRze-DWEBuJpb.js",
@@ -348,7 +348,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "67b32b196be22d3d08be73056d844894c1027cdeeb324e0b085ccd982e112b03"
+      "sha256": "879bc50364d5a7426bf9c594ea39adafa11ddaee9fe3d009e2add56a3b3e96ae"
     },
     {
       "path": "manifest.webmanifest",

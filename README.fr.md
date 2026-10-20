@@ -8,7 +8,7 @@ Ce dépôt convient à un serveur Python, un conteneur ou un NAS. Il existe auss
 
 [![Inverter Dashboard v1.5.0 en perspective](images/dashboard-hero.png)](images/Screenshot.png)
 
-*Illustration de l’interface de la version 1.5.0. [Voir la capture originale](images/Screenshot.png).*
+*Illustration historique de l’interface de la version 1.5.0 ; elle ne représente pas la version actuelle. [Voir la capture originale](images/Screenshot.png).*
 
 ![Architecture séparant navigateur, Python, télémétrie native, contrôleur, Home Assistant et Web Push](docs/assets/architecture.svg)
 
@@ -24,7 +24,7 @@ Ce dépôt convient à un serveur Python, un conteneur ou un NAS. Il existe auss
 - Historique, prévisions et énergie quotidienne avec indication de couverture. Une journée incomplète n'est pas présentée comme complète ; les éditeurs de tarif restent hors de la ligne de synthèse compacte.
 - Web Push facultatif, abonnements persistants, déduplication et initialisation silencieuse après reconnexion.
 
-L’interface intégrée provient de l’artefact officiel **Vue v2.2.9** (version du paquet `2.2.9`, source `f86943ebc764688c32bc4389f2276bc12682a90e`). La [preuve de provenance](src/inverter_dashboard/static/source-info.json) contient les métadonnées et empreintes des fichiers. Les fichiers sont identiques octet pour octet à la RC validée `v2.2.9-rc.2` (exécution de compilation `39039690585`). Les textes de l’interface, les dates, les heures, les erreurs conservées de l’application et les libellés des thèmes sont disponibles en anglais, russe, ukrainien, allemand, français et néerlandais ; les messages provenant de sources externes conservent leur texte d’origine. Voir le [guide des langues](docs/i18n.md).
+L’interface intégrée provient de l’artefact officiel **Vue v2.2.11-beta.1** (version du paquet `2.2.11-beta.1`, source `01eae482124cd958dd110e362769ba5817d44b6e`). La [preuve de provenance](src/inverter_dashboard/static/source-info.json) contient les métadonnées et empreintes des fichiers. Il s’agit d’une version bêta publiée par la compilation `39405183480`, et non d’une RC validée ou d’une version stable. Les textes de l’interface, les dates, les heures, les erreurs conservées de l’application et les libellés des thèmes sont disponibles en anglais, russe, ukrainien, allemand, français et néerlandais ; les messages provenant de sources externes conservent leur texte d’origine. Voir le [guide des langues](docs/i18n.md).
 
 ## Démarrage local
 
