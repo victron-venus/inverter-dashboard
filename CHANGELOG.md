@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.31] - Unreleased
+
+### Fixed
+
+- Bound each complete IGW snapshot request to the existing 25-second deadline,
+  including a response body that continues arriving slowly. A failed request
+  marks the connection unavailable; the next normal poll can recover.
+- Reject malformed Home Assistant entity documents through the existing poll
+  failure path. Nonfinite numeric readings remain unavailable, and appliance
+  durations accept only finite nonnegative seconds or valid `MM:SS` /
+  `HH:MM:SS` values within JavaScript's exact integer range.
+
+### Changed
+
+- Embed the verified official Vue `v2.2.11-beta.1` preview without rebuilding
+  its published assets. Recover silent WebSocket connections even while HTTP
+  polling continues, retain fresh HTTP telemetry during socket recovery and
+  expire that fallback when both transports stop delivering current data.
+- Synchronize the six README translations and frontend provenance documentation;
+  explicitly label historical screenshots and beta release boundaries.
+- Update the reviewed dependency lock to aiohttp 3.14.5, FastAPI 0.143.3,
+  pydantic-settings 2.16.0 and py-vapid 1.9.6.
+- Refresh the SHA-pinned shared CI workflows and release toolkit.
+
+### Upgrade
+
+Use the documented installation or container update procedure for the chosen
+channel. Beta releases are previews. Preserve local configuration, credentials,
+stored settings, notification subscriptions and Kubernetes persistent volumes;
+no data migration is required. Keep the previous immutable release available
+for rollback.
+
+### Security
+
+Malformed state documents, including nonfinite JSON numbers, cannot renew Home
+Assistant poll health. Invalid numeric readings are not exposed as JSON numbers.
+Existing TLS verification, authentication and command permissions remain unchanged. Recovery does not
+replay equipment commands. Source tests and publication do not establish
+physical-device acceptance or operating-system notification delivery.
+
 ## [1.8.30] - 2026-10-18
 
 ### Fixed

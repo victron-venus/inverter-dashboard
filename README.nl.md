@@ -8,7 +8,7 @@ Dit project is bedoeld voor een Python-server, container of NAS. Er zijn ook een
 
 [![Inverter Dashboard v1.5.0 in perspectief](images/dashboard-hero.png)](images/Screenshot.png)
 
-*Illustratie van de interface uit v1.5.0. [Bekijk de oorspronkelijke schermafbeelding](images/Screenshot.png).*
+*Historische illustratie van de interface uit v1.5.0; deze toont niet de huidige versie. [Bekijk de oorspronkelijke schermafbeelding](images/Screenshot.png).*
 
 ![Architectuur met afzonderlijke paden voor browser, Python, native telemetrie, controller, Home Assistant en Web Push](docs/assets/architecture.svg)
 
@@ -24,7 +24,7 @@ Dit project is bedoeld voor een Python-server, container of NAS. Er zijn ook een
 - Historie, prognoses en dagenergie met informatie over de dekking. Een onvolledige dag wordt niet als volledig weergegeven; tariefeditors staan buiten de compacte samenvattingsregel.
 - Optionele Web Push met blijvende abonnementen, deduplicatie en stille initialisatie na opnieuw verbinden.
 
-Ingebouwd is het officiële artefact **Vue v2.2.9** (pakketversie `2.2.9`, bron `f86943ebc764688c32bc4389f2276bc12682a90e`). Het [herkomstbestand](src/inverter_dashboard/static/source-info.json) bevat metadata en bestandshashes. De bestanden zijn byte-identiek aan de goedgekeurde RC `v2.2.9-rc.2` (buildrun `39039690585`). Interfaceteksten, datums, tijden, bewaarde toepassingsfouten en themalabels ondersteunen Engels, Russisch, Oekraïens, Duits, Frans en Nederlands; berichten van externe bronnen behouden hun oorspronkelijke tekst. Zie [taalondersteuning](docs/i18n.md).
+Ingebouwd is het officiële artefact **Vue v2.2.11-beta.1** (pakketversie `2.2.11-beta.1`, bron `01eae482124cd958dd110e362769ba5817d44b6e`). Het [herkomstbestand](src/inverter_dashboard/static/source-info.json) bevat metadata en bestandshashes. Dit is een bètavoorvertoning uit buildrun `39405183480`, geen goedgekeurde RC of stabiele uitgave. Interfaceteksten, datums, tijden, bewaarde toepassingsfouten en themalabels ondersteunen Engels, Russisch, Oekraïens, Duits, Frans en Nederlands; berichten van externe bronnen behouden hun oorspronkelijke tekst. Zie [taalondersteuning](docs/i18n.md).
 
 ## Lokaal starten
 

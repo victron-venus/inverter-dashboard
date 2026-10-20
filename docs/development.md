@@ -4,6 +4,13 @@
 
 Use a topic branch and Python 3.12 or newer with `uv`. `uv sync --locked --extra test` installs the project and test dependencies from the lockfile. `bash scripts/ci.sh` is the authoritative local validation entry point: it selects the checked-in security tooling and runs lint, formatting, tests and coverage. Run `pre-commit run --files <changed paths>` for applicable hooks. Do not weaken required CI or release policy to make a change green.
 
+The application minimum is declared in [pyproject.toml](../pyproject.toml).
+[Backend CI](../.github/workflows/ci.yml) currently selects Python 3.12;
+[frozen executable packaging](../.github/workflows/release-build.yml) selects
+Python 3.13, and the [Dockerfile](../Dockerfile) pins a Python 3.14 Alpine
+image. These are separate build environments. Check the committed files and
+the chosen release's receipts for its exact toolchain.
+
 ## Safe local workflow
 
 Start without native sources using `GATEWAY_ENABLED=false uv run --locked inverter-dashboard --mqtt-host ""`. This lets you inspect the app without reaching a broker or gateway. Tests should use isolated temporary settings and mocked MQTT/HTTP clients. Existing configuration under your home directory or a production mount is not a fixture. Never use a real actuator write, alarm acknowledgement or subscription send merely to test documentation.
