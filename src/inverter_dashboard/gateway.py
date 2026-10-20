@@ -213,8 +213,16 @@ async def fetch_snapshot(client: httpx.AsyncClient) -> dict[str, Any]:
     url = f"{base}/v1/snapshot"
     # HTTPX's read timeout measures silence between chunks. A continuously
     # trickling response must also release the poller within one request budget.
-    async with asyncio.timeout(REQUEST_TIMEOUT_SECS):
-        resp = await client.get(url, headers=build_headers(), follow_redirects=False)
+    deadline = asyncio.timeout(REQUEST_TIMEOUT_SECS)
+    try:
+        async with deadline:
+            resp = await client.get(url, headers=build_headers(), follow_redirects=False)
+    except TimeoutError as error:
+        if deadline.expired():
+            raise TimeoutError(
+                f"IGW snapshot exceeded {REQUEST_TIMEOUT_SECS:g}s overall deadline"
+            ) from error
+        raise
     resp.raise_for_status()
     data = resp.json()
     if not isinstance(data, dict):

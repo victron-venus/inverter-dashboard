@@ -37,7 +37,7 @@ async def test_snapshot_total_deadline_closes_trickling_response(monkeypatch):
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _request: httpx.Response(200, stream=stream))
     ) as client:
-        with pytest.raises(TimeoutError):
+        with pytest.raises(TimeoutError, match=r"IGW snapshot exceeded 0\.05s overall deadline"):
             await gateway.fetch_snapshot(client)
     assert 0 < stream.delivered < stream.chunks
     assert stream.closed
@@ -55,7 +55,7 @@ async def test_snapshot_completed_within_deadline_is_accepted(monkeypatch):
     assert stream.closed
 
 
-async def test_poller_invalidates_timeout_then_accepts_next_snapshot(monkeypatch):
+async def test_poller_invalidates_timeout_then_accepts_next_snapshot(monkeypatch, caplog):
     monkeypatch.setattr(gateway.config, "GATEWAY_URL", "https://gateway.example")
     monkeypatch.setattr(gateway, "build_headers", dict)
     monkeypatch.setattr(gateway, "REQUEST_TIMEOUT_SECS", 0.05)
@@ -94,3 +94,21 @@ async def test_poller_invalidates_timeout_then_accepts_next_snapshot(monkeypatch
     assert statuses == [False]
     assert owner.gateway_errors == 1 and owner.gateway_connected
     assert slow.closed
+    assert "IGW poll failed: IGW snapshot exceeded 0.05s overall deadline" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "error", [TimeoutError("upstream timeout"), asyncio.CancelledError("cancelled")]
+)
+async def test_snapshot_preserves_unrelated_timeout_or_cancellation(monkeypatch, error):
+    monkeypatch.setattr(gateway.config, "GATEWAY_URL", "https://gateway.example")
+    monkeypatch.setattr(gateway, "build_headers", dict)
+    monkeypatch.setattr(gateway, "REQUEST_TIMEOUT_SECS", 1)
+
+    def handler(_request):
+        raise error
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(type(error)) as caught:
+            await gateway.fetch_snapshot(client)
+    assert caught.value is error
