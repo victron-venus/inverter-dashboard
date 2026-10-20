@@ -12,7 +12,6 @@ HA outages. HA mirrors from older configurations cannot replace these values.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 import os
@@ -29,6 +28,9 @@ from .config import HA_POLL_TIMEOUT, HA_REQUEST_TIMEOUT
 from .tls_policy import httpx_client
 
 logger = logging.getLogger(__name__)
+
+# Largest integer that the browser can represent exactly in a JSON number.
+MAX_DURATION_SECONDS = 2**53 - 1
 
 _configured = False
 _url = ""
@@ -200,24 +202,27 @@ def _parse_ha_switch_entities(raw: Any) -> tuple[dict[str, str], dict[str, str]]
 
 
 def _sensor_state_to_seconds(raw: str | None) -> int:
-    """Parse HA sensor state to seconds for dashboard timers (matches inverter-control numeric / HH:MM:SS)."""
-    if raw in (None, "unavailable", "unknown", "None", ""):
+    """Parse bounded, nonnegative seconds or MM:SS / HH:MM:SS timer values."""
+    numeric = _parse_numeric_state(raw)
+    if numeric is not None:
+        return int(numeric) if 0 <= numeric <= MAX_DURATION_SECONDS else 0
+    parts = str(raw).strip().split(":")
+    if len(parts) not in (2, 3) or any(
+        not part.isascii() or not part.isdecimal() for part in parts
+    ):
         return 0
     try:
-        return int(float(raw))
-    except (ValueError, TypeError):
-        pass
-    parts = str(raw).split(":")
-    try:
-        if len(parts) == 3:
-            h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
-            return h * 3600 + m * 60 + s
-        if len(parts) == 2:
-            m, s = int(parts[0]), int(parts[1])
-            return m * 60 + s
-    except (ValueError, TypeError):
-        pass
-    return 0
+        values = [int(part) for part in parts]
+    except ValueError:
+        return 0
+    if any(value >= 60 for value in values[1:]):
+        return 0
+    total = 0
+    for value in values:
+        total = total * 60 + value
+        if total > MAX_DURATION_SECONDS:
+            return 0
+    return total
 
 
 def _boolish(raw: str | None) -> bool:
@@ -231,7 +236,8 @@ def _parse_numeric_state(raw: str | None) -> float | None:
     if raw in (None, "unavailable", "unknown", "None", ""):
         return None
     try:
-        return float(raw)
+        value = float(raw)
+        return value if math.isfinite(value) else None
     except (ValueError, TypeError):
         return None
 
@@ -243,10 +249,8 @@ def _appliance_field_value(state_key: str, entity_id: str, raw: str | None) -> A
         return _boolish(raw)
     if domain == "sensor":
         if state_key.endswith("_power"):
-            try:
-                return float(raw or 0) > 1.0
-            except (ValueError, TypeError):
-                return _boolish(raw)
+            value = _parse_numeric_state(raw)
+            return value > 1.0 if value is not None else _boolish(raw)
         return _sensor_state_to_seconds(raw)
     return False
 
@@ -433,6 +437,35 @@ async def _ha_request(
         return None
 
 
+def _finite_json_float(raw: str) -> float:
+    value = float(raw)
+    if not math.isfinite(value):
+        raise ValueError("Non-finite Home Assistant value")
+    return value
+
+
+def _reject_json_constant(_raw: str) -> None:
+    raise ValueError("Non-finite Home Assistant value")
+
+
+def _decode_state_document(response: httpx.Response) -> dict:
+    """Reject malformed upstream data through the existing poll-failure path."""
+    try:
+        data = response.json(
+            parse_float=_finite_json_float,
+            parse_constant=_reject_json_constant,
+        )
+    except ValueError as error:
+        raise httpx.DecodingError("Invalid Home Assistant state document") from error
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("state"), str)
+        or (data.get("attributes") is not None and not isinstance(data["attributes"], dict))
+    ):
+        raise httpx.DecodingError("Invalid Home Assistant state document")
+    return data
+
+
 async def _get_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -> str | None:
     """Read state; propagate connection failures so the entire poll is invalidated."""
     safe = quote(entity_id, safe="")
@@ -442,11 +475,7 @@ async def _get_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -
     r.raise_for_status()
     if r.status_code != 200:
         return None
-    try:
-        data = r.json()
-        return data.get("state")
-    except json.JSONDecodeError:
-        return None
+    return _decode_state_document(r)["state"]
 
 
 async def _get_full_state(client: httpx.AsyncClient, headers: dict, entity_id: str) -> dict | None:
@@ -458,11 +487,8 @@ async def _get_full_state(client: httpx.AsyncClient, headers: dict, entity_id: s
     r.raise_for_status()
     if r.status_code != 200:
         return None
-    try:
-        doc = r.json()
-        return doc if isinstance(doc, dict) and "entity_id" in doc else None
-    except json.JSONDecodeError:
-        return None
+    doc = _decode_state_document(r)
+    return doc if "entity_id" in doc else None
 
 
 def _friendly_name(doc: dict) -> str:

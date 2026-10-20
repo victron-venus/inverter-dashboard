@@ -25,6 +25,8 @@ Do not assume clearing a saved credential also clears a separately configured en
 
 If both transports are configured, reachable MQTT is preferred and IGW is the fallback. Explicit source ownership and generation checks reject late work from a retired connection. A successful IGW snapshot is a local receipt of a complete snapshot, not proof of each sensor's sampling time.
 
+Each IGW snapshot request has a 25-second overall transport deadline as well as HTTPX's per-operation timeouts. A response that keeps sending incomplete data cannot indefinitely prevent the next poll. A failed request revokes connection availability; a subsequent successful snapshot restores it.
+
 Native bootstrap requests the selected portal's tree. Subsequent keepalives use `suppress-republish` every 20 seconds. Bounded read requests refresh only the configured pump/valve Mode leaves; they are not physical write commands.
 
 ## Device selection
@@ -67,6 +69,8 @@ HA_FILTERED_ENTITIES = {}
 `HA_BOOLEAN_ENTITIES` and `HA_SENSOR_ENTITIES` cover HA-owned fields only. Do not map native power/Water/EV or controller policy fields such as `only_charging` to HA: owner filtering preserves their native/controller source. `HA_FILTERED_ENTITIES` supports `covers`, `media_players`, `scenes`, `numbers`, `sensors` lists and one `weather` entity. Service calls are restricted to configured/currently available targets; numeric controls respect current bounds. Direct HA controls require a fresh successful HA observation (30 seconds), not just a historical displayed value.
 
 `HA_APPLIANCE_ENTITIES` supports dishwasher running/duration and washer/dryer timers/power. Map real per-appliance entities. Zero, unknown and running are different states; do not use a shared circuit measurement as individual appliance power. `show_dishwasher`, `show_washer`, `show_dryer` control visibility, but do not manufacture activity or telemetry. `HA_POLL_TIMEOUT=20` and `HA_REQUEST_TIMEOUT=15` are request bounds; do not set polling so slowly that control authority is continually stale.
+
+Malformed per-entity HA responses invalidate the current poll and revoke direct control availability; the polling task continues so valid responses can restore it. A missing entity (HTTP 404) remains optional. Non-finite sensor readings are unavailable values, not usable measurements: numeric displays omit them and appliance timers retain their existing unknown-value fallback of zero. Timers accept nonnegative numeric seconds (fractional seconds are truncated), `MM:SS` or `HH:MM:SS`. Non-leading components must be integers from 0 to 59, and the total cannot exceed the browser's largest exact integer, `2^53 - 1` seconds; invalid values use the same zero fallback.
 
 ## Durable preferences
 

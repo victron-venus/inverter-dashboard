@@ -211,7 +211,10 @@ async def fetch_snapshot(client: httpx.AsyncClient) -> dict[str, Any]:
     """GET /v1/snapshot; raises httpx.HTTPStatusError on non-2xx."""
     base = config.validate_gateway_url(config.GATEWAY_URL)
     url = f"{base}/v1/snapshot"
-    resp = await client.get(url, headers=build_headers(), follow_redirects=False)
+    # HTTPX's read timeout measures silence between chunks. A continuously
+    # trickling response must also release the poller within one request budget.
+    async with asyncio.timeout(REQUEST_TIMEOUT_SECS):
+        resp = await client.get(url, headers=build_headers(), follow_redirects=False)
     resp.raise_for_status()
     data = resp.json()
     if not isinstance(data, dict):

@@ -168,3 +168,119 @@ async def test_poll_cancellation_propagates_without_publishing_partial_state(
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("reader", ["state", "full-state"])
+@pytest.mark.parametrize(
+    "document",
+    [
+        None,
+        [],
+        "temporarily unavailable",
+        {"state": None},
+        {"state": ["on"]},
+        {"state": "on", "attributes": ["invalid"]},
+        {"state": "on", "attributes": {"temperature": float("inf")}},
+    ],
+)
+async def test_invalid_state_document_fails_poll_and_next_poll_recovers(
+    ha_transport, monkeypatch, reader, document
+):
+    """Malformed successful HTTP responses must not kill the polling task."""
+    configure_reader(monkeypatch, reader, ["switch.home_light"])
+    healthy = False
+
+    def handler(_request):
+        if healthy:
+            return state_response("switch.home_light")
+        # JSON's non-finite extension represents a broken upstream response.
+        import json
+
+        return httpx.Response(200, content=json.dumps(document).encode())
+
+    ha_transport(handler)
+    assert await ha_client.fetch_states_once() == DISCONNECTED
+    healthy = True
+    assert (await ha_client.fetch_states_once())["ha_direct_connected"] is True
+
+
+@pytest.mark.parametrize("value", ["inf", "-inf", "nan", "1e999"])
+def test_nonfinite_sensor_values_are_unknown(value):
+    """Invalid sensor readings cannot become JSON NaN or overflow a duration."""
+    assert ha_client._parse_numeric_state(value) is None
+    assert ha_client._sensor_state_to_seconds(value) == 0
+    assert ha_client._appliance_field_value("washer_power", "sensor.washer", value) is False
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("-1", 0),
+        ("-0.1", 0),
+        ("1:60", 0),
+        ("1:99", 0),
+        ("1:2:60", 0),
+        ("1:60:00", 0),
+        ("-1:30", 0),
+        ("1:-2", 0),
+        ("1:+2", 0),
+        ("1:2:3:4", 0),
+        ("1::2", 0),
+        ("9007199254740992", 0),
+        ("999999999999999999999999:00", 0),
+        ("9007199254740991", 9007199254740991),
+        ("1:59", 119),
+        ("1:02:03", 3723),
+        ("12.9", 12),
+        ("00:00", 0),
+        ("150119987579016:31", 9007199254740991),
+        ("150119987579016:32", 0),
+    ],
+)
+def test_duration_parser_rejects_invalid_components_and_overflow(value, expected):
+    assert ha_client._sensor_state_to_seconds(value) == expected
+
+
+async def test_background_poll_survives_invalid_response_and_revokes_controls(
+    ha_transport, monkeypatch
+):
+    """A malformed response must revoke stale authority and allow recovery."""
+    configure_reader(monkeypatch, "state", ["switch.home_light"])
+    monkeypatch.setattr(ha_client, "load_config", lambda: None)
+    monkeypatch.setattr(ha_client, "_poll_interval", 0.001)
+    monkeypatch.setattr(ha_client, "_overlay_observed_at", None)
+    monkeypatch.setattr(ha_client, "_overlay_observed_monotonic", None)
+    configured = ha_client.home_buttons_ui()
+    updates = []
+    recovered = asyncio.Event()
+    replace = ha_client.replace_overlay
+    replace({"ha_direct_connected": True, "home_light": True})
+    assert ha_client.controls_available()
+
+    def handler(_request):
+        if not updates:
+            return httpx.Response(200, json=["invalid entity document"])
+        return state_response("switch.home_light")
+
+    def observe(overlay):
+        replace(overlay)
+        updates.append(overlay)
+        if len(updates) == 1:
+            assert not ha_client.controls_available()
+            assert ha_client.merge_overlay({})["booleans"]["home_light"] is None
+        else:
+            recovered.set()
+
+    ha_transport(handler)
+    monkeypatch.setattr(ha_client, "replace_overlay", observe)
+    task = asyncio.create_task(ha_client.ha_poll_loop())
+    try:
+        await asyncio.wait_for(recovered.wait(), 1)
+        assert not task.done()
+        assert updates[0] == DISCONNECTED
+        assert updates[1]["home_light"] is True
+        assert ha_client.controls_available()
+        assert ha_client.home_buttons_ui() == configured
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
