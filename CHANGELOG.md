@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.32] - 2026-10-24
+
+### Security
+
+- Update the locked OpenTelemetry API to 1.45.1 to fix excessive CPU use when
+  parsing untrusted W3C `tracestate` headers (GHSA-xcq7-p3pf-p88h). The dependency
+  is shipped through FastAPI; other application dependency versions are unchanged.
+
+### Upgrade
+
+Use the existing package or container update procedure and preserve local
+configuration and persistent data. No data migration is required. Continue to
+apply request-header size limits at the reverse proxy; TLS verification and
+access controls are unchanged.
+
+### Changed
+
+- Complete the browser test fixture's WebSocket close handshake, preserving valid
+  client close metadata, and exercise close/reconnect across a real browser reload.
+  Allow up to 30 seconds for hosted browser navigation while retaining the separate
+  10-second application readiness checks and the full compatibility matrix.
+
 ## [1.8.31] - Unreleased
 
 ### Fixed
