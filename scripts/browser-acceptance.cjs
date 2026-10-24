@@ -7,6 +7,7 @@ const path = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
 const { waitForHydratedDashboard } = require('./browser-readiness.cjs')
 const { runReadinessControls } = require('./browser-readiness.test.cjs')
+const { trackMockSocket } = require('./browser-socket-fixture.cjs')
 
 const root = path.resolve(__dirname, '..')
 // User flows follow inverter-dashboard-vue; this adapter serves only the exact
@@ -157,7 +158,9 @@ async function main() {
     browser = await playwright[engine].launch({ headless: true, ...(channel ? { channel } : {}) })
     context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US', serviceWorkers: 'block' })
     context.setDefaultTimeout(10000)
-    context.setDefaultNavigationTimeout(15000)
+    // Hosted browser scheduling can exceed 15s before the document request starts.
+    // Keep document loading bounded separately from the 10s readiness assertions.
+    context.setDefaultNavigationTimeout(30000)
     await context.tracing.start({ screenshots: true, snapshots: true, sources: true })
     await context.route('**/*', route => {
       const url = new URL(route.request().url())
@@ -174,8 +177,7 @@ async function main() {
       }
       if (fixture.paused) { ws.close(); return }
       fixture.connections++
-      fixture.sockets.add(ws)
-      ws.onClose(() => fixture.sockets.delete(ws))
+      trackMockSocket(ws, fixture.sockets)
       ws.onMessage(raw => {
         const command = JSON.parse(raw.toString())
         fixture.commands.push(command)
