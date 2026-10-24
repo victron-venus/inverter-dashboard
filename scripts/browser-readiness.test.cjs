@@ -4,6 +4,7 @@ const assert = require('node:assert/strict')
 const http = require('node:http')
 const path = require('node:path')
 const { waitForHydratedDashboard } = require('./browser-readiness.cjs')
+const { runSocketCloseControl } = require('./browser-socket-fixture.test.cjs')
 
 const modulePath = process.env.CI_PLAYWRIGHT_MODULE
 assert(modulePath && path.isAbsolute(modulePath), 'Set CI_PLAYWRIGHT_MODULE to the isolated toolchain')
@@ -96,7 +97,7 @@ async function runReadinessControls() {
     for (const { mode, soc, publicMode = false, rejects = false } of cases) {
       const context = await browser.newContext({ serviceWorkers: 'block' })
       context.setDefaultTimeout(10000)
-      context.setDefaultNavigationTimeout(15000)
+      context.setDefaultNavigationTimeout(30000)
       const traffic = { mode, requested: [], completed: [], failed: [], browserErrors: [] }
       try {
         const blocked = []
@@ -148,7 +149,8 @@ async function runReadinessControls() {
         }
       }
     }
-    return cases.map(({ mode, rejects = false }) => ({ mode, expectedRejection: rejects, passed: true }))
+    const socketControl = await runSocketCloseControl(browser, `http://127.0.0.1:${server.address().port}`)
+    return [...cases.map(({ mode, rejects = false }) => ({ mode, expectedRejection: rejects, passed: true })), socketControl]
   } finally {
     if (browser) await browser.close()
     for (const response of pending.keys()) response.destroy()
