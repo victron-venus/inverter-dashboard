@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.33] - 2026-10-27
+
+### Changed
+
+- Update the reviewed runtime lock to FastAPI 0.161.1, pydantic-settings 2.16.1
+  and websockets 17.3 after the combined application and browser checks.
+
+### Fixed
+
+- Publish release assets through the existing draft ID and wait within a fixed
+  deadline for required GitHub check metadata. Preserve source binding, refusal
+  to retry uncertain writes and complete uploaded-byte verification.
+- Keep the required aggregate check active after cancellation so unfinished
+  validation cannot become a skipped passing requirement.
+
+### Security
+
+- Update setuptools to 84.2.1 and declare the packaging tooling constraints
+  explicitly, covering the legacy wheel namespace-metadata path validation
+  issue GHSA-xmj3-9gf7-h52w. Other third-party lock entries are unchanged.
+
+### Upgrade
+
+Use the existing package or container update procedure and retain configuration
+and persistent data. This release introduces no data migration. Validate the
+updated dependency environment through the normal health and connectivity
+checks before replacing a working deployment; keep the previous package for
+rollback.
+
 ## [1.8.32] - 2026-10-24
 
 ### Security
