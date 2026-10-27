@@ -116,7 +116,7 @@ jobs:
         run: python3 scripts/release_fuzz.py preflight --if-changed --output "$RUNNER_TEMP/fuzz-preflight"
       - name: Retain failed fuzz preflight diagnostics
         if: ${{ failure() && steps.fuzz_preflight.outcome == 'failure' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-preflight-${{ github.run_attempt }}
           path: ${{ runner.temp }}/fuzz-preflight
@@ -152,7 +152,7 @@ jobs:
       - scope
       - check-0
     if: ${{ needs.scope.outputs.run == 'true' }}
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml@f510d3b282d5fac9173b10b0ddedb9535c767ac9 # main
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml@2fead769a8be42256408bd1a8166b6efa2ffa3b8 # main
     permissions:
       contents: read
       actions: read
