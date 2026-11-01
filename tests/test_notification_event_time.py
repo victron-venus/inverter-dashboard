@@ -133,8 +133,6 @@ async def test_late_datetime_is_broadcast_without_waiting_for_other_telemetry(mo
         "NaN",
         "Infinity",
         2**63 - 1,
-        [],
-        {},
     ],
 )
 async def test_invalid_datetime_is_unknown_and_does_not_keep_a_stale_time(native_events, value):

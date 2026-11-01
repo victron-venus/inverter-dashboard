@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep malformed native notification leaves from disabling raw alarm fallback,
+  and reject invalid alarm levels without discarding other valid readings.
+- Preserve exact wire values for notification flags, severity and timestamps so
+  fractional values cannot round into an acknowledgement or cleared alarm.
+- Remove alarms that disappear from a complete gateway snapshot and replace
+  raw fallback banners when native platform notifications become available.
+- Clear previous-session notification fields on MQTT reconnect while retaining
+  local dismissal identities, so new events cannot inherit old timestamps.
 - Publish release assets through the existing draft ID and wait within a fixed
   deadline for required GitHub check metadata. Preserve source binding, refusal
   to retry uncertain writes and complete uploaded-byte verification.

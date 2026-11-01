@@ -197,14 +197,42 @@ def build_headers() -> dict[str, str]:
     return headers
 
 
-def _fractional_datetime_keys(platform: dict[str, Any]) -> list[str]:
+def _fractional_notification_keys(bucket: str, leaves: dict[str, Any]) -> list[str]:
     keys = []
-    for key, raw in platform.items():
-        parsed = notifications.parse_platform_leaf_key(key)
+    numeric_fields = {"DateTime", "Type", "Active", "Acknowledged", "Silenced"}
+    for key, raw in leaves.items():
         value = raw.get("value") if isinstance(raw, dict) else raw
-        if parsed and parsed[2] == "DateTime" and isinstance(value, float):
+        if not isinstance(value, float):
+            continue
+        if bucket == "platform":
+            parsed = notifications.parse_platform_leaf_key(key)
+            selected = parsed is not None and parsed[2] in numeric_fields
+        else:
+            selected = notifications.parse_alarm_leaf_key(bucket, key) is not None
+        if selected:
             keys.append(key)
     return keys
+
+
+def _preserve_notification_numbers(data: dict[str, Any], response: httpx.Response) -> None:
+    selected = {}
+    for bucket in ("platform", "battery", "vebus"):
+        leaves = data.get(bucket)
+        if isinstance(leaves, dict):
+            keys = _fractional_notification_keys(bucket, leaves)
+            if keys:
+                selected[bucket] = keys
+    if not selected:
+        return
+    # Only notification leaves require exact enum/time validation. The rest of
+    # the snapshot must keep ordinary JSON numbers, not Decimal objects/strings.
+    exact = response.json(parse_float=notifications.exact_json_number)
+    for bucket, keys in selected.items():
+        for key in keys:
+            if isinstance(data[bucket][key], dict):
+                data[bucket][key]["value"] = exact[bucket][key]["value"]
+            else:
+                data[bucket][key] = exact[bucket][key]
 
 
 async def fetch_snapshot(client: httpx.AsyncClient) -> dict[str, Any]:
@@ -227,19 +255,7 @@ async def fetch_snapshot(client: httpx.AsyncClient) -> dict[str, Any]:
     data = resp.json()
     if not isinstance(data, dict):
         raise TypeError("gateway snapshot is not a JSON object")
-    platform = data.get("platform")
-    if isinstance(platform, dict):
-        datetime_keys = _fractional_datetime_keys(platform)
-        if datetime_keys:
-            # Only source DateTime decimals need their exact wire text. Reparse
-            # those leaves without rounding; all other telemetry stays ordinary
-            # JSON numbers rather than introducing Decimal objects into state.
-            exact_platform = resp.json(parse_float=str)["platform"]
-            for key in datetime_keys:
-                if isinstance(platform[key], dict):
-                    platform[key]["value"] = exact_platform[key]["value"]
-                else:
-                    platform[key] = exact_platform[key]
+    _preserve_notification_numbers(data, resp)
     return data
 
 

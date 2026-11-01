@@ -32,7 +32,7 @@ PLATFORM_FIELDS = frozenset(
 def _as_bool(v: Any) -> bool | None:
     if isinstance(v, bool):
         return v
-    if isinstance(v, (int, float)):
+    if isinstance(v, (int, float)) and v in (0, 1):
         return bool(v)
     if isinstance(v, str):
         t = v.strip().lower()
@@ -111,11 +111,19 @@ def normalize_notification(data: Any) -> dict[str, str] | None:
 
 def parse_platform_leaf_key(key: str) -> tuple[str, int, str] | None:
     """Parse ``<inst>/Notifications/<slot>/<Field>`` → (inst, slot, field)."""
+    if not isinstance(key, str):
+        return None
     parts = key.split("/")
     if len(parts) != 4 or parts[1] != "Notifications":
         return None
     inst, _, slot_s, field = parts
-    if field not in PLATFORM_FIELDS:
+    if (
+        not inst.isascii()
+        or not inst.isdecimal()
+        or not slot_s.isascii()
+        or not slot_s.isdecimal()
+        or field not in PLATFORM_FIELDS
+    ):
         return None
     try:
         slot = int(slot_s)
@@ -124,6 +132,39 @@ def parse_platform_leaf_key(key: str) -> tuple[str, int, str] | None:
     if slot < 0 or slot > 20:
         return None
     return inst, slot, field
+
+
+def alarm_value(value: Any) -> int | None:
+    """Accept only the discrete native alarm states, without numeric truncation."""
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        numeric = Decimal(value)
+        if numeric.is_finite() and numeric in (0, 1, 2):
+            return int(numeric)
+    except (InvalidOperation, ValueError):
+        pass
+    return None
+
+
+def exact_json_number(value: str) -> int | str:
+    """Keep JSON enum numbers exact without changing supported 1.0/1e0 values."""
+    numeric = alarm_value(value)
+    return numeric if numeric is not None else value
+
+
+def _valid_platform_value(field: str, value: Any) -> bool:
+    if value is None:
+        return True
+    if field == "DateTime":
+        return isinstance(value, (str, int, float))
+    if field in ("Description", "DeviceName", "Service"):
+        return isinstance(value, str)
+    if field == "Type":
+        return alarm_value(value) is not None
+    return _as_bool(value) is not None
 
 
 def _slot_level(notif_type: int | None) -> str:
@@ -184,6 +225,8 @@ def apply_platform_field(
     if not parsed:
         return False
     inst, slot_n, field = parsed
+    if not _valid_platform_value(field, value):
+        return False
     entry = slots.setdefault(
         (inst, slot_n),
         {
@@ -273,12 +316,14 @@ def sync_platform_map(
 
 def parse_alarm_leaf_key(service_bucket: str, key: str) -> tuple[str, str] | None:
     """Parse ``<inst>/Alarms/<Name>`` under battery/vebus → (service_id, alarm_name)."""
+    if not isinstance(key, str):
+        return None
     parts = key.split("/")
     if len(parts) < 3 or parts[1] != "Alarms":
         return None
     inst = parts[0]
     alarm_name = "/".join(parts[2:])
-    if not alarm_name:
+    if not inst or not alarm_name:
         return None
     return f"{service_bucket}_{inst}", alarm_name
 
@@ -309,17 +354,42 @@ def mqtt_sync_platform_from_snapshot(ms: Any, platform_leaves: dict[str, Any]) -
     """IGW: rebuild platform banners from snapshot ``platform`` map."""
     if not isinstance(platform_leaves, dict):
         platform_leaves = {}
-    if platform_leaves:
-        ms._platform_seen = True
-    before = [n for n in ms.notifications if str(n.get("id", "")).startswith("victron-platform-")]
+    before = list(ms.notifications)
     visible = sync_platform_map(ms._platform_slots, platform_leaves)
+    if ms._platform_slots:
+        _activate_platform(ms)
     ms.notifications = [
         n for n in ms.notifications if not str(n.get("id", "")).startswith("victron-platform-")
     ]
     for n in visible:
         mqtt_upsert_notification(ms, n)
-    after = [n for n in ms.notifications if str(n.get("id", "")).startswith("victron-platform-")]
-    return before != after
+    return before != ms.notifications
+
+
+def _is_raw_alarm(notification: dict[str, Any]) -> bool:
+    return str(notification.get("id", "")).startswith(("victron-N/", "victron-alarm-"))
+
+
+def _activate_platform(ms: Any) -> None:
+    """A real platform leaf replaces raw fallback banners, not controller history."""
+    ms._platform_seen = True
+    ms.notifications = [item for item in ms.notifications if not _is_raw_alarm(item)]
+
+
+def mqtt_clear_native_state(ms: Any) -> None:
+    """Retire live slot fields while keeping only local dismissal identities."""
+    ms._platform_slots = {
+        key: {"user_dismissed": True, "last_valid_date_time": entry.get("last_valid_date_time")}
+        for key, entry in ms._platform_slots.items()
+        if entry.get("user_dismissed")
+    }
+    ms._platform_seen = False
+    ms._alarm_values.clear()
+    ms.notifications = [
+        item
+        for item in ms.notifications
+        if not _is_raw_alarm(item) and not str(item.get("id", "")).startswith("victron-platform-")
+    ]
 
 
 def _sync_alarm_leaf(
@@ -330,10 +400,9 @@ def _sync_alarm_leaf(
         return False
     service_id, alarm_name = parsed
     value_raw = raw.get("value") if isinstance(raw, dict) and "value" in raw else raw
-    try:
-        value = int(float(value_raw))
-    except (TypeError, ValueError):
-        value = 0
+    value = alarm_value(value_raw)
+    if value is None:
+        return False
     topic = f"igw/{bucket}/{key}"
     prev = ms._alarm_values.get(topic, 0)
     if prev == value:
@@ -362,13 +431,37 @@ def mqtt_sync_alarms_from_snapshot(
     if ms._platform_seen:
         return False
     changed = False
+    present = set()
     for bucket in ("battery", "vebus"):
-        leaves = snap.get(bucket) or {}
+        leaves = snap.get(bucket, {})
         if not isinstance(leaves, dict):
+            present.update(
+                topic for topic in ms._alarm_values if topic.startswith(f"igw/{bucket}/")
+            )
             continue
         for key, raw in leaves.items():
+            if parse_alarm_leaf_key(bucket, key) is not None:
+                present.add(f"igw/{bucket}/{key}")
             changed = (
                 _sync_alarm_leaf(ms, bucket, key, raw, pretty_service, pretty_alarm) or changed
+            )
+    return _prune_snapshot_alarms(ms, present) or changed
+
+
+def _prune_snapshot_alarms(ms: Any, present: set[str]) -> bool:
+    """An IGW snapshot is complete: absent raw alarm leaves no longer own banners."""
+    changed = False
+    for topic in list(ms._alarm_values):
+        if not topic.startswith("igw/") or topic in present:
+            continue
+        del ms._alarm_values[topic]
+        _, bucket, key = topic.split("/", 2)
+        parsed = parse_alarm_leaf_key(bucket, key)
+        if parsed is not None:
+            service_id, alarm_name = parsed
+            changed = (
+                mqtt_remove_notification_id(ms, f"victron-alarm-{service_id}-{alarm_name}")
+                or changed
             )
     return changed
 
@@ -378,22 +471,25 @@ def mqtt_handle_platform_notification(ms: Any, topic: str, payload: bytes) -> bo
     import json
 
     parts = topic.split("/")
-    if len(parts) < 7 or parts[2] != "platform" or parts[4] != "Notifications":
+    if len(parts) != 7 or parts[0] != "N" or parts[2] != "platform":
         return False
-    inst = parts[3]
+    key = "/".join(parts[3:])
+    parsed = parse_platform_leaf_key(key)
+    if parsed is None:
+        return False
+    field = parsed[2]
+    parse_float = float if field in {"Description", "DeviceName", "Service"} else exact_json_number
     try:
-        slot_n = int(parts[5])
+        raw = json.loads(payload.decode(), parse_float=parse_float) if payload else None
     except ValueError:
         return False
-    field = parts[6]
-    key = f"{inst}/Notifications/{slot_n}/{field}"
-    try:
-        raw = json.loads(payload.decode(), parse_float=str if field == "DateTime" else float)
-    except ValueError:
+    if isinstance(raw, dict) and "value" not in raw:
         return False
     value = raw.get("value") if isinstance(raw, dict) else raw
-    ms._platform_seen = True
-    before = [n for n in ms.notifications if str(n.get("id", "")).startswith("victron-platform-")]
+    if not _valid_platform_value(field, value):
+        return False
+    before = list(ms.notifications)
+    _activate_platform(ms)
     apply_platform_field(ms._platform_slots, key, value)
     visible = notifications_from_platform_slots(ms._platform_slots)
     ms.notifications = [
@@ -401,10 +497,9 @@ def mqtt_handle_platform_notification(ms: Any, topic: str, payload: bytes) -> bo
     ]
     for n in visible:
         mqtt_upsert_notification(ms, n)
-    after = [n for n in ms.notifications if str(n.get("id", "")).startswith("victron-platform-")]
     # Fields arrive separately: DateTime/body updates must reach browsers even
     # when the slot's id and visibility have not changed.
-    return before != after
+    return before != ms.notifications
 
 
 def mqtt_dismiss_notification(ms: Any, nid: str) -> bool:

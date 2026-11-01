@@ -237,14 +237,11 @@ def test_alarm_callback_failure_preserves_value_update_order():
 
 
 def test_alarm_numeric_overflow_preserves_previous_leaf_value():
-    import pytest
-
     from inverter_dashboard import notifications
 
     ms = server.MqttState()
     ms._alarm_values["igw/battery/1/Alarms/High"] = 1
     snapshot = {"battery": {"1/Alarms/High": float("inf")}}
-    with pytest.raises(OverflowError):
-        notifications.mqtt_sync_alarms_from_snapshot(ms, snapshot, str, str)
+    assert not notifications.mqtt_sync_alarms_from_snapshot(ms, snapshot, str, str)
     assert ms._alarm_values == {"igw/battery/1/Alarms/High": 1}
     assert ms.notifications == []
