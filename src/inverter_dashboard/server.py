@@ -343,19 +343,29 @@ class MqttState(CerboOverlayMixin):
         """LAN MQTT: N/<portal>/platform/<inst>/Notifications/<slot>/<Field>."""
         return notifications.mqtt_handle_platform_notification(self, topic, payload)
 
+    def clear_native_notifications(self) -> None:
+        """A new MQTT session must hydrate its own slot fields and raw alarms."""
+        notifications.mqtt_clear_native_state(self)
+
     def handle_alarm(self, topic: str, payload: bytes) -> bool:
         """Track a Victron alarm topic (value 0/1/2); emit/clear on transition.
 
         Returns True when the notification list changed.
         """
         try:
-            val = json.loads(payload.decode()).get("value")
-        except (ValueError, AttributeError):
+            raw = (
+                json.loads(payload.decode(), parse_float=notifications.exact_json_number)
+                if payload
+                else {"value": None}
+            )
+        except ValueError:
             return False
-        numeric = number(val)
-        if val is not None and numeric is None:
+        if not isinstance(raw, dict) or "value" not in raw:
             return False
-        value = int(numeric) if numeric is not None else 0
+        val = raw["value"]
+        value = notifications.alarm_value(val)
+        if value is None:
+            return False
         prev = self._alarm_values.get(topic, 0)
         if prev == value:
             return False
@@ -683,6 +693,7 @@ async def _prepare_mqtt_session(owner, ms: MqttState, current, client: Client) -
     ms.set_portal_callback(_on_portal)
     ms.clear_daemon_state()
     ms.clear_cerbo_state()
+    ms.clear_native_notifications()
     if _push_service is not None:
         _push_service.connect("mqtt", ms, force=True)
     await _subscribe_topics(client, ms._portal_id or None)
@@ -719,6 +730,7 @@ async def _finish_mqtt_session(
                 _push_service.disconnect("mqtt", ms)
             ms.clear_daemon_state()
             ms.clear_cerbo_state()
+            ms.clear_native_notifications()
             await ms._emit()
     finally:
         # State notifications may fail or be cancelled; the owned

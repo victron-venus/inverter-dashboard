@@ -76,7 +76,9 @@ async def _stop_test_tasks(session):
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
-@pytest.mark.parametrize("stage", ["disconnect", "clear_daemon", "clear_cerbo", "emit"])
+@pytest.mark.parametrize(
+    "stage", ["disconnect", "clear_daemon", "clear_cerbo", "clear_notifications", "emit"]
+)
 @pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
 async def test_cleanup_failure_joins_keepalive_and_preserves_error(
     monkeypatch, stage, failure_type
@@ -97,6 +99,8 @@ async def test_cleanup_failure_joins_keepalive_and_preserves_error(
         session.owner.mqtt_state.clear_daemon_state = fail
     elif stage == "clear_cerbo":
         session.owner.mqtt_state.clear_cerbo_state = fail
+    elif stage == "clear_notifications":
+        session.owner.mqtt_state.clear_native_notifications = fail
     else:
         session.owner.mqtt_state._emit = fail_emit
 

@@ -44,7 +44,11 @@ async def test_snapshot_reparses_only_fractional_notification_time(monkeypatch, 
     assert type(value) is type(expected)
     assert snapshot["platform"]["0/Notifications/1/Other"] == 4.5
     assert snapshot["system"]["0/Dc/Battery/Voltage"] == 52.1
-    assert parse_calls == ([{}, {"parse_float": str}] if "." in timestamp else [{}])
+    assert parse_calls[0] == {}
+    assert len(parse_calls) == (2 if "." in timestamp else 1)
+    if "." in timestamp:
+        assert set(parse_calls[1]) == {"parse_float"}
+        assert callable(parse_calls[1]["parse_float"])
 
 
 class TrackingOverlay(cerbo.CerboOverlayMixin):
