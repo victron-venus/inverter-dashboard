@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve native alert timestamps and local dismissals when the gateway sends
+  a malformed notification section; valid empty snapshots still remove alerts.
 - Keep malformed native notification leaves from disabling raw alarm fallback,
   and reject invalid alarm levels without discarding other valid readings.
 - Preserve exact wire values for notification flags, severity and timestamps so

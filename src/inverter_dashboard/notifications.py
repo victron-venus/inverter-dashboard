@@ -353,7 +353,8 @@ def alarm_notification(
 def mqtt_sync_platform_from_snapshot(ms: Any, platform_leaves: dict[str, Any]) -> bool:
     """IGW: rebuild platform banners from snapshot ``platform`` map."""
     if not isinstance(platform_leaves, dict):
-        platform_leaves = {}
+        # A corrupt bucket cannot prove that an event or its dismissal disappeared.
+        return False
     before = list(ms.notifications)
     visible = sync_platform_map(ms._platform_slots, platform_leaves)
     if ms._platform_slots:
