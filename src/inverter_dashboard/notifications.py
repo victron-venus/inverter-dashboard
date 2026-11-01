@@ -145,7 +145,7 @@ def alarm_value(value: Any) -> int | None:
         if numeric.is_finite() and numeric in (0, 1, 2):
             return int(numeric)
     except (InvalidOperation, ValueError):
-        pass
+        return None
     return None
 
 
