@@ -1,6 +1,7 @@
 """Malformed native leaves cannot revoke alarms or poison a later session."""
 
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -100,6 +101,52 @@ def test_malformed_snapshot_bucket_preserves_its_alarms_and_updates_other_bucket
     gateway.apply_snapshot(state, {bucket: {}})
     assert state.get_notifications() == []
     assert state._alarm_values == {}
+
+
+def _existing_platform_event(state, dismissed):
+    leaves = {
+        "0/Notifications/1/Description": "Voltage alarm",
+        "0/Notifications/1/DeviceName": "Battery",
+        "0/Notifications/1/Type": 1,
+        "0/Notifications/1/DateTime": 1000,
+        "0/Notifications/1/Acknowledged": False,
+    }
+    gateway.apply_snapshot(state, {"platform": leaves, "system": {"0/Dc/Battery/Voltage": 51.0}})
+    if dismissed:
+        state.dismiss_notification("victron-platform-0-1")
+    return leaves
+
+
+@pytest.mark.parametrize("invalid", [[], ["bad"], "bad", "", 0, False, None])
+@pytest.mark.parametrize("dismissed", [False, True])
+def test_malformed_platform_bucket_preserves_event_and_other_telemetry(state, invalid, dismissed):
+    leaves = _existing_platform_event(state, dismissed)
+    slots = deepcopy(state._platform_slots)
+    banners = deepcopy(state.get_notifications())
+
+    gateway.apply_snapshot(state, {"platform": invalid, "system": {"0/Dc/Battery/Voltage": 52.1}})
+
+    assert state._platform_slots == slots
+    assert state.get_notifications() == banners
+    assert state.get_state()["battery_voltage"] == 52.1
+    # A later valid refresh of the same event must keep a local dismissal.
+    gateway.apply_snapshot(state, {"platform": leaves})
+    assert state.get_notifications() == banners
+    # A genuinely new event still clears that dismissal.
+    leaves["0/Notifications/1/DateTime"] = 2000
+    gateway.apply_snapshot(state, {"platform": leaves})
+    assert state.get_notifications()[0]["ts"] == "1970-01-01T00:33:20+00:00"
+
+
+@pytest.mark.parametrize("snapshot", [{"platform": {}}, {}])
+@pytest.mark.parametrize("dismissed", [False, True])
+def test_empty_or_omitted_platform_bucket_still_removes_event(state, snapshot, dismissed):
+    _existing_platform_event(state, dismissed)
+
+    gateway.apply_snapshot(state, snapshot)
+
+    assert state._platform_slots == {}
+    assert state.get_notifications() == []
 
 
 @pytest.mark.parametrize("invalid", [True, False, 1.5, "1.5", float("inf"), "NaN", {}])
