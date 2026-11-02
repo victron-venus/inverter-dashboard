@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.34] - 2026-11-02
+
+### Changed
+
+- Update the reviewed runtime lock to FastAPI 0.162.0, pydantic-settings 2.16.2,
+  websockets 17.4 and msgpack 1.2.4; update pytest to 9.2.0.
+- Refresh the pinned shared workflows after the combined application,
+  integration, security and five browser checks across Linux, Windows and macOS passed.
+
+### Security
+
+Dependency and application security checks passed for the combined updates.
+Keep authentication and TLS enabled when updating existing installations.
+
+### Upgrade
+
+Use the existing package or container update procedure and retain configuration
+and persistent data. This release introduces no data migration.
+
 ## [1.8.33] - 2026-10-27
 
 ### Changed
