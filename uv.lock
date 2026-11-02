@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -668,7 +668,7 @@ dependencies = [
     { name = "cryptography" },
 ]
 wheels = [
-    { filename = "http_ece-1.2.1-py2.py3-none-any.whl", hash = "sha256:ef871353055ce57475646f6c07bf3a12f2bbbea40e0648d3e9cadf1d48a53185" },
+    { filename = "http_ece-1.2.1-py2.py3-none-any.whl", hash = "sha256:fcb91695888f938fbdf3312148f6c4726c01c401bb8675b1c3abca7960d47b43" },
 ]
 
 [package.metadata]
