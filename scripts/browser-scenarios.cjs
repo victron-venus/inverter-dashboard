@@ -125,6 +125,9 @@ async function runDashboardScenarios({ page, fixture, scenario, broadcast, event
       assert.match(command.request_id, /^[0-9a-f-]{36}$/)
       // A transport acceptance is insufficient: selection stays observed until telemetry confirms.
       assert.notEqual(await choice(label).getAttribute('aria-checked'), 'true')
+      update({ ess_mode: { selected: id, selection_supported: true, request_id: 'unrelated-request' } })
+      await eventually(() => choice(label).getAttribute('aria-checked'), value => value === 'true', 'Observed mode may change independently of the pending request')
+      assert.equal(await trigger().getAttribute('aria-busy'), 'true', 'Unrelated telemetry must not confirm the pending request')
       update({ ess_mode: { selected: id, selection_supported: true, request_id: command.request_id } })
       await eventually(() => choice(label).getAttribute('aria-checked'), value => value === 'true', 'Controller observation must confirm selection')
       await eventually(() => trigger().getAttribute('aria-busy'), value => value === null, 'Correlated observation must resolve pending state')

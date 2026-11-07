@@ -13,7 +13,7 @@ import tarfile
 from pathlib import Path, PurePosixPath
 
 import version_plan
-from qualification_paths import workspace_path
+from qualification_paths import CHECKOUT, workspace_path
 from version_receipt import verify_producer_identity
 
 MANIFEST_NAME = "manifest.json"
@@ -266,6 +266,18 @@ def validate_bundle(
     return metadata, inventory
 
 
+def portable_destination(value: Path, root: Path | None) -> str:
+    """Persist only the input's checkout-relative spelling, never a resolved host path.
+
+    The caller separately validates and canonicalizes the destination for I/O.
+    CLI callers use the script-owned checkout; an explicit root is for unit tests.
+    """
+    supplied = Path(value)
+    anchor = Path(os.path.abspath(root if root is not None else CHECKOUT))
+    relative = supplied.relative_to(anchor) if supplied.is_absolute() else supplied
+    return safe_name(relative.as_posix())
+
+
 def prepare(
     artifacts: Path,
     destination: Path,
@@ -278,6 +290,7 @@ def prepare(
     """Unpack a validated candidate into a new owned directory only."""
     if type(artifact_id) is not int or artifact_id <= 0:
         raise ValueError("Exact candidate artifact ID required")
+    location = portable_destination(destination, root)
     artifacts = workspace_path(artifacts, root=root, kind="directory", must_exist=True)
     destination = workspace_path(destination, root=root, kind="directory", new=True)
     diagnostics = workspace_path(diagnostics, root=root, kind="directory")
@@ -318,8 +331,8 @@ def prepare(
         "producer": producer,
         "planSha256": metadata["planSha256"],
         "manifestKind": metadata["manifestKind"],
-        "distribution": str((destination / "frontend").resolve()),
-        "manifestPath": str((destination / MANIFEST_NAME).resolve()),
+        "distribution": location + "/frontend",
+        "manifestPath": location + "/" + MANIFEST_NAME,
         "frontendFiles": inventory,
         "servedFiles": metadata["servedFiles"],
         "sourceOnlyMetadata": metadata["sourceOnlyMetadata"],

@@ -45,6 +45,11 @@ function workspacePath(value, root = path.resolve(__dirname, '..')) {
   return path.join(trusted, relative)
 }
 
+function candidatePath(value, root) {
+  assert(typeof value === 'string' && value && !path.isAbsolute(value) && !value.includes('\\') && !value.includes(':') && value.split('/').every(part => part && part !== '.' && part !== '..'), 'Candidate path must be canonical checkout-relative POSIX')
+  return workspacePath(value, root)
+}
+
 function loadCandidate(filename, workspaceRoot) {
   filename = workspacePath(filename, workspaceRoot)
   const candidate = JSON.parse(fs.readFileSync(filename, 'utf8'))
@@ -54,8 +59,7 @@ function loadCandidate(filename, workspaceRoot) {
   for (const key of ['runId', 'runAttempt', 'candidateArtifactId']) assert(Number.isSafeInteger(candidate[key]) && candidate[key] > 0, key)
   if (candidate.artifactId !== undefined) assert.equal(candidate.artifactId, candidate.candidateArtifactId)
   if (candidate.archiveSha256 !== undefined) assert.equal(candidate.archiveSha256, candidate.candidateSha256)
-  assert(path.isAbsolute(candidate.distribution), 'Candidate distribution must be absolute')
-  const root = workspacePath(candidate.distribution, workspaceRoot)
+  const root = candidatePath(candidate.distribution, workspaceRoot)
   const assets = new Map()
   const inventory = candidate.frontendFiles
   assert(inventory && Object.keys(inventory).length, 'Candidate frontend inventory required')
@@ -263,6 +267,7 @@ async function main() {
       await settings.getByRole('button', { name: 'Refresh status', exact: true }).click()
       await settings.getByText('Blocked by browser permission', { exact: true }).waitFor()
       assert(await settings.getByRole('button', { name: 'Enable', exact: true }).isDisabled())
+      assert.equal(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length), 0)
       assert.equal(await page.evaluate(() => window.__pwaSubscriptionCalls), 0)
       assert.equal(fixture.posts, 0)
     })
@@ -335,5 +340,5 @@ async function main() {
   }
 }
 
-module.exports = { SCENARIOS, sha, loadCandidate, binding, fixtureCertificate, setNotificationPermission, workspacePath, TRUSTED_PATH, waitFor }
+module.exports = { SCENARIOS, sha, loadCandidate, binding, fixtureCertificate, setNotificationPermission, workspacePath, candidatePath, TRUSTED_PATH, waitFor }
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1 })

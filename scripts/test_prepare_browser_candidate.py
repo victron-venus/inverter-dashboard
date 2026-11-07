@@ -163,8 +163,9 @@ class CandidateTests(unittest.TestCase):
         for name in PRODUCER:
             bad = copy.deepcopy(PRODUCER)
             bad[name] = "wrong" if isinstance(bad[name], str) else bad[name] + 1
+            files = bundle_files()
             with self.subTest(name=name), self.assertRaises(ValueError):
-                validate_bundle(bundle_files(), bad)
+                validate_bundle(files, bad)
 
     def test_payload_corruption_and_unknown_file(self):
         for name in ("frontend/assets/main.js", "unattested.js"):
@@ -182,6 +183,17 @@ class CandidateTests(unittest.TestCase):
         ]
         for mutate in mutations:
             files = change(bundle_files(), "release-inputs-container.json", mutate)
+            with self.assertRaises(ValueError):
+                validate_bundle(files, PRODUCER)
+            # Keep the outer checksum coherent so the producer/OCI binding
+            # itself must reject, even if the receipt was deliberately rehashed.
+            files = change(
+                files,
+                "candidate-provenance.json",
+                lambda x, receipt=files["release-inputs-container.json"]: x.update(
+                    receiptSha256=digest(receipt)
+                ),
+            )
             with self.assertRaises(ValueError):
                 validate_bundle(files, PRODUCER)
 
@@ -317,6 +329,12 @@ class CandidateTests(unittest.TestCase):
             destination = root / "extracted"
             result = prepare(artifacts, destination, root / "diagnostics", PRODUCER, 123, root=root)
             self.assertEqual(result["artifactId"], 123)
+            self.assertEqual(result["distribution"], "extracted/frontend")
+            self.assertEqual(result["manifestPath"], "extracted/manifest.json")
+            recorded = (root / "diagnostics/candidate.json").read_text()
+            self.assertNotIn(str(root), recorded)
+            self.assertNotIn(str(root.resolve()), recorded)
+            self.assertFalse(Path(result["distribution"]).is_absolute())
             self.assertEqual(
                 result["candidateSha256"],
                 digest((artifacts / "browser-candidate.tar.gz").read_bytes()),

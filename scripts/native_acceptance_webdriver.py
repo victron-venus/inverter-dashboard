@@ -17,13 +17,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from native_acceptance import candidate_binding, read_json, require
 from qualification_paths import workspace_path
-
-UTC = timezone.utc
 
 
 def utcnow():
@@ -140,6 +138,27 @@ class WebDriver:
         raise ValueError("Native UI condition not observed before timeout")
 
 
+def finalize_observation(driver, record, evidence_path):
+    """Persist only provisional success, after successful native session cleanup."""
+    cleanup_failed = False
+    if driver.session:
+        try:
+            driver.command("DELETE", "")
+            record["sessionCleanupSucceeded"] = True
+        except (ValueError, OSError):
+            cleanup_failed = True
+            record["sessionCleanupFailed"] = True
+    observed_success = record["status"] == "pending-parent-validation"
+    if cleanup_failed:
+        record["status"] = "failed"
+        record.setdefault("error", "Native WebDriver session cleanup failed")
+    record["finishedAt"] = utcnow()
+    with evidence_path.open("x", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, indent=2) + "\n")
+    if cleanup_failed and observed_success:
+        raise ValueError("Native WebDriver session cleanup failed")
+
+
 def execute(candidate, base_url, driver_url, platform_name, runtime, output):
     require(
         os.environ.get("GITHUB_ACTIONS") == "true",
@@ -170,9 +189,10 @@ def execute(candidate, base_url, driver_url, platform_name, runtime, output):
     else:
         capabilities["goog:chromeOptions"] = {"androidPackage": "com.android.chrome"}
     output.mkdir(parents=True, exist_ok=True)
-    evidence_path = workspace_path("native-smoke.json", root=output, kind="file")
-    screenshot_path = workspace_path("native-smoke.png", root=output, kind="file")
-    evidence_path.unlink(missing_ok=True)
+    evidence_path = workspace_path(
+        "native-smoke.provisional.json", root=output, kind="file", new=True
+    )
+    screenshot_path = workspace_path("native-smoke.png", root=output, kind="file", new=True)
     record = {
         "schemaVersion": 1,
         "scope": "native-smoke",
@@ -184,6 +204,8 @@ def execute(candidate, base_url, driver_url, platform_name, runtime, output):
         "scenarios": [],
         "nativeComplete": False,
         "osNotificationObserved": False,
+        "sessionCleanupSucceeded": False,
+        "cspProbeObserved": False,
         "limitations": [
             "No native consent or installed-PWA test",
             "No OS notification observation",
@@ -230,6 +252,23 @@ def execute(candidate, base_url, driver_url, platform_name, runtime, output):
             "Secure context/service workers unavailable",
         )
         record["runtimeIdentity"] = identity
+        csp_probe = driver.command(
+            "POST",
+            "/execute/async",
+            {
+                "script": """const done=arguments[arguments.length-1];
+const origin='https://127.0.0.1:65534'; let ended=false;
+const finish=value=>{if(ended)return;ended=true;clearTimeout(timer);removeEventListener('securitypolicyviolation',onViolation);done(value)};
+const poll=()=>fetch('/__native/csp-status',{cache:'no-store'}).then(r=>r.json()).then(r=>{if(ended)return;if(r.probeReports===1)finish(true);else setTimeout(poll,100)}).catch(()=>finish(false));
+const onViolation=event=>{let blocked;try{blocked=new URL(event.blockedURI).origin}catch{return}if(blocked===origin&&event.effectiveDirective==='connect-src'&&event.disposition==='enforce')poll()};
+const timer=setTimeout(()=>finish(false),5000);
+addEventListener('securitypolicyviolation',onViolation);
+fetch(origin+'/__native-csp-probe__').then(()=>finish(false)).catch(()=>{});""",
+                "args": [],
+            },
+        )
+        require(csp_probe is True, "Enforced candidate-resource CSP control was not observed")
+        record["cspProbeObserved"] = True
         record["scenarios"].append({"id": "branded-browser-secure-runtime", "status": "passed"})
         driver.until(
             'return document.body.textContent.includes("73%") && !!document.querySelector("[data-testid=transport-status][data-connected=true]")'
@@ -274,7 +313,7 @@ def execute(candidate, base_url, driver_url, platform_name, runtime, output):
             "path": "native-smoke.png",
             "sha256": hashlib.sha256(screenshot).hexdigest(),
         }
-        record["status"] = "passed"
+        record["status"] = "pending-parent-validation"
     except (
         ValueError,
         KeyError,
@@ -285,13 +324,7 @@ def execute(candidate, base_url, driver_url, platform_name, runtime, output):
         record["error"] = str(exc)[:1000]
         raise
     finally:
-        if driver.session:
-            try:
-                driver.command("DELETE", "")
-            except (ValueError, OSError):
-                record["sessionCleanupFailed"] = True
-        record["finishedAt"] = utcnow()
-        evidence_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        finalize_observation(driver, record, evidence_path)
     return record
 
 

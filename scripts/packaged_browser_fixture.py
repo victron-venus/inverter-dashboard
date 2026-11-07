@@ -79,7 +79,7 @@ def publish(topic: str, value) -> None:
 
 def seed(authority: bool = True, event: bool = True) -> None:
     """Publish source-aged warnings and a synthetic controller observation."""
-    global SNAPSHOT, EVENT_EPOCH
+    global SNAPSHOT, EVENT_EPOCH, HA_READS, HA_STATE
     EVENT_EPOCH = int(time.time()) - 4500
     inverter = {
         "version": "packaged-fixture",
@@ -111,6 +111,8 @@ def seed(authority: bool = True, event: bool = True) -> None:
             }.items()
         }
     with LOCK:
+        HA_READS = 0
+        HA_STATE = "off"
         SNAPSHOT = {
             **groups,
             "inverter": inverter if authority else None,

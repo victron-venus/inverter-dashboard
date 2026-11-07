@@ -10,12 +10,10 @@ import argparse
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from qualification_paths import workspace_path
-
-UTC = timezone.utc
 
 SCHEMA = 1
 CANDIDATE_FIELDS = (

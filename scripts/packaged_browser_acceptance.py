@@ -101,7 +101,8 @@ def record_container_logs(names: list[str], output: Path, credential: str | None
             (output / f"{name}.log").write_text(content)
         except (OSError, subprocess.SubprocessError) as error:
             with suppress(OSError):
-                (output / f"{name}-log-error.txt").write_text(f"{type(error).__name__}\n")
+                error_path = output / f"{name}-log-error.txt"
+                error_path.write_text(f"{type(error).__name__}\n")
 
 
 def cleanup_owned(

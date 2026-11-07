@@ -18,7 +18,13 @@ function verifyScenarioContract(result) {
   assert.deepEqual(new Set(result.scenarios), new Set(contract.scenarios), 'Required application scenarios differ')
   return { id: contract.id, sha256: crypto.createHash('sha256').update(bytes).digest('hex'), required: contract.scenarios.length }
 }
-module.exports = { contract, verifyScenarioContract }
+function verifyCandidateInventory(candidate, measured) {
+  const inventory = candidate.frontendFiles
+  assert(inventory && typeof inventory === 'object' && !Array.isArray(inventory), 'Prepared candidate frontend inventory is required')
+  assert(measured instanceof Map && measured.size > 0, 'Measured frontend inventory is required')
+  assert.deepEqual(measured, new Map(Object.entries(inventory)), 'Served frontend bytes differ from the prepared candidate')
+}
+module.exports = { contract, verifyScenarioContract, verifyCandidateInventory }
 
 if (require.main === module) {
   assert(process.argv.length > 2, 'Pass one or more browser result JSON files to verify')

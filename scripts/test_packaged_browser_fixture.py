@@ -94,6 +94,61 @@ class FixtureTests(unittest.TestCase):
             self.request("/api/services/switch/toggle", body={"entity_id": "switch.real"})
         caught.exception.close()
 
+    def test_seed_requires_fresh_ha_polling_and_clears_prior_switch_state(self):
+        self.request("/api/states")
+        self.request("/api/services/switch/toggle", body={"entity_id": "switch.fixture_light"})
+        self.assertGreater(self.request("/fixture/status")["haReads"], 0)
+        self.request("/fixture/seed", body={})
+        reset = self.request("/fixture/status")
+        self.assertEqual(reset["haReads"], 0)
+        self.assertEqual(reset["capture"], [])
+        self.assertEqual(self.request("/api/states/switch.fixture_light")["state"], "off")
+        self.assertEqual(self.request("/fixture/status")["haReads"], 1)
+
+    def test_final_journal_detects_duplicate_after_initial_routes_once_check(self):
+        # Exercise the same checker with actual fixture HTTP publication/reads;
+        # the duplicate is injected only after the initial journal has passed.
+        script = r"""
+const assert = require('node:assert/strict')
+const { verifyFinalCommandJournal } = require(process.argv[1])
+const base = process.argv[2]
+const headers = { Authorization: 'Bearer ' + process.env.CI_PACKAGED_BROWSER_TOKEN }
+async function publish() {
+  const response = await fetch(base + '/v1/commands/toggle', {
+    method: 'POST', headers, body: JSON.stringify({ entity: 'charge_battery', state: 'on' }),
+    signal: AbortSignal.timeout(2000),
+  })
+  assert.equal(response.status, 200)
+}
+const read = async () => (await fetch(base + '/fixture/status', {
+  signal: AbortSignal.timeout(2000),
+})).json()
+;(async () => {
+  await publish()
+  const initial = await read()
+  assert.equal(initial.capture.length, 1)
+  await verifyFinalCommandJournal(read, initial.capture)
+  await publish()
+  await assert.rejects(verifyFinalCommandJournal(read, initial.capture), /Unexpected late, duplicate/)
+  process.stdout.write('late duplicate detected')
+})().catch(error => { console.error(error.message); process.exitCode = 1 })
+"""
+        result = subprocess.run(
+            [
+                "node",
+                "-e",
+                script,
+                str(Path(__file__).with_name("packaged_browser_contract.cjs")),
+                self.base,
+            ],
+            env={**os.environ, fixture.CREDENTIAL_ENV: self.credential},
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
+        )
+        self.assertEqual(result.stdout, "late duplicate detected")
+
     def test_mqtt_real_handshake_and_subscribe(self):
         with socket.create_connection(self.broker.server_address, timeout=2) as client:
             client.sendall(
@@ -178,13 +233,14 @@ class RunnerSafetyTests(unittest.TestCase):
                 fixture.credential_from_env({fixture.CREDENTIAL_ENV: credential})
 
     def test_readiness_errors_remain_bounded_and_report_safe_class(self):
+        credential = secrets.token_urlsafe(32)
         with (
             patch("packaged_browser_acceptance.time.monotonic", side_effect=[0, 0, 61]),
             patch("packaged_browser_acceptance.time.sleep") as sleep,
             patch("packaged_browser_acceptance.fetch", side_effect=OSError("private URL detail")),
             self.assertRaisesRegex(TimeoutError, "synthetic source: OSError") as caught,
         ):
-            wait_ready("http://127.0.0.1:12345", "mqtt", secrets.token_urlsafe(32))
+            wait_ready("http://127.0.0.1:12345", "mqtt", credential)
         self.assertNotIn("private URL", str(caught.exception))
         sleep.assert_called_once_with(0.25)
 
@@ -265,6 +321,7 @@ class RunnerSafetyTests(unittest.TestCase):
             verify_local_docker()
 
     def test_http_capture_cannot_follow_external_or_file_inputs(self):
+        credential = secrets.token_urlsafe(32)
         with patch("urllib.request.build_opener") as opener:
             for origin in (
                 "https://equipment.invalid",
@@ -272,7 +329,7 @@ class RunnerSafetyTests(unittest.TestCase):
                 "http://127.0.0.1:80/other",
             ):
                 with self.assertRaises(ValueError):
-                    fetch(origin, "/", credential=secrets.token_urlsafe(32))
+                    fetch(origin, "/", credential=credential)
             opener.assert_not_called()
 
     def test_unwritable_diagnostics_cannot_skip_any_cleanup(self):
@@ -303,19 +360,21 @@ class RunnerSafetyTests(unittest.TestCase):
                 raise subprocess.TimeoutExpired(args, 30)
             return ""
 
-        with (
-            tempfile.TemporaryDirectory() as temporary,
-            patch("packaged_browser_acceptance.call", side_effect=command),
-            self.assertRaisesRegex(RuntimeError, "cleanup incomplete"),
-        ):
-            (Path(temporary) / "output").mkdir()
-            cleanup_owned(
-                [OWNED + "-fixtures"],
-                OWNED,
-                OWNED + ":candidate",
-                Path(temporary) / "output",
-                root=Path(temporary),
-            )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "output"
+            output.mkdir()
+            with (
+                patch("packaged_browser_acceptance.call", side_effect=command),
+                self.assertRaisesRegex(RuntimeError, "cleanup incomplete"),
+            ):
+                cleanup_owned(
+                    [OWNED + "-fixtures"],
+                    OWNED,
+                    OWNED + ":candidate",
+                    output,
+                    root=root,
+                )
         self.assertIn(("docker", "rm", "-f", OWNED + "-fixtures"), calls)
         self.assertIn(("docker", "image", "rm", OWNED + ":candidate"), calls)
 

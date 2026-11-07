@@ -40,7 +40,7 @@ Use `scripts/prepare_browser_candidate.py` to verify/extract the producing job's
   "runAttempt": 2,
   "candidateArtifactId": 456,
   "candidateSha256": "<64 lowercase hex>",
-  "distribution": "/absolute/verified/frontend",
+  "distribution": ".compatibility/candidate/frontend",
   "frontendFiles": {"notifications-sw.js": "<64 lowercase hex>"}
 }
 ```
@@ -81,15 +81,28 @@ The current worker intentionally has **no fetch handler and no asset cache**. Do
 
 On the disposable macOS runner after candidate preparation:
 
-```bash
-CI_PWA_CANDIDATE="$PWD/.compatibility/candidate/candidate.json" \
-CI_NATIVE_OUTPUT="$PWD/.compatibility/native-safari" \
-node scripts/native_acceptance_smoke.cjs
+The checked-in workflow passes the documented outputs directly from its pinned
+`setup-python` step; there is no fallback to `pythonLocation` or shell lookup:
+
+```yaml
+- name: Exercise installed Safari in the disposable hosted runner
+  env:
+    CI_NATIVE_PYTHON: ${{ steps.python.outputs.python-path }}
+    CI_NATIVE_PYTHON_VERSION: ${{ steps.python.outputs.python-version }}
+    CI_PWA_CANDIDATE: ${{ github.workspace }}/.compatibility/candidate/candidate.json
+    CI_NATIVE_OUTPUT: ${{ github.workspace }}/.compatibility/native-safari
+  run: node scripts/native_acceptance_smoke.cjs
 ```
 
-The script uses the installed `/usr/bin/safaridriver`, `/usr/bin/python3` (the smoke helpers retain Python 3.9 compatibility), and `/usr/bin/sudo /usr/bin/security` on the disposable runner's system keychain and an ephemeral loopback HTTPS origin. All spawned executables use fixed system paths and a fixed system `PATH`. It removes that certificate by its SHA-256 fingerprint at teardown. Its loopback WebSocket handshake uses SHA-1 solely because RFC 6455 requires that wire format; [RFC 6455 section 10.8](https://www.rfc-editor.org/rfc/rfc6455.html#section-10.8) explains that the handshake relies on none of SHA-1’s security properties. Candidate/evidence integrity continues to use SHA-256. No user machine keychain or Safari preferences are touched. The resulting `native-smoke.json` is labelled `native-host`; it records actual driver/browser versions, measured macOS version/build/architecture, and its limitations. A screenshot proves only what is visible in that captured browser view.
+The script uses the installed `/usr/bin/safaridriver`, the verified CPython 3.12 interpreter, and `/usr/bin/sudo /usr/bin/security` on the disposable runner's system keychain and an ephemeral loopback HTTPS origin. OpenSSL, sudo, security and safaridriver use fixed system paths and a fixed system `PATH`. Python comes from the pinned `setup-python` action’s explicit `python-path` output, resolves only to the corresponding approved hosted toolcache/framework installation, and must report the selected CPython 3.12 version before execution. Arbitrary environment interpreter locations and PATH lookup are rejected. Teardown attempts both matching admin trust removal and certificate deletion by its SHA-256 fingerprint, including after a partial or timed-out trust installation. Its loopback WebSocket handshake uses SHA-1 solely because RFC 6455 requires that wire format; [RFC 6455 section 10.8](https://www.rfc-editor.org/rfc/rfc6455.html#section-10.8) explains that the handshake relies on none of SHA-1’s security properties. Candidate/evidence integrity continues to use SHA-256. No user machine keychain or Safari preferences are touched. The resulting `native-smoke.json` is labelled `native-host`; it records actual driver/browser versions, measured macOS version/build/architecture, and its limitations. A screenshot proves only what is visible in that captured browser view.
+
+The interpreter preflight allows the documented toolcache `bin` link into the matching macOS Python framework, then verifies the canonical executable and its ancestors contain no links, checks execute permissions and measures the selected CPython 3.12 version. The version probe uses isolated mode; the actual helper uses `-E -s` to ignore Python environment/user-site overrides while retaining trusted sibling imports. See the [pinned setup-python outputs](https://github.com/actions/setup-python/blob/6d4fd22b20465ccc0f7354476588e8df7c9ca0e0/action.yml) and [macOS installer layout](https://github.com/actions/python-versions/blob/0bd7e714026678b92b30805abbd061c8ac04ffc5/installers/macos-pkg-setup-template.sh).
 
 The WebDriver HTTP client validates a loopback HTTP origin, disables environment proxies and redirects, retains a 45-second network timeout, bounds JSON responses to 8 MiB and validates the W3C response envelope.
+
+The candidate document receives an enforced Content Security Policy that confines its scripts, connections, images, fonts and workers to the isolated fixture or explicitly allowed in-document data. The harness requires an intentional blocked cross-origin loopback probe, its enforced DOM event, and a server report bound to the exact policy and fixture origin. WebKit's legacy report may omit `disposition`; this is accepted only with those policy/origin bindings and the separate DOM event declaring `enforce`. An explicit report-only observation is rejected. Unexpected candidate violations or malformed reports fail the smoke; HTTP settings/control writes are refused and counted as failures. This isolation covers **candidate document resources**, not browser background services or host networking.
+
+The child writes `native-smoke.provisional.json` with `pending-parent-validation` only after the four observations and successful WebDriver session deletion. A deletion error leaves a failed provisional receipt. The parent creates the final `native-smoke.json` exclusively after checking application frames, protocol errors, HTTP writes, CSP evidence and all teardown results. It requires driver termination, confirmed HTTPS listener closure, admin trust removal, certificate removal and temporary-directory cleanup; a timeout or cleanup error cannot produce a passing final receipt. The release collector rejects unfinalized observations. Unit tests and isolated Chromium/WebKit controls exercise these failure paths, but only the actual hosted Safari job supplies native smoke evidence for a release candidate.
 
 The portable WebDriver helper also accepts `--platform iOS --runtime native-simulator`, or Android with `--runtime native-emulator`, against an already qualified loopback fixture and driver. This is an executable transport, **not a declaration that mobile infrastructure was provisioned**. Device/simulator permissions, trusted HTTPS reachability, driver capabilities and installed browser availability must first be established by the infrastructure owner. The standalone hosted orchestration currently provisions macOS Safari only.
 

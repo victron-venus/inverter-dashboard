@@ -1,8 +1,9 @@
 """Protocol/capture unit tests; no browser, driver or device is started."""
 
+import base64
+import copy
 import io
 import json
-import copy
 import tempfile
 import threading
 import unittest
@@ -88,6 +89,7 @@ class NativeToolTests(unittest.TestCase):
                 self.wfile.write(b'{"value":{"ready":true}}')
 
             def log_message(self, *_args):
+                # Keep fixture HTTP logs quiet; each request is asserted through paths above.
                 pass
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -206,6 +208,87 @@ class NativeToolTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     capture.initialize(bad_candidate, bad_policy, output, "observer")
                 self.assertFalse(output.exists())
+
+    def native_observation(self, output, delete_fails=False, secure=True):
+        candidate = {
+            "repository": "victron-venus/test",
+            "sourceSha": "a" * 40,
+            "runId": 1,
+            "runAttempt": 1,
+            "candidateArtifactId": 2,
+            "candidateSha256": "b" * 64,
+            "frontendFiles": {"notifications-sw.js": "c" * 64},
+        }
+        transport = Mock(session=None)
+        transport.call.return_value = {
+            "sessionId": "fixture",
+            "capabilities": {
+                "browserName": "safari",
+                "browserVersion": "18.5",
+                "platformName": "mac",
+            },
+        }
+        transport.script.side_effect = [{"secureContext": secure, "serviceWorker": True}, True]
+
+        def command(method, route, payload=None):
+            if method == "DELETE" and delete_fails:
+                raise ValueError("synthetic cleanup refusal")
+            if route == "/execute/async":
+                return True if "csp-status" in payload["script"] else "c" * 64
+            if route == "/element":
+                return {"element-6066-11e4-a52e-4f735466cecf": "element"}
+            if route == "/screenshot":
+                return base64.b64encode(b"\x89PNG\r\n\x1a\nsynthetic-unit-fixture").decode()
+            return None
+
+        transport.command.side_effect = command
+        with (
+            patch.dict("os.environ", {"GITHUB_ACTIONS": "true"}),
+            patch.object(driver, "WebDriver", return_value=transport),
+            patch.object(driver, "macos_host_identity", return_value={"osName": "macOS"}),
+        ):
+            return driver.execute(
+                candidate,
+                "https://127.0.0.1:443",
+                "http://127.0.0.1:4444",
+                "macOS",
+                "native-host",
+                output,
+            )
+
+    def test_child_success_is_provisional_until_parent_finalization(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            result = self.native_observation(output)
+            self.assertEqual(result["status"], "pending-parent-validation")
+            self.assertTrue(result["sessionCleanupSucceeded"])
+            self.assertTrue(result["cspProbeObserved"])
+            self.assertFalse((output / "native-smoke.json").exists())
+            self.assertEqual(
+                gate.read_json(output / "native-smoke.provisional.json")["status"],
+                "pending-parent-validation",
+            )
+
+    def test_delete_session_failure_cannot_produce_passing_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            with self.assertRaisesRegex(ValueError, "session cleanup failed"):
+                self.native_observation(output, delete_fails=True)
+            result = gate.read_json(output / "native-smoke.provisional.json")
+            self.assertEqual(result["status"], "failed")
+            self.assertTrue(result["sessionCleanupFailed"])
+            self.assertFalse(result["sessionCleanupSucceeded"])
+            self.assertFalse((output / "native-smoke.json").exists())
+
+    def test_cleanup_failure_preserves_the_original_observation_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            with self.assertRaisesRegex(ValueError, "Secure context"):
+                self.native_observation(output, delete_fails=True, secure=False)
+            result = gate.read_json(output / "native-smoke.provisional.json")
+            self.assertEqual(result["status"], "failed")
+            self.assertIn("Secure context", result["error"])
+            self.assertTrue(result["sessionCleanupFailed"])
 
 
 if __name__ == "__main__":

@@ -174,10 +174,12 @@ class NativeAcceptanceTests(unittest.TestCase):
             with self.subTest(key=key):
                 old = self.first()["candidate"][key]
                 self.first()["candidate"][key] = (
-                    old + 1 if isinstance(old, int) else ("z" + old[1:])
+                    old + 1
+                    if isinstance(old, int)
+                    else ("victron-venus/other" if key == "repository" else "f" * len(old))
                 )
                 self.save_receipts()
-                with self.assertRaises(ValueError):
+                with self.assertRaisesRegex(ValueError, "Receipt candidate mismatch"):
                     self.verify()
                 self.first()["candidate"][key] = old
 

@@ -91,7 +91,9 @@ def verify_target(
     values, originals = {}, {}
     for name in ("target.json", RUNTIME_JSON, RESULT_JSON, "candidate.json"):
         values[name], originals[name] = load(folder / name)
-    require(values["target.json"] == row, "Browser target differs from source matrix")
+    # The pinned reusable producer materializes the default channel in every row.
+    expected_row = dict(row, channel=row.get("channel", ""))
+    require(values["target.json"] == expected_row, "Browser target differs from source matrix")
     platform = "darwin"
     if row["os"].startswith("ubuntu-"):
         platform = "linux"
@@ -215,7 +217,10 @@ def collect(
     return payloads
 
 
-def archive(output: Path, payloads: dict[str, bytes]) -> None:
+def archive(output: Path, payloads: dict[str, bytes], *, root: Path | None = None) -> None:
+    # Enforce the boundary at the writer as well as the CLI parser. Only pure
+    # unit controls supply another trusted root; the CLI never exposes it.
+    output = workspace_path(output, root=root, kind="file", new=True)
     require(
         not output.exists() and not any(p.is_symlink() for p in (output, *output.parents)),
         "Qualification output must be new and unlinked",
@@ -232,12 +237,53 @@ def archive(output: Path, payloads: dict[str, bytes]) -> None:
             bundle.addfile(info, io.BytesIO(data))
 
 
+def native_parent_evidence(report: dict) -> None:
+    """Only the parent can accept the child after traffic and cleanup checks."""
+    require(
+        report.get("sessionCleanupSucceeded") is True
+        and report.get("sessionCleanupFailed") is not True,
+        "Native Safari session cleanup did not succeed",
+    )
+    parent = report.get("parentValidation", {})
+    require(
+        parent.get("complete") is True and parent.get("cleanupSucceeded") is True,
+        "Native smoke lacks completed parent validation",
+    )
+    require(
+        all(
+            type(parent.get(key)) is int and parent[key] == 0
+            for key in ("applicationFrames", "protocolErrors", "httpWrites")
+        ),
+        "Native smoke observed unexpected commands or protocol traffic",
+    )
+    isolation = report.get("networkIsolation", {})
+    require(
+        isolation.get("mechanism") == "content-security-policy"
+        and isolation.get("scope") == "candidate-document-resources"
+        and isolation.get("enforced") is True
+        and isolation.get("probeObserved") is True
+        and type(isolation.get("probeReports")) is int
+        and isolation["probeReports"] == 1,
+        "Native smoke lacks measured candidate resource isolation",
+    )
+    require(
+        all(
+            type(isolation.get(key)) is int and isolation[key] == 0
+            for key in ("candidateViolations", "malformedReports")
+        )
+        and isinstance(isolation.get("policySha256"), str)
+        and re.fullmatch(r"[a-f0-9]{64}", isolation["policySha256"]),
+        "Native smoke resource isolation failed",
+    )
+
+
 def native_smoke_evidence(folder: Path, report: dict, candidate: dict) -> bytes:
     """Verify measured Safari/host identity and the original screenshot."""
     require(
         report.get("scope") == "native-smoke" and report.get("nativeComplete") is False,
         "Native smoke must remain partial",
     )
+    native_parent_evidence(report)
     require(
         report.get("requestedPlatform") == "macOS" and report.get("runtime") == "native-host",
         "Native smoke used the wrong runtime",
@@ -351,9 +397,11 @@ def additional_evidence(folder: Path, candidate: dict, native: bool) -> dict[str
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--artifacts", type=workspace_path, required=True)
-    parser.add_argument("--prepared", type=workspace_path, required=True)
-    parser.add_argument("--diagnostics", type=workspace_path, required=True)
+    # prepare() validates these at its entry. Preserve the original checkout-
+    # relative spelling for portable receipt fields, not canonical host paths.
+    parser.add_argument("--artifacts", type=Path, required=True)
+    parser.add_argument("--prepared", type=Path, required=True)
+    parser.add_argument("--diagnostics", type=Path, required=True)
     parser.add_argument("--evidence", type=workspace_path, required=True)
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--channel", choices=("nightly", "beta", "rc"), required=True)
@@ -370,6 +418,7 @@ def main() -> None:
         identity_from_env(),
         int(os.environ["CI_BROWSER_CANDIDATE_ARTIFACT_ID"]),
     )
+    prepared = workspace_path(args.prepared, kind="directory", must_exist=True)
     root = Path(__file__).resolve().parents[1]
     matrix = json.loads((root / ".github/browser-compatibility.json").read_bytes())
     payloads = collect(
@@ -387,7 +436,7 @@ def main() -> None:
         "release-inputs-container.json",
         "release-plan.json",
     ):
-        payloads[f"package/{name}"] = bounded_file(args.prepared / name, 2_000_000)
+        payloads[f"package/{name}"] = bounded_file(prepared / name, 2_000_000)
     payloads.update(additional_evidence(args.pwa_evidence, candidate, False))
     if args.channel == "rc":
         require(args.safari_evidence is not None, "RC requires actual Safari smoke evidence")

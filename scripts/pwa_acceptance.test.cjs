@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { SCENARIOS, loadCandidate, sha, binding, workspacePath, fixtureCertificate, waitFor } = require('./pwa_acceptance.cjs')
+const { SCENARIOS, loadCandidate, sha, binding, workspacePath, candidatePath, fixtureCertificate, waitFor } = require('./pwa_acceptance.cjs')
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pwa-contract-'))
@@ -14,7 +14,7 @@ function fixture(t) {
     fs.writeFileSync(path.join(distribution, name), name)
     frontendFiles[name] = sha(Buffer.from(name))
   }
-  const candidate = { repository: 'victron-venus/test', sourceSha: 'a'.repeat(40), runId: 1, runAttempt: 2, candidateArtifactId: 3, candidateSha256: 'b'.repeat(64), distribution, frontendFiles }
+  const candidate = { repository: 'victron-venus/test', sourceSha: 'a'.repeat(40), runId: 1, runAttempt: 2, candidateArtifactId: 3, candidateSha256: 'b'.repeat(64), distribution: 'frontend', frontendFiles }
   const filename = path.join(root, 'candidate.json')
   const write = () => fs.writeFileSync(filename, JSON.stringify(candidate))
   write()
@@ -122,7 +122,7 @@ test('workspace boundary rejects outside paths, traversal, links and output syml
 test('candidate distribution cannot escape the trusted workspace', t => {
   const f = fixture(t)
   f.candidate.distribution = os.tmpdir(); f.write()
-  assert.throws(() => loadCandidate(f.filename, f.root), /escapes/)
+  assert.throws(() => loadCandidate(f.filename, f.root), /checkout-relative/)
 })
 
 test('fixture certificate uses fixed OpenSSL and supports its exact config on this host', t => {
@@ -167,9 +167,161 @@ for node in ast.walk(source):
                 bodies.append(value.value)
 print(json.dumps(bodies))`
   const bodies = JSON.parse(execFileSync('/usr/bin/python3', ['-c', extract, path.join(__dirname, 'native_acceptance_webdriver.py')], { encoding: 'utf8', timeout: 10000 }))
-  assert.equal(bodies.length, 5)
+  assert.equal(bodies.length, 6)
   for (const body of bodies) {
     // --check parses stdin only; it does not run browser code or any UI.
     execFileSync(process.execPath, ['--check'], { input: `function webdriverScript() { ${body} }`, timeout: 10000 })
   }
+})
+
+
+test('candidate metadata accepts only canonical relative paths under the checkout', t => {
+  const f = fixture(t)
+  assert.equal(candidatePath('frontend/index.html', f.root), path.join(fs.realpathSync(f.root), 'frontend/index.html'))
+  for (const invalid of ['../escape', '/absolute', './frontend', 'frontend//index.html', 'frontend/../index.html', String.raw`frontend\index.html`, 'C:/host/path', 'frontend/']) {
+    assert.throws(() => candidatePath(invalid, f.root), /checkout-relative/)
+  }
+})
+
+
+function pythonRuntimeFixture(t) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'native-runtime-contract-')))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const roots = { toolcache: path.join(root, 'toolcache/Python'), framework: path.join(root, 'Frameworks/Python.framework/Versions') }
+  const install = path.join(roots.toolcache, '3.12.13', 'arm64')
+  const framework = path.join(roots.framework, '3.12')
+  fs.mkdirSync(install, { recursive: true }); fs.mkdirSync(path.join(framework, 'bin'), { recursive: true })
+  const executable = path.join(framework, 'bin/python3.12')
+  fs.writeFileSync(executable, 'Synthetic nonexecuted interpreter path fixture'); fs.chmodSync(executable, 0o755)
+  fs.symlinkSync(path.join(framework, 'bin'), path.join(install, 'bin'))
+  fs.symlinkSync('python3.12', path.join(framework, 'bin/python'))
+  return { root, roots, install, executable, supplied: path.join(install, 'bin/python') }
+}
+
+test('setup-python selection resolves only documented toolcache-to-framework links', t => {
+  const { resolveSetupPython } = require('./native_acceptance_runtime.cjs')
+  const f = pythonRuntimeFixture(t)
+  assert.equal(resolveSetupPython(f.supplied, '3.12.13', 'arm64', f.roots), f.executable)
+  for (const supplied of ['/usr/bin/python3', 'python3', path.join(f.root, 'injected/python'), f.supplied.replace('/bin/', '/bin/../bin/')]) {
+    assert.throws(() => resolveSetupPython(supplied, '3.12.13', 'arm64', f.roots), /exact setup-python/)
+  }
+  assert.throws(() => resolveSetupPython(f.supplied, '3.9.6', 'arm64', f.roots), /3.12 version/)
+  assert.throws(() => resolveSetupPython(f.supplied, '3.12.12', 'arm64', f.roots), /exact setup-python/)
+})
+
+test('setup-python selection rejects redirected runtime links and nonexecutables', t => {
+  const { resolveSetupPython } = require('./native_acceptance_runtime.cjs')
+  const f = pythonRuntimeFixture(t)
+  fs.chmodSync(f.executable, 0o644)
+  assert.throws(() => resolveSetupPython(f.supplied, '3.12.13', 'arm64', f.roots), /regular executable/)
+  fs.chmodSync(f.executable, 0o755)
+  const outside = path.join(f.root, 'outside'); fs.mkdirSync(outside)
+  fs.writeFileSync(path.join(outside, 'python'), 'not executed')
+  fs.unlinkSync(path.join(f.install, 'bin')); fs.symlinkSync(outside, path.join(f.install, 'bin'))
+  assert.throws(() => resolveSetupPython(f.supplied, '3.12.13', 'arm64', f.roots), /escaped/)
+})
+
+test('measured interpreter identity must match the pinned action output', () => {
+  const { validatePythonMeasurement } = require('./native_acceptance_runtime.cjs')
+  const executable = '/approved/python3.12'
+  const measured = { implementation: 'cpython', version: [3, 12, 13], executable }
+  validatePythonMeasurement(measured, executable, '3.12.13')
+  assert.throws(() => validatePythonMeasurement({ ...measured, version: [3, 11, 0] }, executable, '3.12.13'), /version differs/)
+  assert.throws(() => validatePythonMeasurement({ ...measured, executable: '/unapproved/python' }, executable, '3.12.13'), /executable differs/)
+})
+
+
+test('candidate CSP confines resource classes to the fixture without a host firewall claim', () => {
+  const { fixturePolicy } = require('./native_acceptance_network.cjs')
+  const policy = fixturePolicy('https://127.0.0.1:12345')
+  for (const required of ["default-src 'none'", "script-src 'self'", "connect-src 'self' wss://127.0.0.1:12345", "form-action 'none'", "frame-src 'none'", 'report-uri /__native/csp-report']) assert(policy.includes(required))
+  assert.throws(() => fixturePolicy('https://example.com'), /loopback/)
+})
+
+test('native finalizer rejects pending cleanup, commands and CSP violations before passing', () => {
+  const { finalizeNativeReceipt } = require('./native_acceptance_network.cjs')
+  const provisional = { scope: 'native-smoke', status: 'pending-parent-validation', sessionCleanupSucceeded: true, cspProbeObserved: true }
+  const network = { probeReports: 1, candidateViolations: 0, malformedReports: 0, httpWrites: 0, policySha256: 'a'.repeat(64) }
+  const counters = { applicationFrames: 0, protocolErrors: 0 }
+  const result = finalizeNativeReceipt(provisional, network, counters, [])
+  assert.equal(result.status, 'passed'); assert.equal(result.parentValidation.complete, true)
+  assert.equal(result.networkIsolation.scope, 'candidate-document-resources')
+  for (const changed of [{ ...provisional, status: 'passed' }, { ...provisional, sessionCleanupSucceeded: false }, { ...provisional, sessionCleanupFailed: true }, { ...provisional, cspProbeObserved: false }]) {
+    assert.throws(() => finalizeNativeReceipt(changed, network, counters, []))
+  }
+  for (const key of ['candidateViolations', 'malformedReports', 'httpWrites']) {
+    assert.throws(() => finalizeNativeReceipt(provisional, { ...network, [key]: 1 }, counters, []))
+  }
+  for (const probeReports of [0, 2]) assert.throws(() => finalizeNativeReceipt(provisional, { ...network, probeReports }, counters, []))
+  assert.throws(() => finalizeNativeReceipt(provisional, network, { ...counters, applicationFrames: 1 }, []))
+  assert.throws(() => finalizeNativeReceipt(provisional, network, { ...counters, protocolErrors: 1 }, []))
+  assert.throws(() => finalizeNativeReceipt(provisional, network, counters, ['Trust cleanup failed']))
+})
+
+test('fixture HTTP guard counts settings writes and actual CSP reports', async t => {
+  const http = require('node:http')
+  const { createNetworkGuard } = require('./native_acceptance_network.cjs')
+  const guard = createNetworkGuard()
+  const server = http.createServer(guard.wrap(() => 'https://127.0.0.1:12345', (_req, res) => res.end('fixture')))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => { server.closeAllConnections(); server.close() })
+  const origin = `http://127.0.0.1:${server.address().port}`
+  const page = await fetch(origin)
+  assert(page.headers.get('content-security-policy').includes("default-src 'none'")); await page.text()
+  const write = await fetch(origin + '/api/settings', { method: 'POST', body: '{}' }); await write.text()
+  assert.equal(write.status, 405); assert.equal(guard.observed.httpWrites, 1)
+  const post = async blocked => {
+    const response = await fetch(origin + '/__native/csp-report', { method: 'POST', body: JSON.stringify({ 'csp-report': { 'blocked-uri': blocked, 'effective-directive': 'connect-src', disposition: 'enforce', 'document-uri': 'https://127.0.0.1:12345/', 'original-policy': page.headers.get('content-security-policy') } }) })
+    assert.equal(response.status, 204)
+  }
+  await post('https://127.0.0.1:65534/__native-csp-probe__')
+  await post('https://example.invalid/private-path-not-retained')
+  const status = await (await fetch(origin + '/__native/csp-status')).json()
+  assert.equal(status.probeReports, 1); assert.equal(status.candidateViolations, 1)
+  assert.match(status.policySha256, /^[a-f0-9]{64}$/)
+  assert(!JSON.stringify(status).includes('private-path'))
+})
+
+
+test('fixture server teardown requires close acknowledgement after forced cleanup', async () => {
+  const { closeFixtureServer } = require('./native_acceptance_smoke.cjs')
+  let callback, forced = false
+  await closeFixtureServer({ close(done) { callback = done }, closeAllConnections() { forced = true; callback() } }, 1, 100)
+  assert.equal(forced, true)
+  await assert.rejects(closeFixtureServer({ close() { /* Synthetic hung listener: no completion acknowledgement. */ }, closeAllConnections() { /* Force-close also hangs in this fixture. */ } }, 1, 10), /did not close/)
+  await assert.rejects(closeFixtureServer({ close() { throw new Error('synchronous close failure') }, closeAllConnections() { throw new Error('unexpected force') } }, 1, 10), /synchronous close failure/)
+  await assert.rejects(closeFixtureServer({ close() { /* Synthetic listener awaits force-close. */ }, closeAllConnections() { throw new Error('force-close failure') } }, 1, 10), /force-close failure/)
+  await assert.rejects(closeFixtureServer({ close(done) { done(new Error('listener failure')) }, closeAllConnections() { throw new Error('unexpected force') } }, 1, 10), /listener failure/)
+})
+
+
+test('WebKit legacy report normalization stays bound to the enforced policy and origin', () => {
+  const { createNetworkGuard, fixturePolicy, PROBE_ORIGIN } = require('./native_acceptance_network.cjs')
+  const guard = createNetworkGuard(), origin = 'https://127.0.0.1:12345'
+  guard.wrap(() => origin, () => {} )({ url: '/', method: 'GET' }, { setHeader() { /* Header value is independently reconstructed below. */ } })
+  const report = { 'blocked-uri': PROBE_ORIGIN + '/__native-csp-probe__', 'effective-directive': 'connect-src', 'document-uri': origin + '/', 'original-policy': fixturePolicy(origin) }
+  guard.acceptReport({ 'csp-report': report })
+  assert.equal(guard.observed.probeReports, 1)
+  guard.acceptReport({ 'csp-report': { ...report, disposition: 'report' } })
+  assert.equal(guard.observed.probeReports, 1); assert.equal(guard.observed.candidateViolations, 1)
+  for (const changed of [{ ...report, 'original-policy': "default-src *" }, { ...report, 'document-uri': 'https://example.invalid/' }, { ...report, 'original-policy': undefined }]) {
+    assert.throws(() => guard.acceptReport({ 'csp-report': changed }), /policy and origin/)
+  }
+})
+
+
+test('admin trust and certificate removal are bounded and attempted independently', () => {
+  const { removeFixtureTrust } = require('./native_acceptance_smoke.cjs')
+  const calls = []
+  const invoke = (program, args, options) => { calls.push({ program, args, options }) }
+  assert.deepEqual(removeFixtureTrust('/fixture/cert.pem', 'A'.repeat(64), invoke), [])
+  assert.deepEqual(calls.map(call => call.args), [
+    ['/usr/bin/security', 'remove-trusted-cert', '-d', '/fixture/cert.pem'],
+    ['/usr/bin/security', 'delete-certificate', '-Z', 'A'.repeat(64), '/Library/Keychains/System.keychain'],
+  ])
+  for (const call of calls) { assert.equal(call.program, '/usr/bin/sudo'); assert.equal(call.options.timeout, 30000) }
+  const attempted = []
+  const fail = (_program, args) => { attempted.push(args[1]); throw new Error('synthetic cleanup failure') }
+  assert.equal(removeFixtureTrust('/fixture/cert.pem', 'A'.repeat(64), fail).length, 2)
+  assert.deepEqual(attempted, ['remove-trusted-cert', 'delete-certificate'])
 })

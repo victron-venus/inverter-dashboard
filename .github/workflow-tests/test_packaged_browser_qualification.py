@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import yaml
@@ -75,6 +76,20 @@ class PackagedBrowserQualificationTests(unittest.TestCase):
             )
             self.assertTrue(downloads[0]["with"]["merge-multiple"])
 
+    def test_native_helper_uses_the_measured_setup_python_output(self):
+        steps = jobs("native-browser-acceptance.yml")["safari"]["steps"]
+        python = next(step for step in steps if step.get("id") == "python")
+        self.assertTrue(python["uses"].startswith("actions/setup-python@"))
+        self.assertEqual(python["with"]["python-version"], "3.12")
+        smoke = next(step for step in steps if "native_acceptance_smoke.cjs" in step.get("run", ""))
+        self.assertEqual(
+            smoke["env"],
+            {
+                "CI_NATIVE_PYTHON": "${{ steps.python.outputs.python-path }}",
+                "CI_NATIVE_PYTHON_VERSION": "${{ steps.python.outputs.python-version }}",
+            },
+        )
+
     def test_evidence_payload_uses_original_plan_and_is_uploaded_for_publisher(self):
         steps = jobs("browser-release-evidence.yml")["preserve"]["steps"]
         commands = "\n".join(step.get("run", "") for step in steps)
@@ -84,7 +99,18 @@ class PackagedBrowserQualificationTests(unittest.TestCase):
         self.assertIn("version_plan.py sync --plan .release-plan.json", commands)
         self.assertIn("stage_release_assets.py --target browser-qualification", commands)
         upload = steps[-1]["with"]
-        self.assertEqual(upload["name"], "release-assets-browser-qualification")
+        self.assertEqual(
+            upload["name"],
+            "release-assets-browser-qualification-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}",
+        )
+        pipeline = jobs("release-pipeline.yml")
+        for publisher in (pipeline["candidate"], pipeline["final"]):
+            pattern = next(
+                step["with"]["pattern"]
+                for step in publisher["steps"]
+                if "pattern" in step.get("with", {})
+            )
+            self.assertTrue(fnmatchcase(upload["name"], pattern))
         self.assertEqual(upload["if-no-files-found"], "error")
 
     def test_reviewed_native_observation_is_not_misrepresented_as_engine_success(self):

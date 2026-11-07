@@ -6,10 +6,10 @@ const http = require('node:http')
 const path = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
 const { waitForHydratedDashboard } = require('./browser-readiness.cjs')
-const { runReadinessControls } = require('./browser-readiness.test.cjs')
 const { trackMockSocket } = require('./browser-socket-fixture.cjs')
 const { runDashboardScenarios } = require('./browser-scenarios.cjs')
-const { verifyScenarioContract } = require('./browser-scenarios-contract.cjs')
+const { verifyScenarioContract, verifyCandidateInventory } = require('./browser-scenarios-contract.cjs')
+const { candidatePath, workspacePath } = require('./pwa_acceptance.cjs')
 
 const root = path.resolve(__dirname, '..')
 // User flows follow inverter-dashboard-vue; this adapter serves only the exact
@@ -30,11 +30,10 @@ if (candidate) {
   assert.equal(candidate.releaseReceipt, true, 'Candidate must carry a verified release receipt')
   for (const key of ['archiveSha256', 'ociSha256', 'receiptSha256']) assert.match(candidate[key], /^[0-9a-f]{64}$/, `Candidate ${key} is required`)
   assert.match(candidate.sourceSha, /^[0-9a-f]{40}$/, 'Candidate source must be immutable')
-  assetRoot = fs.realpathSync(process.env.CI_BROWSER_CANDIDATE_ROOT || path.join(root, 'browser-candidate-web'))
-  assert(path.isAbsolute(candidate.distribution) && path.isAbsolute(candidate.manifestPath), 'Prepared candidate paths must be absolute')
+  assetRoot = fs.realpathSync(workspacePath(process.env.CI_BROWSER_CANDIDATE_ROOT || 'browser-candidate-web', root))
 }
-const dist = fs.realpathSync(candidate ? candidate.distribution : path.resolve(root, application.distribution))
-const manifestFile = fs.realpathSync(candidate ? candidate.manifestPath : path.resolve(root, application.manifest))
+const dist = fs.realpathSync(candidate ? candidatePath(candidate.distribution, root) : path.resolve(root, application.distribution))
+const manifestFile = fs.realpathSync(candidate ? candidatePath(candidate.manifestPath, root) : path.resolve(root, application.manifest))
 assert(dist.startsWith(assetRoot + path.sep) && manifestFile.startsWith(assetRoot + path.sep), 'Frontend paths must remain inside the verified asset root')
 const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
 assert.equal(manifest.repository, 'https://github.com/victron-venus/inverter-dashboard-vue')
@@ -66,6 +65,7 @@ for (const [file, hash] of expected) {
   assert.match(hash, /^[0-9a-f]{64}$/)
   assert.equal(actual.get(file), hash, `Frontend bytes changed: ${file}`)
 }
+if (candidate) verifyCandidateInventory(candidate, actual)
 const frontend = {
   sourceCommit: manifest.source_commit || manifest.commit,
   version: manifest.package_version,
@@ -83,6 +83,7 @@ const modulePath = process.env.CI_PLAYWRIGHT_MODULE
 assert(modulePath && path.isAbsolute(modulePath), 'Set CI_PLAYWRIGHT_MODULE to the isolated toolchain')
 assert(fs.existsSync(path.join(dist, 'index.html')), 'Build the real SPA before browser acceptance')
 const playwright = require(modulePath)
+const { runReadinessControls } = require('./browser-readiness.test.cjs')
 assert(['chromium', 'firefox', 'webkit'].includes(engine), 'Unsupported browser engine')
 fs.mkdirSync(diagnostics, { recursive: true })
 fs.rmSync(evidence, { force: true })

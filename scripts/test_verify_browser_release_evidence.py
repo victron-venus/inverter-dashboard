@@ -3,18 +3,24 @@
 import hashlib
 import io
 import json
+import tarfile
 import tempfile
-import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
-from unittest import mock
+from unittest import TestCase, main, mock
 
 import verify_browser_release_evidence as verifier
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class BrowserReleaseEvidenceTests(unittest.TestCase):
+class BrowserReleaseEvidenceTests(TestCase):
+    def test_archive_writer_rejects_outside_checkout_before_io(self):
+        output = self.root / "outside.tar.gz"
+        with self.assertRaisesRegex(ValueError, "escapes the trusted checkout"):
+            verifier.archive(output, {"result.json": b"{}"})
+        self.assertFalse(output.exists())
+
     def test_cli_rejects_external_safari_path_before_candidate_io(self):
         argv = [
             "verify_browser_release_evidence.py",
@@ -89,9 +95,9 @@ class BrowserReleaseEvidenceTests(unittest.TestCase):
                 "channel": row.get("channel", ""),
                 "playwrightVersion": row["playwright"],
                 "browserVersion": "123.1.2" if row.get("channel") else row["browser_version"],
-                "platform": "linux"
-                if row["os"].startswith("ubuntu-")
-                else ("win32" if row["os"].startswith("windows-") else "darwin"),
+                "platform": {"ubuntu": "linux", "windows": "win32"}.get(
+                    row["os"].split("-")[0], "darwin"
+                ),
             }
             names = self.scenarios["scenarios"]
             result = dict(
@@ -108,7 +114,7 @@ class BrowserReleaseEvidenceTests(unittest.TestCase):
             )
             for filename, value in (
                 ("runtime.json", runtime),
-                ("target.json", row),
+                ("target.json", dict(row, channel=row.get("channel", ""))),
                 ("result.json", result),
                 ("candidate.json", self.candidate),
             ):
@@ -148,6 +154,18 @@ class BrowserReleaseEvidenceTests(unittest.TestCase):
         self.mutate(folder, "result.json", lambda value: value.update(candidateArtifactId=""))
         with self.assertRaisesRegex(ValueError, "identity mismatch"):
             self.collect()
+
+    def test_target_default_channel_is_required_and_cannot_change(self):
+        folder = self.reports("beta")
+        self.mutate(folder, "target.json", lambda value: value.update(channel="chrome"))
+        with self.assertRaisesRegex(ValueError, "target differs"):
+            self.collect("beta")
+
+    def test_missing_producer_normalized_channel_is_rejected(self):
+        folder = self.reports("beta")
+        self.mutate(folder, "target.json", lambda value: value.pop("channel"))
+        with self.assertRaisesRegex(ValueError, "target differs"):
+            self.collect("beta")
 
     def test_same_artifact_id_with_other_candidate_bytes_is_rejected(self):
         folder = self.reports()
@@ -211,17 +229,18 @@ class BrowserReleaseEvidenceTests(unittest.TestCase):
 
     def test_archive_does_not_replace_previous_evidence(self):
         output = self.root / "qualification.tar.gz"
-        verifier.archive(output, {"result.json": b"{}"})
+        verifier.archive(output, {"result.json": b"{}"}, root=self.root)
         before = output.read_bytes()
         with self.assertRaises(ValueError):
-            verifier.archive(output, {"result.json": b"changed"})
+            verifier.archive(output, {"result.json": b"changed"}, root=self.root)
         self.assertEqual(before, output.read_bytes())
 
-    def additional_report(self, native=False):
-        (self.root / "identity").mkdir()
-        (self.root / "result").mkdir()
+    def additional_report(self, native=False, folder=None):
+        folder = folder or self.root
+        (folder / "identity").mkdir(parents=True)
+        (folder / "result").mkdir()
         self.candidate["frontendFiles"]["notifications-sw.js"] = "e" * 64
-        (self.root / "identity/candidate.json").write_text(json.dumps(self.candidate))
+        (folder / "identity/candidate.json").write_text(json.dumps(self.candidate))
         binding = {
             key: self.candidate[key] for key in ("repository", "sourceSha", "runId", "runAttempt")
         }
@@ -236,7 +255,7 @@ class BrowserReleaseEvidenceTests(unittest.TestCase):
         }
         if native:
             png = b"\x89PNG\r\n\x1a\nfixture"
-            (self.root / "result/native-smoke.png").write_bytes(png)
+            (folder / "result/native-smoke.png").write_bytes(png)
             report.update(
                 driverCapabilities={
                     "browserName": "safari",
@@ -260,6 +279,24 @@ class BrowserReleaseEvidenceTests(unittest.TestCase):
                 runtime="native-host",
                 workerSha256="e" * 64,
                 screenshot={"path": "native-smoke.png", "sha256": verifier.sha256(png)},
+                sessionCleanupSucceeded=True,
+                parentValidation={
+                    "complete": True,
+                    "applicationFrames": 0,
+                    "protocolErrors": 0,
+                    "httpWrites": 0,
+                    "cleanupSucceeded": True,
+                },
+                networkIsolation={
+                    "mechanism": "content-security-policy",
+                    "scope": "candidate-document-resources",
+                    "enforced": True,
+                    "probeObserved": True,
+                    "probeReports": 1,
+                    "candidateViolations": 0,
+                    "malformedReports": 0,
+                    "policySha256": "f" * 64,
+                },
             )
         else:
             report.update(
@@ -275,9 +312,90 @@ class BrowserReleaseEvidenceTests(unittest.TestCase):
                 nativeQualified=False,
                 previousVersionUpgradeQualified=False,
             )
-        path = self.root / "result" / ("native-smoke.json" if native else "result.json")
+        path = folder / "result" / ("native-smoke.json" if native else "result.json")
         path.write_text(json.dumps(report))
         return path
+
+    def entry_fixture(self, channel):
+        temporary = tempfile.TemporaryDirectory(prefix=".qualification-entry-", dir=ROOT)
+        self.addCleanup(temporary.cleanup)
+        directory = Path(temporary.name)
+        self.root = directory / "reports"
+        self.root.mkdir()
+        self.candidate["frontendFiles"]["notifications-sw.js"] = "e" * 64
+        self.reports(channel)
+        pwa = directory / "pwa"
+        self.additional_report(folder=pwa)
+        safari = directory / "safari"
+        if channel == "rc":
+            self.additional_report(True, safari)
+        prepared = directory / "prepared"
+        prepared.mkdir()
+        for name in (
+            "candidate-provenance.json",
+            "packaged-e2e.json",
+            "manifest.json",
+            "release-inputs-container.json",
+            "release-plan.json",
+        ):
+            (prepared / name).write_bytes(b"{}")
+        output = directory / "qualification.tar.gz"
+        argv = ["verify_browser_release_evidence.py"]
+        options = {
+            "artifacts": directory / "artifacts",
+            "prepared": prepared,
+            "diagnostics": directory / "diagnostics",
+            "evidence": self.root,
+            "prefix": "browser-release",
+            "channel": channel,
+            "output": output,
+            "pwa-evidence": pwa,
+        }
+        for key, value in options.items():
+            argv.extend(["--" + key, str(value)])
+        return argv, output, pwa, safari
+
+    def run_entry(self, argv):
+        # Candidate extraction has separate adversarial tests. Keep the real
+        # matrix/PWA/Safari validators, CLI wiring and archive writer here.
+        with (
+            mock.patch("sys.argv", argv),
+            mock.patch.object(verifier, "prepare", return_value=self.candidate),
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "GITHUB_REPOSITORY": "fixture/dashboard",
+                    "GITHUB_SHA": "a" * 40,
+                    "GITHUB_RUN_ID": "71",
+                    "GITHUB_RUN_ATTEMPT": "2",
+                    "CI_BROWSER_CANDIDATE_ARTIFACT_ID": "911",
+                },
+            ),
+        ):
+            verifier.main()
+
+    def test_entry_archives_pwa_and_rc_safari_with_original_screenshot(self):
+        argv, output, pwa, safari = self.entry_fixture("rc")
+        self.run_entry([*argv, "--safari-evidence", str(safari)])
+        with tarfile.open(output) as bundle:
+            pwa_member = bundle.extractfile("pwa-engine/result.json")
+            screenshot = bundle.extractfile("native-safari-smoke/native-smoke.png")
+            self.assertEqual(pwa_member.read(), (pwa / "result/result.json").read_bytes())
+            self.assertEqual(screenshot.read(), (safari / "result/native-smoke.png").read_bytes())
+            self.assertIn("package/release-plan.json", bundle.getnames())
+
+    def test_entry_requires_pwa_evidence_before_writing_beta_archive(self):
+        argv, output, pwa, _ = self.entry_fixture("beta")
+        (pwa / "result/result.json").unlink()
+        with self.assertRaises(ValueError):
+            self.run_entry(argv)
+        self.assertFalse(output.exists())
+
+    def test_entry_requires_safari_evidence_before_writing_rc_archive(self):
+        argv, output, _, _ = self.entry_fixture("rc")
+        with self.assertRaisesRegex(ValueError, "RC requires actual Safari"):
+            self.run_entry(argv)
+        self.assertFalse(output.exists())
 
     def test_actual_worker_lane_is_preserved_as_engine_only(self):
         self.additional_report()
@@ -310,6 +428,56 @@ class BrowserReleaseEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "another worker"):
             verifier.additional_evidence(self.root, self.candidate, True)
 
+    def test_provisional_native_smoke_cannot_be_accepted(self):
+        path = self.additional_report(True)
+        self.mutate(
+            path.parent,
+            path.name,
+            lambda value: value.update(status="pending-parent-validation"),
+        )
+        with self.assertRaisesRegex(ValueError, "did not pass"):
+            verifier.additional_evidence(self.root, self.candidate, True)
+
+    def test_native_session_cleanup_and_parent_checks_are_mandatory(self):
+        path = self.additional_report(True)
+        original = path.read_text()
+        changes = [
+            lambda value: value.pop("parentValidation"),
+            lambda value: value.update(sessionCleanupSucceeded=False),
+            lambda value: value.update(sessionCleanupFailed=True),
+            lambda value: value["parentValidation"].update(cleanupSucceeded=False),
+            lambda value: value["parentValidation"].update(applicationFrames=1),
+            lambda value: value["parentValidation"].update(protocolErrors=1),
+            lambda value: value["parentValidation"].update(httpWrites=1),
+            lambda value: value["parentValidation"].update(httpWrites=False),
+        ]
+        for change in changes:
+            path.write_text(original)
+            self.mutate(path.parent, path.name, change)
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "Native"):
+                verifier.additional_evidence(self.root, self.candidate, True)
+
+    def test_native_resource_isolation_cannot_be_unmeasured_or_overclaimed(self):
+        path = self.additional_report(True)
+        original = path.read_text()
+        changes = [
+            {"scope": "host-network"},
+            {"enforced": False},
+            {"probeReports": 0},
+            {"candidateViolations": 1},
+            {"malformedReports": 1},
+            {"policySha256": "invalid"},
+        ]
+        for change in changes:
+            path.write_text(original)
+            self.mutate(
+                path.parent,
+                path.name,
+                lambda value, update=change: value["networkIsolation"].update(update),
+            )
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "Native"):
+                verifier.additional_evidence(self.root, self.candidate, True)
+
     def test_native_screenshot_bytes_are_verified(self):
         self.additional_report(True)
         (self.root / "result/native-smoke.png").write_bytes(b"changed")
@@ -332,4 +500,4 @@ class BrowserReleaseEvidenceTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    main()

@@ -2,15 +2,14 @@
 
 import stat
 import tempfile
-import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest import mock
+from unittest import TestCase, main, mock
 
 from qualification_paths import workspace_path
 
 
-class QualificationPathsTests(unittest.TestCase):
+class QualificationPathsTests(TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)
@@ -65,4 +64,4 @@ class QualificationPathsTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    main()

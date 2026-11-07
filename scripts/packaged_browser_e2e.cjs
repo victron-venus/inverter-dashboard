@@ -5,6 +5,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
 const { workspacePath } = require('./pwa_acceptance.cjs')
+const { verifyFinalCommandJournal } = require('./packaged_browser_contract.cjs')
 const { waitForHydratedDashboard } = require('./browser-readiness.cjs')
 const [base, fixture, transport, outputArgument, ociSha256, backend] = process.argv.slice(2)
 const output = workspacePath(outputArgument)
@@ -181,6 +182,11 @@ async function run(engine) {
     }
     assert.deepEqual(unexpected, [], 'Packaged browser attempted an external destination')
     await page.screenshot({ path: output.replace(/\.json$/, `-${engine}.png`) })
+    // Re-read after every later HA/reconnect scenario: earlier routes-once proof
+    // must not hide a duplicate or new command delivered later in this run.
+    await verifyFinalCommandJournal(fixtureState, [...captured.capture, {
+      transport: 'ha', path: '/api/services/switch/toggle', body: { entity_id: 'switch.fixture_light' },
+    }])
     runs.push({ engine, browserVersion: browser.version(), transport, status: 'passed',
       scenarios, producer, ociSha256, testsPassed: scenarios.length, testsFailed: 0, backendVersion: actual.dashboard_version })
   } finally {
