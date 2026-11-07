@@ -217,7 +217,7 @@ class RunnerSafetyTests(unittest.TestCase):
 
     def test_generated_credential_is_environment_only_in_docker_arguments(self):
         credential = secrets.token_urlsafe(32)
-        with patch("packaged_browser_acceptance.call", side_effect=["", "127.0.0.1:12345"]) as cli:
+        with patch("packaged_browser_acceptance.call", return_value="") as cli:
             result = start_application(
                 "python",
                 "mqtt",
@@ -227,8 +227,11 @@ class RunnerSafetyTests(unittest.TestCase):
                 OWNED + ":candidate",
                 credential,
             )
-        self.assertEqual(result, "http://127.0.0.1:12345")
+        self.assertIsNone(result)
+        cli.assert_called_once()
         first = cli.call_args_list[0]
+        self.assertNotIn("-p", first.args)
+        self.assertIn("dashboard.packaged-qa=" + OWNED, first.args)
         self.assertNotIn(credential, " ".join(first.args))
         self.assertEqual(first.kwargs["environment"]["DASHBOARD_SECRET"], credential)
         self.assertIn("DASHBOARD_SECRET", first.args)

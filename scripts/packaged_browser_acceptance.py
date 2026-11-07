@@ -16,6 +16,7 @@ import os
 import re
 import secrets
 import subprocess  # nosec B404
+import sys
 import tarfile
 import tempfile
 import time
@@ -27,6 +28,12 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from packaged_browser_fixture import CREDENTIAL_ENV, credential_from_env
+from packaged_browser_network import (
+    OWNER_LABEL,
+    close_relays,
+    container_status,
+    start_owned_relay,
+)
 from prepare_browser_candidate import (
     BUILD_INFO_NAME,
     E2E_NAME,
@@ -146,6 +153,17 @@ def remove_cleanup_resources(names: list[str], network: str, image: str) -> list
     return errors
 
 
+def validate_owned_cleanup(names: list[str], network: str, image: str) -> None:
+    """Check UUID ownership before any teardown command is attempted."""
+    if not re.fullmatch(r"browser-qa-[a-f0-9]{16}", network) or image != network + ":candidate":
+        raise ValueError("Cleanup can only target this runner's UUID-owned resources")
+    if len(names) != len(set(names)) or any(
+        name not in {network + suffix for suffix in ("-mqtt", "-igw", "-fixtures")}
+        for name in names
+    ):
+        raise ValueError("Cleanup container does not belong to this runner")
+
+
 def cleanup_owned(
     names: list[str],
     network: str,
@@ -156,13 +174,7 @@ def cleanup_owned(
     credential: str | None = None,
 ) -> None:
     """Attempt every cleanup independently, including when log collection fails."""
-    if not re.fullmatch(r"browser-qa-[a-f0-9]{16}", network) or image != network + ":candidate":
-        raise ValueError("Cleanup can only target this runner's UUID-owned resources")
-    if len(names) != len(set(names)) or any(
-        name not in {network + suffix for suffix in ("-mqtt", "-igw", "-fixtures")}
-        for name in names
-    ):
-        raise ValueError("Cleanup container does not belong to this runner")
+    validate_owned_cleanup(names, network, image)
     errors = []
     diagnostics = None
     try:
@@ -219,13 +231,6 @@ def fetch(base: str, route: str, limit: int = 30 * 1024 * 1024, *, credential: s
     if len(data) > limit:
         raise ValueError("Packaged response exceeds bound")
     return data
-
-
-def loopback_port(container: str, port: int) -> str:
-    value = call("docker", "port", container, f"{port}/tcp")
-    if not value.startswith("127.0.0.1:") or not value.split(":")[-1].isdigit():
-        raise ValueError("Fixture port is not bound exclusively to loopback")
-    return "http://" + value
 
 
 def wait_ready(base: str, transport: str, credential: str) -> None:
@@ -380,7 +385,7 @@ def verified_loaded_image(image: str, producer: dict, plan: dict) -> dict:
 
 def start_application(
     backend: str, transport: str, config: Path, name: str, network: str, image: str, credential: str
-) -> str:
+) -> None:
     """Start the imported package with synthetic peers and no inherited secrets."""
     command = [
         "docker",
@@ -390,14 +395,14 @@ def start_application(
         name,
         "--network",
         network,
+        "--label",
+        OWNER_LABEL + "=" + network,
         "--read-only",
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
         "--memory=768m",
         "--cpus=2",
         "--pids-limit=128",
-        "-p",
-        "127.0.0.1::8080",
         "--tmpfs",
         APPLICATION_TMPFS,
         "--tmpfs",
@@ -410,7 +415,29 @@ def start_application(
     environment = app_environment(transport, credential)
     command.extend(item for key in environment for item in ("-e", key))
     call(*command, image, "--port", "8080", environment=environment)
-    return loopback_port(name, 8080)
+
+
+def owned_relay(network, name, port, relays, output, root):
+    status = container_status(call, name)
+    status_path = workspace_path(output / (name + "-state.json"), root=root, new=True)
+    with status_path.open("x", encoding="utf-8") as stream:
+        json.dump(status, stream, sort_keys=True, indent=2)
+        stream.write("\n")
+    relay, identity = start_owned_relay(call, network, name, port)
+    relays.append(relay)
+    destination = workspace_path(output / (name + "-network.json"), root=root, new=True)
+    with destination.open("x", encoding="utf-8") as stream:
+        json.dump(identity, stream, sort_keys=True, indent=2)
+        stream.write("\n")
+    return relay.base
+
+
+def cleanup_runtime(relays, names, network, image, output, root, credential):
+    """A relay failure never prevents Docker teardown or produces qualification."""
+    try:
+        close_relays(relays)
+    finally:
+        cleanup_owned(names, network, image, output, root=root, credential=credential)
 
 
 def run_browser(
@@ -455,6 +482,8 @@ def execute(root: Path, artifacts: Path, output: Path, artifact_id: int) -> None
         raise ValueError("Exact positive source artifact ID required")
     credential = credential_from_env({CREDENTIAL_ENV: secrets.token_urlsafe(32)})
     producer = identity_from_env()
+    if sys.platform != "linux":
+        raise ValueError("Internal bridge qualification requires a native Linux Docker host")
     verify_local_docker()
     application, archive, receipt_data, policy, plan_data, plan, plan_sha, oci_sha = load_candidate(
         root, artifacts, producer
@@ -464,7 +493,7 @@ def execute(root: Path, artifacts: Path, output: Path, artifact_id: int) -> None
     owned = "browser-qa-" + uuid.uuid4().hex[:16]
     image, network, fixture_name = f"{owned}:candidate", owned, f"{owned}-fixtures"
     output.mkdir(parents=True)
-    app_names, runtime_runs, files, served = [], [], {}, {}
+    app_names, runtime_runs, files, served, relays = [], [], {}, {}, []
     with tempfile.TemporaryDirectory(prefix="packaged-browser-") as temporary:
         config = Path(temporary)
         config.chmod(0o755)
@@ -506,6 +535,8 @@ def execute(root: Path, artifacts: Path, output: Path, artifact_id: int) -> None
                 fixture_name,
                 "--network",
                 network,
+                "--label",
+                OWNER_LABEL + "=" + network,
                 "--network-alias",
                 "fixtures",
                 "--read-only",
@@ -514,8 +545,6 @@ def execute(root: Path, artifacts: Path, output: Path, artifact_id: int) -> None
                 "--memory=128m",
                 "--cpus=1",
                 "--pids-limit=64",
-                "-p",
-                "127.0.0.1::8090",
                 "--tmpfs",
                 FIXTURE_TMPFS,
                 "-v",
@@ -533,13 +562,12 @@ def execute(root: Path, artifacts: Path, output: Path, artifact_id: int) -> None
                 "/qa-config/fixture.key",
                 environment={CREDENTIAL_ENV: credential},
             )
-            fixture_base = loopback_port(fixture_name, 8090)
+            fixture_base = owned_relay(network, fixture_name, 8090, relays, output, root)
             for transport in ("mqtt", "igw"):
                 name = f"{owned}-{transport}"
                 app_names.append(name)
-                base = start_application(
-                    backend, transport, config, name, network, image, credential
-                )
+                start_application(backend, transport, config, name, network, image, credential)
+                base = owned_relay(network, name, 8080, relays, output, root)
                 wait_ready(base, transport, credential)
                 current, current_served = capture_frontend(base, root, application, credential)
                 if files and current != files:
@@ -604,8 +632,8 @@ def execute(root: Path, artifacts: Path, output: Path, artifact_id: int) -> None
             )
             (output / E2E_NAME).write_bytes(files[E2E_NAME])
         finally:
-            cleanup_owned(
-                app_names + [fixture_name], network, image, output, root=root, credential=credential
+            cleanup_runtime(
+                relays, app_names + [fixture_name], network, image, output, root, credential
             )
 
 

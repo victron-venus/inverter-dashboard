@@ -38,10 +38,38 @@ class PackagedBrowserQualificationTests(unittest.TestCase):
         self.assertIn("prepare_browser_candidate.py", matrix["with"]["browser-prepare-command"])
         runtime_checks = "\n".join(step.get("run", "") for step in runtime["steps"])
         self.assertIn("node --test scripts/packaged_browser_contract.test.cjs", runtime_checks)
+        self.assertIn("python3 scripts/test_packaged_browser_network.py", runtime_checks)
         source_checks = "\n".join(
             step.get("run", "") for step in jobs("ci.yml")["qualification-contracts"]["steps"]
         )
         self.assertIn("scripts/packaged_browser_contract.test.cjs", source_checks)
+        self.assertIn("scripts/packaged_browser_network.py", source_checks)
+        self.assertIn("python3 scripts/test_packaged_browser_network.py", source_checks)
+
+    def test_internal_docker_topology_is_required_in_ordinary_ci(self):
+        workflow = jobs("ci.yml")
+        topology = workflow["packaged-network-topology"]
+        self.assertEqual(topology["runs-on"], "ubuntu-24.04")
+        self.assertLessEqual(topology["timeout-minutes"], 10)
+        self.assertEqual(topology["permissions"], {"contents": "read"})
+        self.assertNotIn("if", topology)
+        self.assertNotIn("continue-on-error", topology)
+        steps = topology["steps"]
+        smoke = next(
+            step
+            for step in steps
+            if "test_packaged_browser_network_docker.py" in step.get("run", "")
+        )
+        self.assertEqual(smoke["env"], {"PACKAGED_TOPOLOGY_DOCKER": "1"})
+        for action in ("actions/checkout@", "actions/setup-python@"):
+            step = next(step for step in steps if step.get("uses", "").startswith(action))
+            self.assertEqual(len(step["uses"].split("@")[1]), 40)
+        quality = jobs("quality-gate.yml")
+        caller = next(
+            name for name, job in quality.items() if job.get("uses") == "./.github/workflows/ci.yml"
+        )
+        gate = next(job for job in quality.values() if job.get("name") == "CI gate")
+        self.assertIn(caller, gate["needs"])
 
     def test_preserved_release_evidence_depends_on_every_lane(self):
         workflow = jobs("release-build.yml")
