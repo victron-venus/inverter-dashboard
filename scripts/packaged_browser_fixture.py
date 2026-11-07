@@ -266,8 +266,21 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.reply(404, {"error": "unknown fixture route"})
 
-    def do_POST(self):
+    def authenticated_ha_service_response(self, body):
+        """Handle one HA attempt while the caller holds LOCK."""
         global HA_STATE
+        # An invalid actuator request is still an attempted publication.
+        # Record it before rejecting so the journal cannot hide it.
+        CAPTURE.append({"transport": "ha", "path": self.path, "body": body})
+        if (
+            self.path != "/api/services/switch/toggle"
+            or body.get("entity_id") != "switch.fixture_light"
+        ):
+            return 404, {}
+        HA_STATE = "on" if HA_STATE == "off" else "off"
+        return 200, {"ok": True}
+
+    def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         if not 0 <= length <= 65536:
             self.reply(413, {})
@@ -277,6 +290,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self.reply(400, {})
             return
+        response = (200, {"ok": True})
         with LOCK:
             if self.path == "/fixture/seed":
                 CAPTURE.clear()
@@ -299,20 +313,11 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path.startswith("/v1/commands/"):
                 CAPTURE.append({"transport": "igw", "path": self.path, "body": body})
             elif self.path.startswith("/api/services/"):
-                # An invalid actuator request is still an attempted publication.
-                # Record it before rejecting so the journal cannot hide it.
-                CAPTURE.append({"transport": "ha", "path": self.path, "body": body})
-                if (
-                    self.path != "/api/services/switch/toggle"
-                    or body.get("entity_id") != "switch.fixture_light"
-                ):
-                    self.reply(404, {})
-                    return
-                HA_STATE = "on" if HA_STATE == "off" else "off"
+                response = self.authenticated_ha_service_response(body)
             else:
                 self.reply(404, {})
                 return
-        self.reply(200, {"ok": True})
+        self.reply(*response)
 
 
 def main():
