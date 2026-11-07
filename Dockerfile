@@ -6,8 +6,8 @@
 # =============================================================================
 # Digest pin of python:3.14-alpine — MUST stay an Alpine variant: this image
 # uses apk and musl. A Debian (trixie/bookworm) digest breaks the build with
-# "apk: not found" (PRs #92, #104). Dependabot updates for this image are
-# locked in .github/dependabot.yml; to bump, resolve a fresh digest of the
+# "apk: not found" (PRs #92, #104). Automated updates for this image are
+# disabled in renovate.json; to bump, resolve a fresh digest of the
 # `python:3.14-alpine` tag only and verify /etc/os-release says alpine.
 FROM python@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc AS builder
 
