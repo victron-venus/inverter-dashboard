@@ -15,6 +15,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import subprocess  # nosec B404
 import sys
 import tarfile
@@ -286,6 +287,65 @@ def config_files(directory: Path, credential: str) -> None:
         "-out",
         str(directory / "fixture.crt"),
     )
+    # The public CA certificate must remain readable by the packaged backend's
+    # own user. The private key retains OpenSSL's owner-only permissions.
+    (directory / "fixture.crt").chmod(0o644)
+
+
+def fixture_runtime_user(config: Path) -> str:
+    """Use the ephemeral 0600 key's non-root owner without widening access."""
+    uid, gid = os.getuid(), os.getgid()
+    if sys.platform != "linux" or not 0 < uid < 2**31 or not 0 < gid < 2**31:
+        raise ValueError("Fixture requires a native Linux non-root UID and GID")
+    key = config / "fixture.key"
+    if key.is_symlink() or any(parent.is_symlink() for parent in key.parents):
+        raise ValueError("Fixture TLS key must not be linked")
+    info = key.stat()
+    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != uid:
+        raise ValueError("Fixture TLS key must remain owner-only and owned by the runner")
+    return f"{uid}:{gid}"
+
+
+def start_fixture(root: Path, config: Path, name: str, network: str, credential: str) -> None:
+    """Run actual synthetic TLS/MQTT/HA peers as the mounted key's owner."""
+    user = fixture_runtime_user(config)
+    call(
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        name,
+        "--network",
+        network,
+        "--label",
+        OWNER_LABEL + "=" + network,
+        "--network-alias",
+        "fixtures",
+        "--user",
+        user,
+        "--read-only",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--memory=128m",
+        "--cpus=1",
+        "--pids-limit=64",
+        "--tmpfs",
+        FIXTURE_TMPFS,
+        "-v",
+        f"{root / 'scripts/packaged_browser_fixture.py'}:/fixture.py:ro",
+        "-v",
+        f"{config}:/qa-config:ro",
+        "-e",
+        CREDENTIAL_ENV,
+        FIXTURE_IMAGE,
+        "python",
+        "/fixture.py",
+        "--cert",
+        "/qa-config/fixture.crt",
+        "--key",
+        "/qa-config/fixture.key",
+        environment={CREDENTIAL_ENV: credential},
+    )
 
 
 def app_environment(transport: str, credential: str) -> dict[str, str]:
@@ -532,42 +592,7 @@ def execute(root: Path, artifacts: Path, output: Path, artifact_id: int) -> None
             info = json.loads(call("docker", "network", "inspect", network))[0]
             if info.get("Internal") is not True:
                 raise ValueError("Fixture network must deny external routing")
-            # /tmp below is a bounded container tmpfs, never a host filesystem path.
-            call(
-                "docker",
-                "run",
-                "-d",
-                "--name",
-                fixture_name,
-                "--network",
-                network,
-                "--label",
-                OWNER_LABEL + "=" + network,
-                "--network-alias",
-                "fixtures",
-                "--read-only",
-                "--cap-drop=ALL",
-                "--security-opt=no-new-privileges",
-                "--memory=128m",
-                "--cpus=1",
-                "--pids-limit=64",
-                "--tmpfs",
-                FIXTURE_TMPFS,
-                "-v",
-                f"{root / 'scripts/packaged_browser_fixture.py'}:/fixture.py:ro",
-                "-v",
-                f"{config}:/qa-config:ro",
-                "-e",
-                CREDENTIAL_ENV,
-                FIXTURE_IMAGE,
-                "python",
-                "/fixture.py",
-                "--cert",
-                "/qa-config/fixture.crt",
-                "--key",
-                "/qa-config/fixture.key",
-                environment={CREDENTIAL_ENV: credential},
-            )
+            start_fixture(root, config, fixture_name, network, credential)
             fixture_relay = owned_relay(network, fixture_name, 8090, relays, output, root)
             fixture_base = fixture_relay.base
             for transport in ("mqtt", "igw"):
