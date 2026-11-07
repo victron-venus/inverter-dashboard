@@ -429,7 +429,13 @@ def owned_relay(network, name, port, relays, output, root):
     with destination.open("x", encoding="utf-8") as stream:
         json.dump(identity, stream, sort_keys=True, indent=2)
         stream.write("\n")
-    return relay.base
+    return relay
+
+
+def retire_application(relay, name):
+    """Close the old origin before Docker can release or reuse its target IP."""
+    relay.close()
+    call("docker", "stop", "--time", "5", name)
 
 
 def cleanup_runtime(relays, names, network, image, output, root, credential):
@@ -562,12 +568,14 @@ def execute(root: Path, artifacts: Path, output: Path, artifact_id: int) -> None
                 "/qa-config/fixture.key",
                 environment={CREDENTIAL_ENV: credential},
             )
-            fixture_base = owned_relay(network, fixture_name, 8090, relays, output, root)
+            fixture_relay = owned_relay(network, fixture_name, 8090, relays, output, root)
+            fixture_base = fixture_relay.base
             for transport in ("mqtt", "igw"):
                 name = f"{owned}-{transport}"
                 app_names.append(name)
                 start_application(backend, transport, config, name, network, image, credential)
-                base = owned_relay(network, name, 8080, relays, output, root)
+                app_relay = owned_relay(network, name, 8080, relays, output, root)
+                base = app_relay.base
                 wait_ready(base, transport, credential)
                 current, current_served = capture_frontend(base, root, application, credential)
                 if files and current != files:
@@ -579,7 +587,7 @@ def execute(root: Path, artifacts: Path, output: Path, artifact_id: int) -> None
                         root, base, fixture_base, transport, run_file, oci_sha, backend, credential
                     )
                 )
-                call("docker", "stop", "--time", "5", name)
+                retire_application(app_relay, name)
             if any(
                 run["backendVersion"] != labels["org.opencontainers.image.version"]
                 for run in runtime_runs

@@ -6,13 +6,13 @@ import socket
 import socketserver
 import threading
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import Mock, patch
 
 import packaged_browser_network as network
-from packaged_browser_acceptance import cleanup_runtime, fetch
+from packaged_browser_acceptance import cleanup_runtime, fetch, retire_application
 
 OWNER = "browser-qa-" + "a" * 16
 
@@ -117,6 +117,43 @@ class EchoFixture(socketserver.BaseRequestHandler):
             if not data:
                 return
             self.request.sendall(data)
+
+
+def exchange_exact(client, data):
+    """Fail immediately on truncated echo and always stop the bounded sender."""
+    errors = []
+
+    def send():
+        try:
+            client.sendall(data)
+        except OSError as error:
+            errors.append(error)
+
+    sender = threading.Thread(target=send, daemon=True)
+    sender.start()
+    try:
+        got = bytearray()
+        while len(got) < len(data):
+            chunk = client.recv(min(8192, len(data) - len(got)))
+            if not chunk:
+                raise EOFError("Echo ended before the expected payload")
+            got.extend(chunk)
+        sender.join(timeout=2)
+        if sender.is_alive() or errors:
+            raise RuntimeError("Bounded test sender did not finish successfully")
+        client.shutdown(socket.SHUT_WR)
+        if client.recv(1):
+            raise AssertionError("Echo contains bytes after the expected payload")
+        return bytes(got)
+    finally:
+        with suppress(OSError):
+            client.shutdown(socket.SHUT_RDWR)
+        sender.join(timeout=2)
+        if sender.is_alive():
+            client.close()
+            sender.join(timeout=2)
+        if sender.is_alive():
+            raise RuntimeError("Bounded test sender cleanup failed")
 
 
 class EndpointTests(unittest.TestCase):
@@ -235,17 +272,64 @@ class RelayTests(unittest.TestCase):
             port = int(relay.base.rsplit(":", 1)[1])
             with socket.create_connection(("127.0.0.1", port), timeout=3) as client:
                 data = b"bounded duplex " * 20000
-                sender = threading.Thread(target=client.sendall, args=(data,))
-                sender.start()
-                got = bytearray()
-                while len(got) < len(data):
-                    got.extend(client.recv(8192))
-                sender.join(timeout=2)
-                self.assertFalse(sender.is_alive())
-                self.assertEqual(bytes(got), data)
-                client.shutdown(socket.SHUT_WR)
-                self.assertEqual(client.recv(1), b"")
+                self.assertEqual(exchange_exact(client, data), data)
             relay.close()
+
+    def test_truncated_echo_raises_and_stops_a_blocked_sender(self):
+        client, peer = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(peer.close)
+        client.settimeout(1)
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+        peer.sendall(b"partial")
+        peer.shutdown(socket.SHUT_WR)
+        created = []
+        original = threading.Thread
+
+        def thread(*args, **kwargs):
+            worker = original(*args, **kwargs)
+            created.append(worker)
+            return worker
+
+        with (
+            patch.object(threading, "Thread", side_effect=thread),
+            self.assertRaisesRegex(EOFError, "before the expected payload"),
+        ):
+            exchange_exact(client, b"x" * (1024 * 1024))
+        self.assertEqual(len(created), 1)
+        self.assertFalse(created[0].is_alive())
+
+    def test_application_origin_is_closed_before_container_stop(self):
+        with running_server(
+            socketserver.ThreadingTCPServer(("127.0.0.1", 0), EchoFixture)
+        ) as server:
+            relay = network.LoopbackRelay(*server.server_address)
+            self.addCleanup(relay.close)
+            port = int(relay.base.rsplit(":", 1)[1])
+            with socket.create_connection(("127.0.0.1", port), timeout=2) as client:
+                client.sendall(b"before-stop")
+                self.assertEqual(client.recv(11), b"before-stop")
+
+                def stop(*command):
+                    self.assertEqual(command, ("docker", "stop", "--time", "5", OWNER + "-mqtt"))
+                    self.assertFalse(any(worker.is_alive() for worker in relay.workers))
+                    with self.assertRaises(OSError):
+                        socket.create_connection(("127.0.0.1", port), timeout=0.2)
+
+                with patch("packaged_browser_acceptance.call", side_effect=stop) as cli:
+                    retire_application(relay, OWNER + "-mqtt")
+                cli.assert_called_once()
+                self.assertEqual(client.recv(1), b"")
+
+    def test_relay_retirement_failure_prevents_early_container_stop(self):
+        relay = Mock()
+        relay.close.side_effect = RuntimeError("cannot retire")
+        with (
+            patch("packaged_browser_acceptance.call") as cli,
+            self.assertRaises(RuntimeError),
+        ):
+            retire_application(relay, OWNER + "-mqtt")
+        cli.assert_not_called()
 
     def test_closing_active_relay_joins_workers_and_refuses_new_connections(self):
         with running_server(
