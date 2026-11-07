@@ -3,9 +3,11 @@
 
 import json
 import os
+import secrets
 import socket
 import socketserver
 import subprocess  # nosec B404
+import sys
 import tempfile
 import threading
 import unittest
@@ -16,11 +18,24 @@ from pathlib import Path
 from unittest.mock import patch
 
 import packaged_browser_fixture as fixture
-from packaged_browser_acceptance import app_environment, cleanup_owned, fetch, verify_local_docker
+from packaged_browser_acceptance import (
+    MAX_LOG_CHARS,
+    app_environment,
+    call,
+    cleanup_owned,
+    execute,
+    fetch,
+    start_application,
+    verify_local_docker,
+    wait_ready,
+)
+
+OWNED = "browser-qa-0123456789abcdef"
 
 
 class FixtureTests(unittest.TestCase):
     def setUp(self):
+        self.credential = secrets.token_urlsafe(32)
         with fixture.LOCK:
             fixture.CAPTURE.clear()
             fixture.CLIENTS.clear()
@@ -28,6 +43,7 @@ class FixtureTests(unittest.TestCase):
         self.broker = socketserver.ThreadingTCPServer(("127.0.0.1", 0), fixture.Broker)
         self.broker.daemon_threads = True
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), fixture.Handler)
+        self.http.fixture_credential = self.credential
         for server in (self.broker, self.http):
             threading.Thread(target=server.serve_forever, daemon=True).start()
         self.base = f"http://127.0.0.1:{self.http.server_address[1]}"
@@ -38,7 +54,7 @@ class FixtureTests(unittest.TestCase):
             server.server_close()
 
     def request(self, route, auth=True, body=None):
-        headers = {"Authorization": f"Bearer {fixture.TOKEN}"} if auth else {}
+        headers = {"Authorization": f"Bearer {self.credential}"} if auth else {}
         request = urllib.request.Request(
             self.base + route,
             headers=headers,
@@ -104,7 +120,7 @@ class FixtureTests(unittest.TestCase):
 
     def test_environments_never_include_operational_destinations(self):
         for mode in ("mqtt", "igw"):
-            env = app_environment(mode)
+            env = app_environment(mode, self.credential)
             self.assertEqual(env["MQTT_HOST"], "fixtures" if mode == "mqtt" else "")
             self.assertEqual(env["GATEWAY_URL"], "" if mode == "mqtt" else "https://fixtures:8443")
             self.assertEqual(env["SELF_UPDATE_ENABLED"], "false")
@@ -118,6 +134,114 @@ class FixtureTests(unittest.TestCase):
 
 
 class RunnerSafetyTests(unittest.TestCase):
+    def test_runner_rejects_outside_or_linked_outputs_before_docker(self):
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch("packaged_browser_acceptance.call") as cli,
+        ):
+            root = Path(temporary)
+            inputs = root / "inputs"
+            inputs.mkdir()
+            (root / "link").symlink_to(root.parent, target_is_directory=True)
+            for output in (root.parent / "outside-package", root / "link" / "output"):
+                with self.assertRaises(ValueError):
+                    execute(root, inputs, output, 1)
+            cli.assert_not_called()
+
+    def test_cleanup_cannot_target_unowned_names_or_external_diagnostics(self):
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch("packaged_browser_acceptance.call") as cli,
+        ):
+            root = Path(temporary)
+            output = root / "output"
+            output.mkdir()
+            for names, network, image, destination in (
+                (["other-container"], OWNED, OWNED + ":candidate", output),
+                ([OWNED + "-fixtures"], "production", OWNED + ":candidate", output),
+                ([OWNED + "-fixtures"], OWNED, "production:latest", output),
+                ([OWNED + "-fixtures"], OWNED, OWNED + ":candidate", root.parent),
+            ):
+                with self.assertRaises(ValueError):
+                    cleanup_owned(names, network, image, destination, root=root)
+            cli.assert_not_called()
+
+    def test_credentials_are_required_bounded_and_never_embedded(self):
+        values = {secrets.token_urlsafe(32) for _ in range(3)}
+        self.assertEqual(len(values), 3)
+        for credential in values:
+            self.assertEqual(
+                fixture.credential_from_env({fixture.CREDENTIAL_ENV: credential}), credential
+            )
+        for credential in ("", "short", "x" * 129, "\n" + "x" * 43, "x" * 42 + "/"):
+            with self.assertRaises(ValueError):
+                fixture.credential_from_env({fixture.CREDENTIAL_ENV: credential})
+
+    def test_readiness_errors_remain_bounded_and_report_safe_class(self):
+        with (
+            patch("packaged_browser_acceptance.time.monotonic", side_effect=[0, 0, 61]),
+            patch("packaged_browser_acceptance.time.sleep") as sleep,
+            patch("packaged_browser_acceptance.fetch", side_effect=OSError("private URL detail")),
+            self.assertRaisesRegex(TimeoutError, "synthetic source: OSError") as caught,
+        ):
+            wait_ready("http://127.0.0.1:12345", "mqtt", secrets.token_urlsafe(32))
+        self.assertNotIn("private URL", str(caught.exception))
+        sleep.assert_called_once_with(0.25)
+
+    def test_generated_credential_is_environment_only_in_docker_arguments(self):
+        credential = secrets.token_urlsafe(32)
+        with patch("packaged_browser_acceptance.call", side_effect=["", "127.0.0.1:12345"]) as cli:
+            result = start_application(
+                "python",
+                "mqtt",
+                Path("/isolated-config"),
+                OWNED + "-mqtt",
+                OWNED,
+                OWNED + ":candidate",
+                credential,
+            )
+        self.assertEqual(result, "http://127.0.0.1:12345")
+        first = cli.call_args_list[0]
+        self.assertNotIn(credential, " ".join(first.args))
+        self.assertEqual(first.kwargs["environment"]["DASHBOARD_SECRET"], credential)
+        self.assertIn("DASHBOARD_SECRET", first.args)
+
+    def test_missing_diagnostics_directory_does_not_prevent_cleanup(self):
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch("packaged_browser_acceptance.call", return_value="") as cli,
+        ):
+            cleanup_owned(
+                [OWNED + "-fixtures"],
+                OWNED,
+                OWNED + ":candidate",
+                Path(temporary) / "gone",
+                root=Path(temporary),
+            )
+        self.assertIn(
+            ("docker", "rm", "-f", OWNED + "-fixtures"), [item.args for item in cli.call_args_list]
+        )
+
+    def test_container_diagnostics_preserve_both_streams_on_failure_and_bound_text(self):
+        output = call(
+            sys.executable,
+            "-c",
+            "import sys; print('stdout diagnostic'); print('stderr diagnostic', file=sys.stderr); sys.exit(7)",
+            check=False,
+            combine_logs=True,
+        )
+        self.assertIn("stdout diagnostic", output)
+        self.assertIn("stderr diagnostic", output)
+        completed = subprocess.CompletedProcess(
+            [], 7, "x" * (MAX_LOG_CHARS + 100) + "tail diagnostic"
+        )
+        with patch("packaged_browser_acceptance.subprocess.run", return_value=completed) as process:
+            output = call("docker", "logs", "--tail", "1000", OWNED, check=False, combine_logs=True)
+        self.assertEqual(process.call_args.kwargs["stderr"], subprocess.STDOUT)
+        self.assertLess(len(output), MAX_LOG_CHARS + 100)
+        self.assertTrue(output.endswith("tail diagnostic"))
+        self.assertIn("truncated", output)
+
     def test_remote_docker_environment_is_refused_before_cli(self):
         for variable, value in (
             ("DOCKER_HOST", "tcp://production.invalid:2375"),
@@ -148,7 +272,7 @@ class RunnerSafetyTests(unittest.TestCase):
                 "http://127.0.0.1:80/other",
             ):
                 with self.assertRaises(ValueError):
-                    fetch(origin, "/")
+                    fetch(origin, "/", credential=secrets.token_urlsafe(32))
             opener.assert_not_called()
 
     def test_unwritable_diagnostics_cannot_skip_any_cleanup(self):
@@ -157,11 +281,18 @@ class RunnerSafetyTests(unittest.TestCase):
             patch("packaged_browser_acceptance.call", return_value="") as cli,
             patch.object(Path, "write_text", side_effect=OSError("disk full")),
         ):
-            cleanup_owned(["fixture-owned"], "network-owned", "image-owned", Path(temporary))
+            (Path(temporary) / "output").mkdir()
+            cleanup_owned(
+                [OWNED + "-fixtures"],
+                OWNED,
+                OWNED + ":candidate",
+                Path(temporary) / "output",
+                root=Path(temporary),
+            )
         arguments = [item.args for item in cli.call_args_list]
-        self.assertIn(("docker", "rm", "-f", "fixture-owned"), arguments)
-        self.assertIn(("docker", "network", "rm", "network-owned"), arguments)
-        self.assertIn(("docker", "image", "rm", "image-owned"), arguments)
+        self.assertIn(("docker", "rm", "-f", OWNED + "-fixtures"), arguments)
+        self.assertIn(("docker", "network", "rm", OWNED), arguments)
+        self.assertIn(("docker", "image", "rm", OWNED + ":candidate"), arguments)
 
     def test_log_and_network_failure_do_not_skip_owned_cleanup(self):
         calls = []
@@ -177,9 +308,16 @@ class RunnerSafetyTests(unittest.TestCase):
             patch("packaged_browser_acceptance.call", side_effect=command),
             self.assertRaisesRegex(RuntimeError, "cleanup incomplete"),
         ):
-            cleanup_owned(["fixture-owned"], "network-owned", "image-owned", Path(temporary))
-        self.assertIn(("docker", "rm", "-f", "fixture-owned"), calls)
-        self.assertIn(("docker", "image", "rm", "image-owned"), calls)
+            (Path(temporary) / "output").mkdir()
+            cleanup_owned(
+                [OWNED + "-fixtures"],
+                OWNED,
+                OWNED + ":candidate",
+                Path(temporary) / "output",
+                root=Path(temporary),
+            )
+        self.assertIn(("docker", "rm", "-f", OWNED + "-fixtures"), calls)
+        self.assertIn(("docker", "image", "rm", OWNED + ":candidate"), calls)
 
 
 if __name__ == "__main__":

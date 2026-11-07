@@ -1,5 +1,30 @@
 /** Shared browser-visible behavior. All commands terminate at the loopback fixture. */
 const assert = require('node:assert/strict')
+const { setTimeout: delay } = require('node:timers/promises')
+
+// These flows share mutable page/fixture state. Chain dependent actions explicitly
+// so a rejected step stops later steps and no UI interactions run concurrently.
+function inSequence(items, run) {
+  return items.reduce((previous, item, index) => previous.then(() => run(item, index)), Promise.resolve())
+}
+
+function assertAgeWithinObservation(text, occurredAt, before, after) {
+  const instant = Date.parse(occurredAt)
+  assert(Number.isFinite(instant) && Number.isFinite(before) && Number.isFinite(after) && before <= after)
+  const match = /^(\d+)h (\d+)m ago$/.exec(text.trim())
+  assert(match && Number(match[2]) < 60, 'Source-aged alarm must show its elapsed hours and minutes')
+  const minutes = Number(match[1]) * 60 + Number(match[2])
+  const earliest = Math.floor((before - instant) / 60000)
+  const latest = Math.floor((after - instant) / 60000)
+  assert(minutes >= earliest && minutes <= latest, `Event age ${minutes}m is outside measured ${earliest}..${latest}m`)
+}
+
+async function assertNoCommands(fixture, before, message) {
+  // Observe the async WebSocket receiver for a bounded delivery window after
+  // the completed UI action. This does not claim to exclude arbitrary future callbacks.
+  await delay(300)
+  assert.equal(fixture.commands.length, before, message)
+}
 
 const MODES = [
   ['off', 'Off'], ['on', 'On'],
@@ -38,12 +63,24 @@ async function runDashboardScenarios({ page, fixture, scenario, broadcast, event
   const alarm = { id: 'victron-platform-fixture-1', level: 'alarm', title: 'Fixture retained battery alarm', body: 'Fixture battery only', source: 'victron', ts: new Date(Date.now() - 75 * 60000).toISOString() }
   const banner = () => page.getByText(alarm.title, { exact: true }).filter({ visible: true }).first().locator('..')
   const eventTime = () => banner().locator('time')
+  async function assertSourceAge() {
+    const before = await page.evaluate(() => new Promise(resolve => {
+      const started = Date.now()
+      // Exercise the application's real focus-clock refresh before observing
+      // the label, rather than allowing a stale 15-second display tick.
+      window.dispatchEvent(new Event('focus'))
+      requestAnimationFrame(() => resolve(started))
+    }))
+    const text = await eventTime().textContent()
+    const after = await page.evaluate(() => Date.now())
+    assertAgeWithinObservation(text, alarm.ts, before, after)
+  }
 
   await scenario('retained-warning-displays-source-time-not-receipt-time', async () => {
     update({ notifications: [alarm] })
     await eventTime().waitFor()
     assert.equal(await eventTime().getAttribute('datetime'), alarm.ts)
-    assert.match(await eventTime().textContent(), /^1h 15m ago$/)
+    await assertSourceAge()
     const expected = await page.evaluate(ts => new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'long' }).format(Date.parse(ts)), alarm.ts)
     assert.equal(await eventTime().getAttribute('title'), expected)
   })
@@ -59,13 +96,13 @@ async function runDashboardScenarios({ page, fixture, scenario, broadcast, event
     fixture.paused = true
     for (const socket of fixture.sockets) socket.close()
     fixture.sockets.clear()
-    await eventually(() => page.getByTestId('transport-status').getAttribute('data-connected'), value => value === 'false', 'Transport should disconnect')
+    await eventually(() => page.getByTestId('transport-status').evaluate(element => element.dataset.connected), value => value === 'false', 'Transport should disconnect')
     fixture.paused = false
     await page.evaluate(() => window.dispatchEvent(new Event('online')))
-    await eventually(() => page.getByTestId('transport-status').getAttribute('data-connected'), value => value === 'true', 'Retained snapshot should reconnect')
+    await eventually(() => page.getByTestId('transport-status').evaluate(element => element.dataset.connected), value => value === 'true', 'Retained snapshot should reconnect')
     update({ notifications: [{ ...alarm }] })
     assert.equal(await eventTime().getAttribute('datetime'), alarm.ts)
-    assert.match(await eventTime().textContent(), /^1h 15m ago$/)
+    await assertSourceAge()
     await page.getByRole('button', { name: 'Notifications', exact: true }).click()
     const row = page.locator('.notification-bell button.text-left').filter({ hasText: alarm.title })
     await row.waitFor()
@@ -81,7 +118,7 @@ async function runDashboardScenarios({ page, fixture, scenario, broadcast, event
     await openMenu()
     assert.deepEqual(await menu().getByRole('menuitemradio').allTextContents().then(labels => labels.map(label => label.trim())), MODES.map(([, label]) => label))
     assert.equal(await choice('External control').getAttribute('aria-checked'), 'true')
-    for (const [id, label] of MODES) {
+    await inSequence(MODES, async ([id, label]) => {
       fresh(); broadcast()
       await choice(label).click()
       const command = await eventually(() => fixture.commands.at(-1), value => value?.action === 'set_ess_mode' && value.mode === id, `Mode ${id} must use its wire contract`)
@@ -91,11 +128,11 @@ async function runDashboardScenarios({ page, fixture, scenario, broadcast, event
       update({ ess_mode: { selected: id, selection_supported: true, request_id: command.request_id } })
       await eventually(() => choice(label).getAttribute('aria-checked'), value => value === 'true', 'Controller observation must confirm selection')
       await eventually(() => trigger().getAttribute('aria-busy'), value => value === null, 'Correlated observation must resolve pending state')
-    }
+    })
     const before = fixture.commands.length
     await choice('External control').click()
     await menu().waitFor({ state: 'hidden' })
-    assert.equal(fixture.commands.length, before, 'Selecting current mode must not send another command')
+    await assertNoCommands(fixture, before, 'Selecting current mode must not send another command')
   })
   await scenario('external-menu-stale-and-dry-controls-send-nothing', async () => {
     const before = fixture.commands.length
@@ -103,10 +140,11 @@ async function runDashboardScenarios({ page, fixture, scenario, broadcast, event
     await openMenu()
     await eventually(() => choice('Off').getAttribute('aria-disabled'), value => value === 'true', 'Stale state must disable mode choices')
     await choice('Off').focus(); await page.keyboard.press('Enter')
+    await assertNoCommands(fixture, before, 'Stale mode choices must not send commands')
     fresh(); update({ dry_run: true })
     await page.getByText('Mode changes are unavailable in DRY mode.', { exact: true }).waitFor()
     await choice('Off').focus(); await page.keyboard.press('Enter')
-    assert.equal(fixture.commands.length, before)
+    await assertNoCommands(fixture, before, 'DRY mode choices must not send commands')
     update({ dry_run: false }); await closeMenu()
   })
   await scenario('external-rejection-and-unrelated-replies-do-not-change-selection', async () => {
@@ -166,7 +204,7 @@ async function runDashboardScenarios({ page, fixture, scenario, broadcast, event
     const before = fixture.commands.length
     page.once('dialog', dialog => dialog.dismiss())
     await valve().click()
-    assert.equal(fixture.commands.length, before, 'Declined valve confirmation must send nothing')
+    await assertNoCommands(fixture, before, 'Declined valve confirmation must send nothing')
     page.once('dialog', dialog => dialog.accept())
     await valve().click()
     await eventually(() => fixture.commands.at(-1), value => value?.action === 'water_mode' && value.which === 'valve' && value.mode === 1, 'Confirmed valve command wire contract')
@@ -181,21 +219,21 @@ async function runDashboardScenarios({ page, fixture, scenario, broadcast, event
     fixture.reject = false
   })
   await scenario('appliance-cards-require-running-and-enabled-state', async () => {
-    for (const name of ['dishwasher', 'washer', 'dryer']) assert.equal(await page.getByTestId(name).count(), 0)
+    await inSequence(['dishwasher', 'washer', 'dryer'], async name => assert.equal(await page.getByTestId(name).count(), 0))
     update({ dishwasher_running: false, washer_time: 0, dryer_power: false })
-    for (const name of ['dishwasher', 'washer', 'dryer']) assert.equal(await page.getByTestId(name).count(), 0)
+    await inSequence(['dishwasher', 'washer', 'dryer'], async name => assert.equal(await page.getByTestId(name).count(), 0))
     update({ dishwasher_running: true, washer_time: 120, dryer_power: true })
-    for (const name of ['dishwasher', 'washer', 'dryer']) await page.getByTestId(name).waitFor()
+    await inSequence(['dishwasher', 'washer', 'dryer'], name => page.getByTestId(name).waitFor())
     Object.assign(fixture.state.ui_config.settings, { show_dishwasher: false, show_washer: false, show_dryer: false }); broadcast()
-    for (const name of ['dishwasher', 'washer', 'dryer']) await page.getByTestId(name).waitFor({ state: 'hidden' })
+    await inSequence(['dishwasher', 'washer', 'dryer'], name => page.getByTestId(name).waitFor({ state: 'hidden' }))
     Object.assign(fixture.state.ui_config.settings, { show_dishwasher: true, show_washer: true, show_dryer: true }); broadcast()
-    for (const name of ['dishwasher', 'washer', 'dryer']) await page.getByTestId(name).waitFor()
+    await inSequence(['dishwasher', 'washer', 'dryer'], name => page.getByTestId(name).waitFor())
     update({ dishwasher_running: false, washer_time: 0, dryer_power: false })
   })
   await scenario('six-locales-persist-without-server-configuration-writes', async () => {
     const before = fixture.commands.length
     let settingsLabel = 'Settings'
-    for (const [locale, settings, title, close, off, port, save, error] of LOCALES) {
+    await inSequence(LOCALES, async ([locale, settings, title, close, off, port, save, error]) => {
       await page.getByRole('button', { name: settingsLabel, exact: true }).click()
       await page.getByTestId('locale-select').selectOption(locale)
       await page.getByRole('dialog', { name: title, exact: true }).waitFor()
@@ -212,7 +250,7 @@ async function runDashboardScenarios({ page, fixture, scenario, broadcast, event
       await page.getByRole('menuitemradio', { name: off, exact: true }).waitFor()
       await page.keyboard.press('Escape')
       settingsLabel = settings
-    }
+    })
     await page.getByRole('button', { name: settingsLabel, exact: true }).click()
     await page.getByTestId('locale-select').selectOption('en')
     await page.getByRole('button', { name: 'Close settings', exact: true }).click()
@@ -222,20 +260,20 @@ async function runDashboardScenarios({ page, fixture, scenario, broadcast, event
     // The autumn fold repeats 01:30 in Los Angeles: two distinct instants must retain distinct offsets.
     const times = ['2026-11-01T08:30:00Z', '2026-11-01T09:30:00Z']
     update({ notifications: times.map((ts, index) => ({ ...alarm, id: `timezone-${index}`, title: `Fixture timezone ${index}`, ts })) })
-    for (const timezoneId of ['America/Los_Angeles', 'Europe/Kyiv']) {
+    await inSequence(['America/Los_Angeles', 'Europe/Kyiv'], async timezoneId => {
       const isolated = await createContext({ locale: 'en-US', timezoneId })
       try {
         const tab = await isolated.newPage(); await tab.goto(origin, { waitUntil: 'load' }); await waitForHydratedDashboard(tab, fixture.state.battery_soc)
         const titles = []
-        for (const ts of times) {
+        await inSequence(times, async ts => {
           const time = tab.locator(`time[datetime="${ts}"]`); await time.waitFor()
           const expected = await tab.evaluate(value => new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'long' }).format(Date.parse(value)), ts)
           const title = await time.getAttribute('title'); assert.equal(title, expected); titles.push(title)
-        }
+        })
         assert.notEqual(titles[0], titles[1], 'Distinct source instants must remain distinguishable across a DST fold')
         assert.equal(await tab.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone), timezoneId === 'Europe/Kyiv' ? await tab.evaluate(() => new Intl.DateTimeFormat('en', { timeZone: 'Europe/Kyiv' }).resolvedOptions().timeZone) : timezoneId)
       } finally { await isolated.close() }
-    }
+    })
     update({ notifications: [] })
   })
   await scenario('touch-context-opens-menu-and-settings-without-overflow', async () => {
@@ -263,4 +301,4 @@ async function runDashboardScenarios({ page, fixture, scenario, broadcast, event
     } finally { await isolated.close() }
   })
 }
-module.exports = { runDashboardScenarios, MODES, LOCALES }
+module.exports = { runDashboardScenarios, MODES, LOCALES, assertAgeWithinObservation, assertNoCommands }

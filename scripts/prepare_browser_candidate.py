@@ -13,7 +13,13 @@ import tarfile
 from pathlib import Path, PurePosixPath
 
 import version_plan
+from qualification_paths import workspace_path
 from version_receipt import verify_producer_identity
+
+MANIFEST_NAME = "manifest.json"
+E2E_NAME = "packaged-e2e.json"
+METADATA_NAME = "candidate-provenance.json"
+BUILD_INFO_NAME = "build-info.json"
 
 MAX_ARCHIVE = 150 * 1024 * 1024
 MAX_UNPACKED = 300 * 1024 * 1024
@@ -70,7 +76,7 @@ def identity_from_env() -> dict:
         raise ValueError("Missing candidate source SHA")
     for key, env in (("run_id", "GITHUB_RUN_ID"), ("run_attempt", "GITHUB_RUN_ATTEMPT")):
         value = os.environ.get(env, "")
-        if not re.fullmatch(r"[1-9][0-9]*", value):
+        if not re.fullmatch(r"[1-9]\d*", value, re.ASCII):
             raise ValueError("Missing candidate run identity")
         result[key] = int(value)
     return result
@@ -129,16 +135,10 @@ def verify_receipt(receipt: dict, producer: dict, archive_name: str, sha: str, s
         raise ValueError("OCI differs from its release receipt")
 
 
-def validate_bundle(
-    files: dict[str, bytes], producer: dict, policy: dict | None = None
-) -> tuple[dict, dict]:
-    """Require complete, positive packaged evidence and exact frontend hashes."""
-    metadata = json.loads(files["candidate-provenance.json"])
-    if type(metadata.get("schema")) is not int or metadata["schema"] != 1:
-        raise ValueError("Unknown candidate schema")
-    manifest = json.loads(files["manifest.json"])
-    receipt_data = files["release-inputs-container.json"]
-    receipt = json.loads(receipt_data)
+def validate_frozen_plan(
+    files: dict, metadata: dict, receipt: dict, producer: dict, policy: dict | None
+) -> dict:
+    """Verify original plan, input coverage and effective projection hashes."""
     plan = version_plan.validate_plan(
         json.loads(files["release-plan.json"]), policy, producer["source_sha"]
     )
@@ -156,20 +156,18 @@ def validate_bundle(
         x["path"] for x in policy["versioning"]["files"]
     }:
         raise ValueError("Candidate build inputs do not cover the release policy")
-    verify_producer_identity(metadata, producer)
-    if metadata.get("producer") != producer:
-        raise ValueError("Candidate producer/run/attempt mismatch")
-    verify_receipt(
-        receipt, producer, metadata["ociArchive"], metadata["ociSha256"], metadata["ociSize"]
-    )
-    if metadata.get("receiptSha256") != digest(receipt_data):
-        raise ValueError("Candidate receipt hash mismatch")
+    return plan
+
+
+def validate_frontend(files: dict, metadata: dict) -> dict:
+    """Account for every packaged and served executable byte."""
+    manifest = json.loads(files[MANIFEST_NAME])
     inventory = manifest_inventory(manifest, metadata["manifestKind"])
     expected = {
-        "candidate-provenance.json",
-        "manifest.json",
+        METADATA_NAME,
+        MANIFEST_NAME,
         "release-inputs-container.json",
-        "packaged-e2e.json",
+        E2E_NAME,
         "release-plan.json",
     }
     expected.update("frontend/" + name for name in inventory)
@@ -179,16 +177,44 @@ def validate_bundle(
         if digest(files["frontend/" + name]) != sha:
             raise ValueError("Candidate frontend hash mismatch")
     if metadata.get("frontendFiles") != inventory or metadata.get("manifestSha256") != digest(
-        files["manifest.json"]
+        files[MANIFEST_NAME]
     ):
         raise ValueError("Candidate manifest mismatch")
     source_only = metadata.get("sourceOnlyMetadata")
-    if source_only != (["build-info.json"] if metadata["manifestKind"] == "go" else []):
+    if source_only != ([BUILD_INFO_NAME] if metadata["manifestKind"] == "go" else []):
         raise ValueError("Unexpected unserved candidate data")
     served = {k: v for k, v in inventory.items() if k not in source_only}
     if metadata.get("servedFiles") != served:
         raise ValueError("Not all executable frontend bytes were served by the package")
-    e2e = json.loads(files["packaged-e2e.json"])
+    return inventory
+
+
+def validate_runtime_row(run: dict, producer: dict, metadata: dict, plan: dict) -> None:
+    """Every actual engine run must execute the complete transport contract."""
+    verify_producer_identity(run, producer)
+    expected_scenarios = PACKAGED_SCENARIOS | (
+        {MQTT_SCENARIO} if run["transport"] == "mqtt" else set()
+    )
+    scenarios = run.get("scenarios", [])
+    if (
+        set(scenarios) != expected_scenarios
+        or len(scenarios) != len(expected_scenarios)
+        or type(run.get("testsPassed")) is not int
+        or run.get("testsPassed") != len(expected_scenarios)
+        or type(run.get("testsFailed")) is not int
+        or run.get("testsFailed") != 0
+        or run.get("producer") != producer
+        or run.get("ociSha256") != metadata["ociSha256"]
+        or run.get("backendVersion") != version_plan.projections(plan)["package"]
+        or not re.fullmatch(r"\d+(?:\.\d+){1,3}", run.get("browserVersion", ""), re.ASCII)
+    ):
+        raise ValueError("Incomplete or unbound packaged E2E scenario evidence")
+
+
+def validate_runtime(files: dict, metadata: dict, producer: dict, plan: dict) -> None:
+    """Bind all six engine/transport rows to the package and frozen plan."""
+    plan_sha = version_plan.plan_digest(plan)
+    e2e = json.loads(files[E2E_NAME])
     if type(e2e.get("schema")) is not int or e2e["schema"] != 1:
         raise ValueError("Unknown packaged E2E schema")
     verify_producer_identity(e2e, producer)
@@ -212,37 +238,50 @@ def validate_bundle(
     if e2e.get("planSha256") != plan_sha or e2e.get("networkInternal") is not True:
         raise ValueError("Packaged E2E lacks frozen plan or network isolation")
     for run in runs:
-        verify_producer_identity(run, producer)
-        expected_scenarios = PACKAGED_SCENARIOS | (
-            {MQTT_SCENARIO} if run["transport"] == "mqtt" else set()
-        )
-        scenarios = run.get("scenarios", [])
-        if (
-            set(scenarios) != expected_scenarios
-            or len(scenarios) != len(expected_scenarios)
-            or type(run.get("testsPassed")) is not int
-            or run.get("testsPassed") != len(expected_scenarios)
-            or type(run.get("testsFailed")) is not int
-            or run.get("testsFailed") != 0
-            or run.get("producer") != producer
-            or run.get("ociSha256") != metadata["ociSha256"]
-            or run.get("backendVersion") != version_plan.projections(plan)["package"]
-            or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", run.get("browserVersion", ""))
-        ):
-            raise ValueError("Incomplete or unbound packaged E2E scenario evidence")
-    if metadata.get("e2eSha256") != digest(files["packaged-e2e.json"]):
+        validate_runtime_row(run, producer, metadata, plan)
+    if metadata.get("e2eSha256") != digest(files[E2E_NAME]):
         raise ValueError("Packaged E2E hash mismatch")
+
+
+def validate_bundle(
+    files: dict[str, bytes], producer: dict, policy: dict | None = None
+) -> tuple[dict, dict]:
+    """Require complete, positive packaged evidence and exact frontend hashes."""
+    metadata = json.loads(files[METADATA_NAME])
+    if type(metadata.get("schema")) is not int or metadata["schema"] != 1:
+        raise ValueError("Unknown candidate schema")
+    receipt_data = files["release-inputs-container.json"]
+    receipt = json.loads(receipt_data)
+    plan = validate_frozen_plan(files, metadata, receipt, producer, policy)
+    verify_producer_identity(metadata, producer)
+    if metadata.get("producer") != producer:
+        raise ValueError("Candidate producer/run/attempt mismatch")
+    verify_receipt(
+        receipt, producer, metadata["ociArchive"], metadata["ociSha256"], metadata["ociSize"]
+    )
+    if metadata.get("receiptSha256") != digest(receipt_data):
+        raise ValueError("Candidate receipt hash mismatch")
+    inventory = validate_frontend(files, metadata)
+    validate_runtime(files, metadata, producer, plan)
     return metadata, inventory
 
 
 def prepare(
-    artifacts: Path, destination: Path, diagnostics: Path, producer: dict, artifact_id: int
+    artifacts: Path,
+    destination: Path,
+    diagnostics: Path,
+    producer: dict,
+    artifact_id: int,
+    *,
+    root: Path | None = None,
 ) -> dict:
     """Unpack a validated candidate into a new owned directory only."""
     if type(artifact_id) is not int or artifact_id <= 0:
         raise ValueError("Exact candidate artifact ID required")
-    if destination.exists() or any(p.is_symlink() for p in (destination, *destination.parents)):
-        raise ValueError("Candidate destination must be new and without symlinks")
+    artifacts = workspace_path(artifacts, root=root, kind="directory", must_exist=True)
+    destination = workspace_path(destination, root=root, kind="directory", new=True)
+    diagnostics = workspace_path(diagnostics, root=root, kind="directory")
+    identity_path = workspace_path(diagnostics / "candidate.json", root=root, kind="file", new=True)
     archive = artifacts / "browser-candidate.tar.gz"
     data = bounded_file(archive, MAX_ARCHIVE)
     checksum = bounded_file(artifacts / "browser-candidate.sha256", 200).decode().strip()
@@ -280,14 +319,15 @@ def prepare(
         "planSha256": metadata["planSha256"],
         "manifestKind": metadata["manifestKind"],
         "distribution": str((destination / "frontend").resolve()),
-        "manifestPath": str((destination / "manifest.json").resolve()),
+        "manifestPath": str((destination / MANIFEST_NAME).resolve()),
         "frontendFiles": inventory,
         "servedFiles": metadata["servedFiles"],
         "sourceOnlyMetadata": metadata["sourceOnlyMetadata"],
         "releaseReceipt": True,
     }
     diagnostics.mkdir(parents=True, exist_ok=True)
-    (diagnostics / "candidate.json").write_text(json.dumps(identity, indent=2) + "\n")
+    with identity_path.open("x") as stream:
+        stream.write(json.dumps(identity, indent=2) + "\n")
     return identity
 
 

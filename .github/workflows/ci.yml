@@ -27,9 +27,10 @@ jobs:
       - name: Check qualification helper security with the locked analyzer
         run: |
           python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-bandit.txt
-          python3 -m bandit -q scripts/prepare_browser_candidate.py scripts/packaged_browser_acceptance.py scripts/packaged_browser_fixture.py scripts/native_acceptance.py scripts/native_acceptance_capture.py scripts/native_acceptance_webdriver.py scripts/verify_browser_release_evidence.py
+          python3 -m bandit -q scripts/qualification_paths.py scripts/prepare_browser_candidate.py scripts/packaged_browser_acceptance.py scripts/packaged_browser_fixture.py scripts/native_acceptance.py scripts/native_acceptance_capture.py scripts/native_acceptance_webdriver.py scripts/verify_browser_release_evidence.py
       - name: Verify candidate and native evidence boundaries
         run: |
+          python3 scripts/test_qualification_paths.py
           python3 scripts/test_prepare_browser_candidate.py
           python3 scripts/test_packaged_browser_fixture.py
           python3 scripts/test_verify_browser_release_evidence.py

@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import native_acceptance as gate
 
@@ -271,6 +272,80 @@ class NativeAcceptanceTests(unittest.TestCase):
     def test_observation_after_review_fails(self):
         self.review["reviewedAt"] = "2020-01-01T00:00:01Z"
         self.assert_rejected("ordering")
+
+    def test_measured_versions_use_bounded_ascii_validation(self):
+        for version in ("18.5", "156.0.8078.4", "18.5 beta-2_123"):
+            self.first()["identity"]["browserVersion"] = version
+            self.save_receipts()
+            self.assertEqual(self.verify()["status"], "accepted")
+        for version in ("١.٢", "v18.5", "1." * 1000, "18.5/escape"):
+            self.first()["identity"]["browserVersion"] = version
+            self.save_receipts()
+            with self.assertRaises(ValueError):
+                self.verify()
+
+    def test_cli_rejects_output_outside_checkout_before_deletion(self):
+        output = self.root / "preserve.json"
+        output.write_text("preserved")
+        checkout = Path(__file__).resolve().parents[1]
+        policy = checkout / ".github/native-acceptance-policy.json"
+        arguments = [
+            "native_acceptance.py",
+            "verify",
+            "--candidate",
+            str(policy),
+            "--review",
+            str(policy),
+            "--evidence-root",
+            str(policy.parent),
+            "--output",
+            str(output),
+        ]
+        with patch("sys.argv", arguments), self.assertRaises(SystemExit):
+            gate.main()
+        self.assertEqual(output.read_text(), "preserved")
+
+    def test_cli_cannot_overwrite_its_policy_input(self):
+        checkout = Path(__file__).resolve().parents[1]
+        policy = checkout / ".github/native-acceptance-policy.json"
+        before = policy.read_bytes()
+        arguments = [
+            "native_acceptance.py",
+            "verify",
+            "--candidate",
+            str(policy),
+            "--review",
+            str(policy),
+            "--evidence-root",
+            str(policy.parent),
+            "--output",
+            str(policy),
+        ]
+        with patch("sys.argv", arguments), self.assertRaises(SystemExit):
+            gate.main()
+        self.assertEqual(policy.read_bytes(), before)
+
+    def test_cli_preserves_unrelated_existing_output_on_failed_verification(self):
+        checkout = Path(__file__).resolve().parents[1]
+        policy = checkout / ".github/native-acceptance-policy.json"
+        with tempfile.TemporaryDirectory(prefix=".native-contract-", dir=checkout) as temporary:
+            output = Path(temporary) / "keep.json"
+            output.write_text("Existing independent evidence")
+            arguments = [
+                "native_acceptance.py",
+                "verify",
+                "--candidate",
+                str(policy),
+                "--review",
+                str(policy),
+                "--evidence-root",
+                str(policy.parent),
+                "--output",
+                str(output),
+            ]
+            with patch("sys.argv", arguments), self.assertRaises(SystemExit):
+                gate.main()
+            self.assertEqual(output.read_text(), "Existing independent evidence")
 
 
 if __name__ == "__main__":

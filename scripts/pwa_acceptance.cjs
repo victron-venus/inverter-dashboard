@@ -24,7 +24,29 @@ const SCENARIOS = Object.freeze([
 ])
 const sha = data => crypto.createHash('sha256').update(data).digest('hex')
 
-function loadCandidate(filename) {
+// The trusted checkout is code-derived. Only pure unit controls may supply a root.
+const TRUSTED_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
+function workspacePath(value, root = path.resolve(__dirname, '..')) {
+  assert(typeof value === 'string' && value && !value.includes('\\') && !value.split('/').includes('..'), 'Invalid qualification path')
+  const anchor = path.resolve(root)
+  const trusted = fs.realpathSync(anchor)
+  const supplied = path.isAbsolute(value) ? value : path.join(anchor, value)
+  const relative = path.relative(anchor, supplied)
+  assert(relative && relative !== '..' && !relative.startsWith('../') && !path.isAbsolute(relative), 'Qualification path escapes trusted checkout')
+  let current = trusted
+  for (const part of relative.split(path.sep)) {
+    current = path.join(current, part)
+    const entry = fs.lstatSync(current, { throwIfNoEntry: false })
+    if (!entry) break
+    assert(!entry.isSymbolicLink(), 'Linked qualification path rejected')
+    assert(entry.isDirectory() || entry.isFile(), 'Qualification path must be regular')
+    if (current !== path.join(trusted, relative)) assert(entry.isDirectory(), 'Qualification parent must be a directory')
+  }
+  return path.join(trusted, relative)
+}
+
+function loadCandidate(filename, workspaceRoot) {
+  filename = workspacePath(filename, workspaceRoot)
   const candidate = JSON.parse(fs.readFileSync(filename, 'utf8'))
   assert.match(candidate.repository, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)
   assert.match(candidate.sourceSha, /^[a-f0-9]{40}$/)
@@ -33,8 +55,7 @@ function loadCandidate(filename) {
   if (candidate.artifactId !== undefined) assert.equal(candidate.artifactId, candidate.candidateArtifactId)
   if (candidate.archiveSha256 !== undefined) assert.equal(candidate.archiveSha256, candidate.candidateSha256)
   assert(path.isAbsolute(candidate.distribution), 'Candidate distribution must be absolute')
-  assert(!fs.lstatSync(candidate.distribution).isSymbolicLink(), 'Linked distribution rejected')
-  const root = fs.realpathSync(candidate.distribution)
+  const root = workspacePath(candidate.distribution, workspaceRoot)
   const assets = new Map()
   const inventory = candidate.frontendFiles
   assert(inventory && Object.keys(inventory).length, 'Candidate frontend inventory required')
@@ -73,13 +94,13 @@ async function workerRequest(page, request) {
   }, request)
 }
 
-async function waitFor(read, test, label) {
-  for (let remaining = 100; remaining > 0; remaining--) {
-    const value = await read()
-    if (test(value)) return value
-    await delay(100)
-  }
-  throw new Error(`Timed out: ${label}`)
+async function waitFor(read, test, label, remaining = 100) {
+  const value = await read()
+  if (test(value)) return value
+  assert(remaining > 1, `Timed out: ${label}`)
+  // This is bounded state polling; observations must remain sequential.
+  await delay(100)
+  return waitFor(read, test, label, remaining - 1)
 }
 
 function requestBody(req) {
@@ -104,22 +125,24 @@ function fixtureCertificate(directory) {
   const cert = path.join(directory, 'cert.pem')
   const config = path.join(directory, 'openssl.cnf')
   fs.writeFileSync(config, '[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=v3\n[dn]\nCN=localhost\n[v3]\nsubjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature,keyEncipherment,keyCertSign\nextendedKeyUsage=serverAuth\n')
-  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-config', config, '-keyout', key, '-out', cert], { stdio: 'ignore', timeout: 30000 })
+  execFileSync('/usr/bin/openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-config', config, '-keyout', key, '-out', cert], { stdio: 'ignore', timeout: 30000, env: { PATH: TRUSTED_PATH } })
   return { key, cert }
 }
 
 async function main() {
   assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Browser execution is hosted-only; local UI must use cua_repl')
-  const candidatePath = process.env.CI_PWA_CANDIDATE
-  const modulePath = process.env.CI_PLAYWRIGHT_MODULE
+  const candidatePath = workspacePath(process.env.CI_PWA_CANDIDATE)
+  const modulePath = workspacePath(process.env.CI_PLAYWRIGHT_MODULE)
   assert(candidatePath && path.isAbsolute(candidatePath), 'CI_PWA_CANDIDATE must name the verified candidate receipt')
   assert(modulePath && path.isAbsolute(modulePath), 'CI_PLAYWRIGHT_MODULE must name the isolated installed toolchain')
   const { candidate, assets } = loadCandidate(candidatePath)
   const engine = process.env.CI_BROWSER_ENGINE || 'chromium'
   assert.equal(engine, 'chromium', 'This permission-override lane currently qualifies Chromium only')
-  const output = path.resolve(process.env.CI_PWA_OUTPUT || '.compatibility/pwa')
+  const output = workspacePath(process.env.CI_PWA_OUTPUT || '.compatibility/pwa')
   fs.mkdirSync(output, { recursive: true })
-  const resultPath = path.join(output, 'result.json')
+  const resultPath = workspacePath(path.join(output, 'result.json'))
+  const screenshotPath = workspacePath(path.join(output, 'pwa-settings.png'))
+  const tracePath = workspacePath(path.join(output, 'trace.zip'))
   fs.rmSync(resultPath, { force: true })
   const startedAt = new Date().toISOString()
   const scenarios = []
@@ -287,14 +310,18 @@ async function main() {
     assert.deepEqual(external, [])
     assert.deepEqual(commands, [], 'PWA lifecycle must not issue actuator/settings commands')
     assert.deepEqual(scenarios.map(item => item.id), SCENARIOS)
-    await page.screenshot({ path: path.join(output, 'pwa-settings.png'), fullPage: true })
+    await page.screenshot({ path: screenshotPath, fullPage: true })
   } catch (error) {
     failures.push({ message: String(error.stack || error) })
     process.exitCode = 1
   } finally {
-    if (context) await context.tracing.stop({ path: path.join(output, 'trace.zip') }).catch(() => {})
+    if (context) await context.tracing.stop({ path: tracePath }).catch(() => {})
     const browserVersion = browser?.version() || 'not-started'
-    if (browser) await browser.close()
+    // launchPersistentContext owns the browser lifetime, even if browser() is unavailable.
+    if (context) {
+      try { await context.close() }
+      catch (error) { failures.push({ message: `Persistent context cleanup failed: ${error.message}` }); process.exitCode = 1 }
+    }
     if (server) await new Promise(resolve => server.close(resolve))
     fs.rmSync(temp, { recursive: true, force: true })
     fs.writeFileSync(resultPath, JSON.stringify({
@@ -308,5 +335,5 @@ async function main() {
   }
 }
 
-module.exports = { SCENARIOS, sha, loadCandidate, binding, fixtureCertificate, setNotificationPermission }
+module.exports = { SCENARIOS, sha, loadCandidate, binding, fixtureCertificate, setNotificationPermission, workspacePath, TRUSTED_PATH, waitFor }
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1 })

@@ -282,41 +282,74 @@ class CandidateTests(unittest.TestCase):
                 with self.subTest(kind=kind), self.assertRaises(ValueError):
                     read_bundle(archive)
 
+    def test_cli_paths_cannot_escape_checkout_or_follow_diagnostics_links(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            write_bundle(artifacts, bundle_files())
+            external = root.parent / "outside-qualification"
+            cases = [
+                (external, root / "out", root / "diag"),
+                (artifacts, external, root / "diag"),
+                (artifacts, root / "out", external),
+            ]
+            for inputs, destination, diagnostics in cases:
+                with self.subTest(path=external), self.assertRaises(ValueError):
+                    prepare(inputs, destination, diagnostics, PRODUCER, 1, root=root)
+            target = root / "existing"
+            target.mkdir()
+            (root / "linked-diag").symlink_to(target, target_is_directory=True)
+            with self.assertRaises(ValueError):
+                prepare(artifacts, root / "out", root / "linked-diag", PRODUCER, 1, root=root)
+            (target / "candidate.json").write_text("preserve")
+            with self.assertRaises(ValueError):
+                prepare(artifacts, root / "out", target, PRODUCER, 1, root=root)
+            self.assertEqual((target / "candidate.json").read_text(), "preserve")
+            self.assertFalse((root / "out").exists())
+
     def test_prepare_does_not_overwrite_destination(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            write_bundle(root, bundle_files())
+            artifacts = root / "inputs"
+            artifacts.mkdir()
+            write_bundle(artifacts, bundle_files())
             destination = root / "extracted"
-            result = prepare(root, destination, root / "diagnostics", PRODUCER, 123)
+            result = prepare(artifacts, destination, root / "diagnostics", PRODUCER, 123, root=root)
             self.assertEqual(result["artifactId"], 123)
             self.assertEqual(
-                result["candidateSha256"], digest((root / "browser-candidate.tar.gz").read_bytes())
+                result["candidateSha256"],
+                digest((artifacts / "browser-candidate.tar.gz").read_bytes()),
             )
             self.assertEqual(
                 (destination / "frontend/index.html").read_bytes(), b"<html>candidate</html>"
             )
             with self.assertRaises(ValueError):
-                prepare(root, destination, root / "diagnostics", PRODUCER, 123)
+                prepare(artifacts, destination, root / "diagnostics", PRODUCER, 123, root=root)
 
     def test_missing_artifact_id_and_checksum_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            write_bundle(root, bundle_files())
+            artifacts = root / "inputs"
+            artifacts.mkdir()
+            write_bundle(artifacts, bundle_files())
             with self.assertRaises(ValueError):
-                prepare(root, root / "out", root / "diag", PRODUCER, 0)
-            (root / "browser-candidate.sha256").write_text("0" * 64)
+                prepare(artifacts, root / "out", root / "diag", PRODUCER, 0, root=root)
+            (artifacts / "browser-candidate.sha256").write_text("0" * 64)
             with self.assertRaises(ValueError):
-                prepare(root, root / "out", root / "diag", PRODUCER, 1)
+                prepare(artifacts, root / "out", root / "diag", PRODUCER, 1, root=root)
             self.assertFalse((root / "out").exists())
 
     def test_symlink_input_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            archive = write_bundle(root, bundle_files())
-            archive.rename(root / "real.tar.gz")
-            archive.symlink_to(root / "real.tar.gz")
+            artifacts = root / "inputs"
+            artifacts.mkdir()
+            archive = write_bundle(artifacts, bundle_files())
+            archive.rename(artifacts / "real.tar.gz")
+            archive.symlink_to(artifacts / "real.tar.gz")
             with self.assertRaises(ValueError):
-                prepare(root, root / "out", root / "diag", PRODUCER, 1)
+                prepare(artifacts, root / "out", root / "diag", PRODUCER, 1, root=root)
 
     def test_actions_identity_must_be_explicit(self):
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(ValueError):

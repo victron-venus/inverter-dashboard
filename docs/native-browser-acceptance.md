@@ -45,6 +45,8 @@ Use `scripts/prepare_browser_candidate.py` to verify/extract the producing job's
 }
 ```
 
+CLI inputs, extracted candidate files, toolchain paths and outputs must remain inside the repository checkout; parent traversal and symbolic links are rejected before file access. A pure unit helper can use an isolated temporary root, but no CLI option changes the trusted root. Outputs cannot overwrite verifier inputs or source evidence.
+
 The example is schematic, not usable acceptance evidence. Go uses its own repository, run and package digest. Never reuse Python native evidence for the Go backend, or a different candidate/attempt. `artifactId`/`archiveSha256`, when present as aliases, must agree. The upstream verifier additionally binds package producer and OCI receipt. Keep the full producer receipt with the candidate evidence; a manually typed digest does not establish artifact provenance.
 
 ## Release workflow integration
@@ -85,7 +87,7 @@ CI_NATIVE_OUTPUT="$PWD/.compatibility/native-safari" \
 node scripts/native_acceptance_smoke.cjs
 ```
 
-The script uses the installed `/usr/bin/safaridriver`, `sudo security` on the disposable runner's system keychain and an ephemeral loopback HTTPS origin. It removes that certificate by fingerprint at teardown. No user machine keychain or Safari preferences are touched. The resulting `native-smoke.json` is labelled `native-host`; it records actual driver/browser versions, measured macOS version/build/architecture, and its limitations. A screenshot proves only what is visible in that captured browser view.
+The script uses the installed `/usr/bin/safaridriver`, `/usr/bin/python3` (the smoke helpers retain Python 3.9 compatibility), and `/usr/bin/sudo /usr/bin/security` on the disposable runner's system keychain and an ephemeral loopback HTTPS origin. All spawned executables use fixed system paths and a fixed system `PATH`. It removes that certificate by its SHA-256 fingerprint at teardown. Its loopback WebSocket handshake uses SHA-1 solely because RFC 6455 requires that wire format; [RFC 6455 section 10.8](https://www.rfc-editor.org/rfc/rfc6455.html#section-10.8) explains that the handshake relies on none of SHA-1’s security properties. Candidate/evidence integrity continues to use SHA-256. No user machine keychain or Safari preferences are touched. The resulting `native-smoke.json` is labelled `native-host`; it records actual driver/browser versions, measured macOS version/build/architecture, and its limitations. A screenshot proves only what is visible in that captured browser view.
 
 The WebDriver HTTP client validates a loopback HTTP origin, disables environment proxies and redirects, retains a 45-second network timeout, bounds JSON responses to 8 MiB and validates the W3C response envelope.
 
@@ -141,7 +143,7 @@ python3 scripts/native_acceptance.py verify \
   --output .compatibility/native-verdict.json
 ```
 
-A failed invocation removes an old positive output first and exits nonzero. The successful output binds all accepted target receipt hashes to the candidate and includes the observed versions and scenario counts.
+Every invocation requires a fresh output path. Existing verdicts and unrelated files are rejected and preserved; successful output uses exclusive creation. A failed invocation exits nonzero and cannot create a positive verdict, and an older receipt must never be substituted for that failed invocation. The successful output binds all accepted target receipt hashes to the candidate and includes the observed versions and scenario counts.
 
 ## Enforcement and remaining boundary
 

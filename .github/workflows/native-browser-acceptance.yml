@@ -10,15 +10,16 @@ on:
         type: string
         required: true
 
-permissions:
-  contents: read
-  actions: read
+permissions: {}
 
 jobs:
   pwa:
     name: Service Worker lifecycle (Chromium engine)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
     env:
       CI_BROWSER_CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
       CI_BROWSER_DIAGNOSTICS: .browser-pwa/identity
@@ -67,6 +68,9 @@ jobs:
     if: ${{ inputs.channel == 'rc' }}
     runs-on: macos-15
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
     env:
       CI_BROWSER_CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
       CI_BROWSER_DIAGNOSTICS: .browser-native/identity

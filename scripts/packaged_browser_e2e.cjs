@@ -4,8 +4,12 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
+const { workspacePath } = require('./pwa_acceptance.cjs')
 const { waitForHydratedDashboard } = require('./browser-readiness.cjs')
-const [base, fixture, transport, output, ociSha256, backend] = process.argv.slice(2)
+const [base, fixture, transport, outputArgument, ociSha256, backend] = process.argv.slice(2)
+const output = workspacePath(outputArgument)
+assert.equal(path.extname(output), '.json', 'Runtime evidence must be a JSON file')
+assert(!fs.existsSync(output), 'Runtime evidence output must be new')
 for (const address of [base, fixture]) {
   const url = new URL(address)
   assert.equal(url.hostname, '127.0.0.1', 'Packaged QA may only contact loopback fixtures')
@@ -14,7 +18,8 @@ for (const address of [base, fixture]) {
 }
 assert(['mqtt', 'igw'].includes(transport))
 assert(['python', 'go'].includes(backend))
-const token = 'packaged-browser-fixture-only'
+const token = process.env.CI_PACKAGED_BROWSER_TOKEN
+assert.match(token || '', /^[A-Za-z0-9_-]{43,128}$/, 'A bounded ephemeral fixture credential is required')
 const modulePath = process.env.CI_PLAYWRIGHT_MODULE
 assert(modulePath && path.isAbsolute(modulePath), 'Explicit isolated Playwright module required')
 const playwright = require(modulePath)
@@ -33,12 +38,14 @@ const fixtureState = () => request(fixture, '/fixture/status')
 const control = action => request(fixture, '/fixture/' + action, { method: 'POST', body: '{}' })
 async function until(read, predicate, label) {
   const deadline = Date.now() + 25000
-  while (Date.now() < deadline) {
+  async function poll() {
+    if (Date.now() >= deadline) throw new Error(`Timed out: ${label}`)
     const value = await read()
     if (predicate(value)) return value
     await delay(150)
+    return poll()
   }
-  throw new Error(`Timed out: ${label}`)
+  return poll()
 }
 
 async function command(page, value) {
@@ -182,6 +189,7 @@ async function run(engine) {
 }
 
 ;(async () => {
-  for (const engine of ['chromium', 'firefox', 'webkit']) await run(engine)
-  fs.writeFileSync(output, JSON.stringify({ runs }, null, 2) + '\n')
+  // Each engine mutates the same synthetic peer; serialize its complete reset/run/cleanup.
+  await ['chromium', 'firefox', 'webkit'].reduce((previous, engine) => previous.then(() => run(engine)), Promise.resolve())
+  fs.writeFileSync(output, JSON.stringify({ runs }, null, 2) + '\n', { flag: 'wx' })
 })().catch(error => { console.error(error.message); process.exitCode = 1 })

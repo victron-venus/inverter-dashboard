@@ -2,6 +2,7 @@
 
 import io
 import json
+import copy
 import tempfile
 import threading
 import unittest
@@ -128,19 +129,21 @@ class NativeToolTests(unittest.TestCase):
         return result
 
     def test_driver_rejects_oversized_header_and_stream(self):
+        large_header = self.response(b"", length=driver.MAX_WEBDRIVER_RESPONSE + 1)
         with self.assertRaisesRegex(ValueError, "exceeds limit"):
-            driver.decode_driver_response(
-                self.response(b"", length=driver.MAX_WEBDRIVER_RESPONSE + 1)
-            )
+            driver.decode_driver_response(large_header)
+        large_stream = self.response(b"x" * (driver.MAX_WEBDRIVER_RESPONSE + 1))
         with self.assertRaisesRegex(ValueError, "exceeds limit"):
-            driver.decode_driver_response(self.response(b"x" * (driver.MAX_WEBDRIVER_RESPONSE + 1)))
+            driver.decode_driver_response(large_stream)
 
     def test_driver_requires_json_response_schema(self):
+        html_response = self.response(b"{}", content_type="text/html")
         with self.assertRaisesRegex(ValueError, "not JSON"):
-            driver.decode_driver_response(self.response(b"{}", content_type="text/html"))
+            driver.decode_driver_response(html_response)
         for value in ({}, [], {"value": None, "unexpected": 1}):
+            invalid_response = self.response(json.dumps(value).encode())
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, "schema"):
-                driver.decode_driver_response(self.response(json.dumps(value).encode()))
+                driver.decode_driver_response(invalid_response)
         self.assertIsNone(driver.decode_driver_response(self.response(b'{"value":null}')))
 
     def test_driver_validates_origin_at_construction(self):
@@ -175,6 +178,34 @@ class NativeToolTests(unittest.TestCase):
                 gate.verify(candidate, policy, review, root)
             with self.assertRaisesRegex(ValueError, "already exists"):
                 capture.initialize(candidate, policy, root, "observer")
+
+    def test_invalid_capture_inputs_leave_no_directory_or_partial_forms(self):
+        candidate = {
+            "repository": "victron-venus/test",
+            "sourceSha": "a" * 40,
+            "runId": 1,
+            "runAttempt": 1,
+            "candidateArtifactId": 2,
+            "candidateSha256": "b" * 64,
+        }
+        policy = gate.read_json(
+            Path(__file__).resolve().parents[1] / ".github/native-acceptance-policy.json"
+        )
+        malformed_policy = copy.deepcopy(policy)
+        malformed_policy["targets"][-1]["id"] = "../escape"
+        duplicate_policy = copy.deepcopy(policy)
+        duplicate_policy["targets"].append(duplicate_policy["targets"][0])
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "capture"
+            for bad_candidate, bad_policy in (
+                ({}, policy),
+                (candidate, {}),
+                (candidate, malformed_policy),
+                (candidate, duplicate_policy),
+            ):
+                with self.assertRaises(ValueError):
+                    capture.initialize(bad_candidate, bad_policy, output, "observer")
+                self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

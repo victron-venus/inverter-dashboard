@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import socketserver
 import ssl
 import threading
@@ -16,7 +18,18 @@ import time
 from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-TOKEN = "packaged-browser-fixture-only"  # nosec B105
+CREDENTIAL_ENV = "CI_PACKAGED_BROWSER_TOKEN"
+
+
+def credential_from_env(environment: dict | None = None) -> str:
+    """Require a fresh bounded URL-safe credential supplied by the owning runner."""
+    source = os.environ if environment is None else environment
+    value = source.get(CREDENTIAL_ENV, "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{43,128}", value, re.ASCII):
+        raise ValueError("Missing or invalid ephemeral fixture credential")
+    return value
+
+
 PORTAL = "browserqa"
 LOCK = threading.RLock()
 CLIENTS: set = set()
@@ -59,7 +72,7 @@ def publish(topic: str, value) -> None:
     data = json.dumps(value, separators=(",", ":")).encode()
     with LOCK:
         MESSAGES[topic] = data
-        for client in list(CLIENTS):
+        for client in CLIENTS:
             if any(topic_matches(p, topic) for p in client.subscriptions):
                 client.send(packet(0x30, mqtt_string(topic) + data))
 
@@ -192,7 +205,7 @@ class Broker(socketserver.BaseRequestHandler):
                     self.send(b"\xd0\x00")
                 elif kind == 14:
                     break
-        except (OSError, EOFError, ValueError, UnicodeError):
+        except (OSError, EOFError, ValueError):
             return
 
     def finish(self):
@@ -236,7 +249,7 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
             return
-        if self.headers.get("Authorization") != f"Bearer {TOKEN}":
+        if self.headers.get("Authorization") != f"Bearer {self.server.fixture_credential}":
             self.reply(401, {"error": "fixture authorization required"})
             return
         with LOCK:
@@ -268,7 +281,7 @@ class Handler(BaseHTTPRequestHandler):
                 seed()
             elif self.path == "/fixture/reconnect":
                 MESSAGES.clear()
-                for client in list(CLIENTS):
+                for client in CLIENTS:
                     with suppress(OSError):
                         client.request.shutdown(2)
                     client.request.close()
@@ -278,7 +291,7 @@ class Handler(BaseHTTPRequestHandler):
                     f"N/{PORTAL}/platform/0/Notifications/1/Description",
                     {"value": "Fixture fresh alarm"},
                 )
-            elif self.headers.get("Authorization") != f"Bearer {TOKEN}":
+            elif self.headers.get("Authorization") != f"Bearer {self.server.fixture_credential}":
                 self.reply(401, {})
                 return
             elif self.path.startswith("/v1/commands/"):
@@ -300,11 +313,13 @@ def main():
     parser.add_argument("--cert", required=True)
     parser.add_argument("--key", required=True)
     args = parser.parse_args()
+    credential = credential_from_env()
     seed()
     broker = socketserver.ThreadingTCPServer(("0.0.0.0", 1883), Broker)  # nosec B104
     broker.daemon_threads = True
     http = ThreadingHTTPServer(("0.0.0.0", 8090), Handler)  # nosec B104
     https = ThreadingHTTPServer(("0.0.0.0", 8443), Handler)  # nosec B104
+    http.fixture_credential = https.fixture_credential = credential
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(args.cert, args.key)

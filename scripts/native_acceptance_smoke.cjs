@@ -8,8 +8,19 @@ const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
 const { execFileSync, spawn } = require('node:child_process')
-const { setTimeout: delay } = require('node:timers/promises')
-const { loadCandidate, fixtureCertificate } = require('./pwa_acceptance.cjs')
+const { loadCandidate, fixtureCertificate, workspacePath, TRUSTED_PATH, waitFor } = require('./pwa_acceptance.cjs')
+
+function websocketAccept(key) {
+  assert(typeof key === 'string' && /^[A-Za-z0-9+/]{22}==$/.test(key), 'Invalid WebSocket client nonce')
+  // RFC6455 sections 4.2.2/10.8 mandate SHA-1 here; it is not an integrity or authentication primitive.
+  return crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64')
+}
+
+function certificateFingerprint(filename) {
+  const fingerprint = new crypto.X509Certificate(fs.readFileSync(filename)).fingerprint256.replaceAll(':', '')
+  assert.match(fingerprint, /^[A-Fa-f0-9]{64}$/)
+  return fingerprint
+}
 
 function websocketFrame(value) {
   const body = Buffer.from(JSON.stringify(value))
@@ -21,7 +32,7 @@ function websocketFrame(value) {
 
 function run(command, args, timeoutMs = 180000) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'inherit' })
+    const child = spawn(command, args, { stdio: 'inherit', env: { ...process.env, PATH: TRUSTED_PATH } })
     const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs)
     child.once('error', error => { clearTimeout(timer); reject(error) })
     child.once('exit', code => { clearTimeout(timer); if (code === 0) resolve(); else reject(new Error(`${command} failed or timed out: ${code}`)) })
@@ -29,7 +40,7 @@ function run(command, args, timeoutMs = 180000) {
 }
 
 async function terminate(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  if (child?.exitCode !== null || child?.signalCode !== null) return
   await new Promise(resolve => {
     const killTimer = setTimeout(() => child.kill('SIGKILL'), 5000)
     const deadline = setTimeout(resolve, 8000)
@@ -74,10 +85,10 @@ async function unusedPort() {
 async function main() {
   assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Hosted execution only; local UI must use cua_repl')
   assert.equal(process.env.RUNNER_OS, 'macOS', 'Native Safari smoke requires macOS')
-  const candidatePath = process.env.CI_PWA_CANDIDATE
+  const candidatePath = workspacePath(process.env.CI_PWA_CANDIDATE)
   assert(candidatePath && path.isAbsolute(candidatePath))
   const { assets } = loadCandidate(candidatePath)
-  const output = path.resolve(process.env.CI_NATIVE_OUTPUT || '.compatibility/native-safari')
+  const output = workspacePath(process.env.CI_NATIVE_OUTPUT || '.compatibility/native-safari')
   fs.mkdirSync(output, { recursive: true })
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-native-'))
   const cert = path.join(temp, 'cert.pem'), key = path.join(temp, 'key.pem')
@@ -88,9 +99,8 @@ async function main() {
   try {
     // Test certificate only, installed solely in the disposable hosted runner.
     fixtureCertificate(temp)
-    fingerprint = execFileSync('openssl', ['x509', '-in', cert, '-noout', '-fingerprint', '-sha1'], { encoding: 'utf8', timeout: 30000 }).trim().split('=')[1].replaceAll(':', '')
-    assert.match(fingerprint, /^[A-Fa-f0-9]{40}$/)
-    execFileSync('sudo', ['security', 'add-trusted-cert', '-d', '-r', 'trustRoot', '-k', '/Library/Keychains/System.keychain', cert], { stdio: 'inherit', timeout: 30000 })
+    fingerprint = certificateFingerprint(cert)
+    execFileSync('/usr/bin/sudo', ['/usr/bin/security', 'add-trusted-cert', '-d', '-r', 'trustRoot', '-k', '/Library/Keychains/System.keychain', cert], { stdio: 'inherit', timeout: 30000, env: { ...process.env, PATH: TRUSTED_PATH } })
     trusted = true
     const state = { data_source: 'mqtt', native_connected: true, mqtt_connected: true, controller_controls_available: true, controller_observed_at: Date.now() / 1000, dry_run: false, battery_soc: 73, gt: 420, tt: 850, solar_total: 1200, loads: {}, features: { ha: false }, telemetry: { quality: 'live', source: 'mqtt', observed_at: new Date().toISOString() }, ui_config: { settings: { mqtt_port: 1883 } } }
     const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.json': 'application/json', '.woff2': 'font/woff2', '.png': 'image/png', '.ico': 'image/x-icon' }
@@ -107,7 +117,8 @@ async function main() {
     })
     server.on('upgrade', (req, socket) => {
       if (new URL(req.url, 'https://localhost').pathname !== '/ws' || !req.headers['sec-websocket-key']) { socket.destroy(); return }
-      const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64')
+      let accept
+      try { accept = websocketAccept(req.headers['sec-websocket-key']) } catch { socket.destroy(); return }
       socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
       sockets.add(socket); socket.once('close', () => sockets.delete(socket)); socket.on('error', () => sockets.delete(socket))
       const readFrame = clientFrameReader((opcode, payload) => {
@@ -121,18 +132,16 @@ async function main() {
     })
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
     ticker = setInterval(() => { for (const socket of sockets) socket.write(websocketFrame(state)) }, 1000)
-    await run('sudo', ['/usr/bin/safaridriver', '--enable'], 30000)
+    await run('/usr/bin/sudo', ['/usr/bin/safaridriver', '--enable'], 30000)
     const port = await unusedPort()
-    driver = spawn('/usr/bin/safaridriver', ['-p', String(port)], { stdio: 'inherit' })
+    driver = spawn('/usr/bin/safaridriver', ['-p', String(port)], { stdio: 'inherit', env: { ...process.env, PATH: TRUSTED_PATH } })
     driver.on('error', () => {})
-    let ready = false
-    for (let tries = 0; tries < 40 && !ready; tries++) {
-      await delay(250)
-      try { ready = (await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) })).ok } catch { /* bounded startup */ }
-      if (driver.exitCode !== null) throw new Error('safaridriver exited during startup')
-    }
-    assert(ready, 'safaridriver did not start')
-    await run('python3', [path.join(__dirname, 'native_acceptance_webdriver.py'), '--candidate', candidatePath, '--base-url', `https://127.0.0.1:${server.address().port}`, '--driver-url', `http://127.0.0.1:${port}`, '--platform', 'macOS', '--runtime', 'native-host', '--output', output])
+    await waitFor(async () => {
+      assert.equal(driver.exitCode, null, 'safaridriver exited during startup')
+      try { return (await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) })).ok }
+      catch { return false }
+    }, ready => ready, 'safaridriver did not start', 40)
+    await run('/usr/bin/python3', [path.join(__dirname, 'native_acceptance_webdriver.py'), '--candidate', candidatePath, '--base-url', `https://127.0.0.1:${server.address().port}`, '--driver-url', `http://127.0.0.1:${port}`, '--platform', 'macOS', '--runtime', 'native-host', '--output', output])
     assert.equal(applicationFrames, 0, 'Observed startup/settings flow must not send application messages')
     assert.equal(protocolErrors, 0, 'Malformed browser WebSocket traffic')
   } finally {
@@ -146,7 +155,7 @@ async function main() {
       })
     }
     if (trusted) {
-      try { execFileSync('sudo', ['security', 'delete-certificate', '-Z', fingerprint, '/Library/Keychains/System.keychain'], { stdio: 'inherit', timeout: 30000 }) }
+      try { execFileSync('/usr/bin/sudo', ['/usr/bin/security', 'delete-certificate', '-Z', fingerprint, '/Library/Keychains/System.keychain'], { stdio: 'inherit', timeout: 30000, env: { ...process.env, PATH: TRUSTED_PATH } }) }
       catch { cleanupErrors.push('Temporary fixture trust cleanup failed') }
     }
     try { fs.rmSync(temp, { recursive: true, force: true }) } catch { cleanupErrors.push('Temporary fixture directory cleanup failed') }
@@ -154,5 +163,5 @@ async function main() {
 
   }
 }
-module.exports = { websocketFrame, clientFrameReader }
+module.exports = { websocketFrame, clientFrameReader, websocketAccept, certificateFingerprint }
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1 })

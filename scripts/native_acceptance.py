@@ -10,8 +10,12 @@ import argparse
 import hashlib
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+from qualification_paths import workspace_path
+
+UTC = timezone.utc
 
 SCHEMA = 1
 CANDIDATE_FIELDS = (
@@ -45,7 +49,9 @@ def read_json(path):
 
 def timestamp(value):
     require(isinstance(value, str), "Missing observation time")
-    parsed = datetime.fromisoformat(value)
+    parsed = datetime.fromisoformat(
+        value.removesuffix("Z") + ("+00:00" if value.endswith("Z") else "")
+    )
     require(parsed.utcoffset() is not None, "Observation time must include timezone")
     require(parsed <= datetime.now(UTC), "Future observation time")
     return parsed
@@ -121,7 +127,7 @@ def validate_identity(identity, target):
     )
     for key in ("osVersion", "browserVersion"):
         require(
-            re.fullmatch(r"[0-9]+(?:[.][0-9]+)*(?:[A-Za-z0-9 ._-]*)", identity[key]),
+            re.fullmatch(r"\d[A-Za-z0-9 ._-]{0,999}", identity[key], flags=re.ASCII),
             f"Invalid measured {key}",
         )
     # OS/UI observations cannot be supplied by safaridriver's glass-pane session.
@@ -340,19 +346,20 @@ def main():
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    # Never leave a stale positive verdict when this attempt fails.
-    args.output.unlink(missing_ok=True)
     try:
-        result = verify(
-            read_json(args.candidate),
-            read_json(args.policy),
-            read_json(args.review),
-            args.evidence_root,
-        )
+        candidate = workspace_path(args.candidate, kind="file", must_exist=True)
+        policy = workspace_path(args.policy, kind="file", must_exist=True)
+        review = workspace_path(args.review, kind="file", must_exist=True)
+        evidence_root = workspace_path(args.evidence_root, kind="directory", must_exist=True)
+        output = workspace_path(args.output, kind="file", new=True)
+        require(output not in (candidate, policy, review), "Output must not replace an input")
+        require(not output.is_relative_to(evidence_root), "Output must preserve source evidence")
+        result = verify(read_json(candidate), read_json(policy), read_json(review), evidence_root)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(result, indent=2) + "\n")
     except (ValueError, OSError, KeyError, TypeError, StopIteration) as exc:
         parser.exit(1, f"Native acceptance rejected: {exc}\n")
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

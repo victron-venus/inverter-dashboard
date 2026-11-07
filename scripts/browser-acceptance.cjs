@@ -24,7 +24,7 @@ const application = JSON.parse(fs.readFileSync(path.join(root, '.github/browser-
 assert(['python', 'go'].includes(application.manifestKind), 'Unsupported frontend provenance format')
 let assetRoot = root
 if (candidate) {
-  assert.match(candidateId, /^[1-9][0-9]*$/, 'Candidate artifact ID must be numeric')
+  assert.match(candidateId, /^[1-9]\d*$/, 'Candidate artifact ID must be numeric')
   assert.equal(String(candidate.artifactId), candidateId, 'Candidate artifact ID differs')
   assert.equal(candidate.manifestKind, application.manifestKind, 'Candidate frontend kind differs')
   assert.equal(candidate.releaseReceipt, true, 'Candidate must carry a verified release receipt')
@@ -75,7 +75,7 @@ const frontend = {
 assert.match(frontend.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
 assert.match(frontend.sourceCommit, /^[0-9a-f]{40}$/)
 assert.match(frontend.archiveSha256, /^[0-9a-f]{64}$/)
-console.log(`Verified embedded SPA ${frontend.version}, ${frontend.filesVerified} files`)
+console.log('Verified embedded frontend inventory')
 const evidence = path.resolve(process.env.CI_BROWSER_EVIDENCE || path.join(diagnostics, 'result.json'))
 const engine = process.env.CI_BROWSER_ENGINE || 'chromium'
 const channel = process.env.CI_BROWSER_CHANNEL || ''

@@ -17,10 +17,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-from native_acceptance import candidate_binding, require
+from native_acceptance import candidate_binding, read_json, require
+from qualification_paths import workspace_path
+
+UTC = timezone.utc
 
 
 def utcnow():
@@ -167,7 +170,8 @@ def execute(candidate, base_url, driver_url, platform_name, runtime, output):
     else:
         capabilities["goog:chromeOptions"] = {"androidPackage": "com.android.chrome"}
     output.mkdir(parents=True, exist_ok=True)
-    evidence_path = output / "native-smoke.json"
+    evidence_path = workspace_path("native-smoke.json", root=output, kind="file")
+    screenshot_path = workspace_path("native-smoke.png", root=output, kind="file")
     evidence_path.unlink(missing_ok=True)
     record = {
         "schemaVersion": 1,
@@ -239,7 +243,7 @@ def execute(candidate, base_url, driver_url, platform_name, runtime, output):
         driver.until('return !!document.querySelector("dialog[open]")')
         require(
             driver.script(
-                'return !!document.querySelector("section[aria-label="System notifications"]")'
+                """return !!document.querySelector('section[aria-label="System notifications"]')"""
             ),
             "Notification settings missing",
         )
@@ -265,7 +269,7 @@ def execute(candidate, base_url, driver_url, platform_name, runtime, output):
         )
         screenshot = base64.b64decode(driver.command("GET", "/screenshot"), validate=True)
         require(screenshot.startswith(b"\x89PNG\r\n\x1a\n"), "Invalid native screenshot")
-        (output / "native-smoke.png").write_bytes(screenshot)
+        screenshot_path.write_bytes(screenshot)
         record["screenshot"] = {
             "path": "native-smoke.png",
             "sha256": hashlib.sha256(screenshot).hexdigest(),
@@ -276,7 +280,6 @@ def execute(candidate, base_url, driver_url, platform_name, runtime, output):
         KeyError,
         TypeError,
         OSError,
-        urllib.error.URLError,
         subprocess.SubprocessError,
     ) as exc:
         record["error"] = str(exc)[:1000]
@@ -285,7 +288,7 @@ def execute(candidate, base_url, driver_url, platform_name, runtime, output):
         if driver.session:
             try:
                 driver.command("DELETE", "")
-            except (ValueError, OSError, urllib.error.URLError):
+            except (ValueError, OSError):
                 record["sessionCleanupFailed"] = True
         record["finishedAt"] = utcnow()
         evidence_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
@@ -305,13 +308,15 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    candidate = workspace_path(args.candidate, kind="file", must_exist=True)
+    output = workspace_path(args.output, kind="directory")
     execute(
-        json.loads(args.candidate.read_text()),
+        read_json(candidate),
         args.base_url,
         args.driver_url,
         args.platform,
         args.runtime,
-        args.output,
+        output,
     )
 
 

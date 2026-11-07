@@ -66,6 +66,7 @@ class PackagedBrowserQualificationTests(unittest.TestCase):
         self.assertEqual(native["safari"]["runs-on"], "macos-15")
         for job in native.values():
             self.assertNotIn("continue-on-error", job)
+            self.assertEqual(job["permissions"], {"contents": "read", "actions": "read"})
             steps = job["steps"]
             downloads = [step for step in steps if "artifact-ids" in step.get("with", {})]
             self.assertEqual(len(downloads), 1)

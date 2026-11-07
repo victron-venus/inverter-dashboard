@@ -19,6 +19,11 @@ import tarfile
 from pathlib import Path
 
 from prepare_browser_candidate import bounded_file, prepare
+from qualification_paths import workspace_path
+
+RESULT_JSON = "result.json"
+RUNTIME_JSON = "runtime.json"
+BROWSER_VERSION = re.compile(r"\d+(?:\.\d+){1,3}")
 
 PWA_SCENARIOS = {
     "secure-context-manifest-and-exact-worker",
@@ -84,14 +89,14 @@ def verify_target(
     row: dict, folder: Path, binding: dict, candidate: dict, scenarios: list[str], contract: dict
 ) -> dict[str, bytes]:
     values, originals = {}, {}
-    for name in ("target.json", "runtime.json", "result.json", "candidate.json"):
+    for name in ("target.json", RUNTIME_JSON, RESULT_JSON, "candidate.json"):
         values[name], originals[name] = load(folder / name)
     require(values["target.json"] == row, "Browser target differs from source matrix")
-    platform = (
-        "linux"
-        if row["os"].startswith("ubuntu-")
-        else ("win32" if row["os"].startswith("windows-") else "darwin")
-    )
+    platform = "darwin"
+    if row["os"].startswith("ubuntu-"):
+        platform = "linux"
+    elif row["os"].startswith("windows-"):
+        platform = "win32"
     expected = dict(
         binding,
         target=row["id"],
@@ -100,15 +105,15 @@ def verify_target(
         playwrightVersion=row["playwright"],
         platform=platform,
     )
-    for name in ("runtime.json", "result.json"):
+    for name in (RUNTIME_JSON, RESULT_JSON):
         require(
             all(values[name].get(key) == value for key, value in expected.items()),
             f"Browser source/run/target identity mismatch: {name}",
         )
-    runtime, result = values["runtime.json"], values["result.json"]
+    runtime, result = values[RUNTIME_JSON], values[RESULT_JSON]
     version = runtime.get("browserVersion")
     require(
-        isinstance(version, str) and re.fullmatch(r"\d+(?:\.\d+){1,3}", version),
+        isinstance(version, str) and BROWSER_VERSION.fullmatch(version),
         "Missing actual browser version",
     )
     require(result.get("browserVersion") == version, "Browser version evidence differs")
@@ -227,6 +232,84 @@ def archive(output: Path, payloads: dict[str, bytes]) -> None:
             bundle.addfile(info, io.BytesIO(data))
 
 
+def native_smoke_evidence(folder: Path, report: dict, candidate: dict) -> bytes:
+    """Verify measured Safari/host identity and the original screenshot."""
+    require(
+        report.get("scope") == "native-smoke" and report.get("nativeComplete") is False,
+        "Native smoke must remain partial",
+    )
+    require(
+        report.get("requestedPlatform") == "macOS" and report.get("runtime") == "native-host",
+        "Native smoke used the wrong runtime",
+    )
+    branded = report.get("driverCapabilities", {})
+    require(
+        branded.get("browserName", "").lower() == "safari"
+        and branded.get("platformName", "").lower() in {"mac", "macos"}
+        and isinstance(branded.get("browserVersion"), str)
+        and BROWSER_VERSION.fullmatch(branded["browserVersion"]),
+        "Native smoke lacks measured Safari runtime identity",
+    )
+    runtime = report.get("runtimeIdentity", {})
+    require(
+        runtime.get("secureContext") is True
+        and runtime.get("serviceWorker") is True
+        and isinstance(runtime.get("userAgent"), str)
+        and runtime["userAgent"],
+        "Native smoke lacks secure browser context evidence",
+    )
+    host = report.get("hostIdentity", {})
+    require(
+        host.get("osName") == "macOS"
+        and host.get("architecture") in {"arm64", "x86_64"}
+        and isinstance(host.get("osVersion"), str)
+        and re.fullmatch(r"\d+(?:\.\d+){1,2}", host["osVersion"])
+        and isinstance(host.get("osBuild"), str)
+        and re.fullmatch(r"[A-Za-z0-9.]{1,64}", host["osBuild"]),
+        "Native smoke lacks measured host OS/build identity",
+    )
+    require(
+        report.get("workerSha256") == candidate["frontendFiles"]["notifications-sw.js"],
+        "Native smoke served another worker",
+    )
+    reference = report.get("screenshot", {})
+    require(reference.get("path") == "native-smoke.png", "Unexpected native screenshot path")
+    png = bounded_file(folder / "result/native-smoke.png", 20_000_000)
+    require(
+        png.startswith(b"\x89PNG\r\n\x1a\n") and sha256(png) == reference.get("sha256"),
+        "Native screenshot is missing or changed",
+    )
+    return png
+
+
+def pwa_engine_evidence(report: dict) -> None:
+    """Check engine boundaries without asserting native acceptance."""
+    require(
+        report.get("scope") == "engine-pwa-isolated"
+        and report.get("engine") == "chromium"
+        and report.get("serviceWorkers") == "allow"
+        and report.get("failures") == [],
+        "PWA worker evidence is not the required engine lane",
+    )
+    require(
+        report.get("nativeQualified") is False
+        and report.get("previousVersionUpgradeQualified") is False,
+        "PWA engine evidence overclaims native or prior-version upgrade acceptance",
+    )
+    require(
+        isinstance(report.get("browserVersion"), str)
+        and BROWSER_VERSION.fullmatch(report["browserVersion"])
+        and report.get("permissionMechanism") == "browser-test-override"
+        and report.get("subscriptionMechanism") == "isolated-ui-fixture"
+        and report.get("tlsTrust") == "isolated-self-signed",
+        "PWA engine runtime and synthetic boundaries must be explicit",
+    )
+    require(
+        report.get("browserContextMode") == "isolated-persistent-profile",
+        "PWA qualification requires an isolated persistent profile",
+    )
+
+
 def additional_evidence(folder: Path, candidate: dict, native: bool) -> dict[str, bytes]:
     """Keep engine/Safari smoke evidence without upgrading it to native acceptance."""
     identity, _ = load(folder / "identity/candidate.json")
@@ -234,7 +317,7 @@ def additional_evidence(folder: Path, candidate: dict, native: bool) -> dict[str
         candidate_identity(identity) == candidate_identity(candidate),
         "Additional lane candidate differs",
     )
-    name = "native-smoke.json" if native else "result.json"
+    name = "native-smoke.json" if native else RESULT_JSON
     report, raw = load(folder / "result" / name)
     binding = {key: candidate[key] for key in ("repository", "sourceSha", "runId", "runAttempt")}
     binding.update(
@@ -260,91 +343,23 @@ def additional_evidence(folder: Path, candidate: dict, native: bool) -> dict[str
     prefix = "native-safari-smoke" if native else "pwa-engine"
     payloads = {f"{prefix}/{name}": raw}
     if native:
-        require(
-            report.get("scope") == "native-smoke" and report.get("nativeComplete") is False,
-            "Native smoke must remain partial",
-        )
-        require(
-            report.get("requestedPlatform") == "macOS" and report.get("runtime") == "native-host",
-            "Native smoke used the wrong runtime",
-        )
-        branded = report.get("driverCapabilities", {})
-        require(
-            branded.get("browserName", "").lower() == "safari"
-            and branded.get("platformName", "").lower() in {"mac", "macos"}
-            and isinstance(branded.get("browserVersion"), str)
-            and re.fullmatch(r"\d+(?:\.\d+){1,3}", branded["browserVersion"]),
-            "Native smoke lacks measured Safari runtime identity",
-        )
-        runtime = report.get("runtimeIdentity", {})
-        require(
-            runtime.get("secureContext") is True
-            and runtime.get("serviceWorker") is True
-            and isinstance(runtime.get("userAgent"), str)
-            and runtime["userAgent"],
-            "Native smoke lacks secure browser context evidence",
-        )
-        host = report.get("hostIdentity", {})
-        require(
-            host.get("osName") == "macOS"
-            and host.get("architecture") in {"arm64", "x86_64"}
-            and isinstance(host.get("osVersion"), str)
-            and re.fullmatch(r"\d+(?:\.\d+){1,2}", host["osVersion"])
-            and isinstance(host.get("osBuild"), str)
-            and re.fullmatch(r"[A-Za-z0-9.]{1,64}", host["osBuild"]),
-            "Native smoke lacks measured host OS/build identity",
-        )
-        require(
-            report.get("workerSha256") == candidate["frontendFiles"]["notifications-sw.js"],
-            "Native smoke served another worker",
-        )
-        reference = report.get("screenshot", {})
-        require(reference.get("path") == "native-smoke.png", "Unexpected native screenshot path")
-        png = bounded_file(folder / "result/native-smoke.png", 20_000_000)
-        require(
-            png.startswith(b"\x89PNG\r\n\x1a\n") and sha256(png) == reference.get("sha256"),
-            "Native screenshot is missing or changed",
-        )
-        payloads[f"{prefix}/native-smoke.png"] = png
+        payloads[f"{prefix}/native-smoke.png"] = native_smoke_evidence(folder, report, candidate)
     else:
-        require(
-            report.get("scope") == "engine-pwa-isolated"
-            and report.get("engine") == "chromium"
-            and report.get("serviceWorkers") == "allow"
-            and report.get("failures") == [],
-            "PWA worker evidence is not the required engine lane",
-        )
-        require(
-            report.get("nativeQualified") is False
-            and report.get("previousVersionUpgradeQualified") is False,
-            "PWA engine evidence overclaims native or prior-version upgrade acceptance",
-        )
-        require(
-            isinstance(report.get("browserVersion"), str)
-            and re.fullmatch(r"\d+(?:\.\d+){1,3}", report["browserVersion"])
-            and report.get("permissionMechanism") == "browser-test-override"
-            and report.get("subscriptionMechanism") == "isolated-ui-fixture"
-            and report.get("tlsTrust") == "isolated-self-signed",
-            "PWA engine runtime and synthetic boundaries must be explicit",
-        )
-        require(
-            report.get("browserContextMode") == "isolated-persistent-profile",
-            "PWA qualification requires an isolated persistent profile",
-        )
+        pwa_engine_evidence(report)
     return payloads
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--artifacts", type=Path, required=True)
-    parser.add_argument("--prepared", type=Path, required=True)
-    parser.add_argument("--diagnostics", type=Path, required=True)
-    parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--artifacts", type=workspace_path, required=True)
+    parser.add_argument("--prepared", type=workspace_path, required=True)
+    parser.add_argument("--diagnostics", type=workspace_path, required=True)
+    parser.add_argument("--evidence", type=workspace_path, required=True)
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--channel", choices=("nightly", "beta", "rc"), required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--pwa-evidence", type=Path, required=True)
-    parser.add_argument("--safari-evidence", type=Path)
+    parser.add_argument("--output", type=workspace_path, required=True)
+    parser.add_argument("--pwa-evidence", type=workspace_path, required=True)
+    parser.add_argument("--safari-evidence", type=workspace_path)
     args = parser.parse_args()
     from prepare_browser_candidate import identity_from_env
 

@@ -1,10 +1,13 @@
 """Negative controls for the release boundary, not browser behavior mocks."""
 
 import hashlib
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 import verify_browser_release_evidence as verifier
 
@@ -12,6 +15,40 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BrowserReleaseEvidenceTests(unittest.TestCase):
+    def test_cli_rejects_external_safari_path_before_candidate_io(self):
+        argv = [
+            "verify_browser_release_evidence.py",
+            "--artifacts",
+            "fixture/artifacts",
+            "--prepared",
+            "fixture/prepared",
+            "--diagnostics",
+            "fixture/diagnostics",
+            "--evidence",
+            "fixture/evidence",
+            "--prefix",
+            "browser-release",
+            "--channel",
+            "rc",
+            "--output",
+            "fixture/output.tar.gz",
+            "--pwa-evidence",
+            "fixture/pwa",
+            "--safari-evidence",
+            str(ROOT.parent / "outside-checkout"),
+        ]
+        error = io.StringIO()
+        with (
+            mock.patch("sys.argv", argv),
+            mock.patch.object(verifier, "prepare") as prepare,
+            redirect_stderr(error),
+            self.assertRaises(SystemExit) as stopped,
+        ):
+            verifier.main()
+        self.assertEqual(stopped.exception.code, 2)
+        self.assertIn("--safari-evidence", error.getvalue())
+        prepare.assert_not_called()
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

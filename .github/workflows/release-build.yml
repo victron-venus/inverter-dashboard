@@ -220,7 +220,8 @@ jobs:
             packaged-browser-output/*.json
             packaged-browser-output/*.png
             packaged-browser-output/*.log
-          if-no-files-found: error
+          # Early setup failures may precede diagnostics; required candidate/evidence uploads stay strict.
+          if-no-files-found: warn
           retention-days: 14
   browser-release:
     name: Packaged frontend platform matrix

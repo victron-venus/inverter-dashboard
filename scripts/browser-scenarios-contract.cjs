@@ -15,7 +15,7 @@ function verifyScenarioContract(result) {
   assert.equal(result.testsFailed, 0, 'Failed scenarios cannot qualify')
   assert.equal(result.testsPassed, contract.scenarios.length, 'Required scenario count differs')
   assert.equal(new Set(result.scenarios).size, result.scenarios.length, 'Duplicate scenario evidence')
-  assert.deepEqual([...result.scenarios].sort(), [...contract.scenarios].sort(), 'Required application scenarios differ')
+  assert.deepEqual(new Set(result.scenarios), new Set(contract.scenarios), 'Required application scenarios differ')
   return { id: contract.id, sha256: crypto.createHash('sha256').update(bytes).digest('hex'), required: contract.scenarios.length }
 }
 module.exports = { contract, verifyScenarioContract }
