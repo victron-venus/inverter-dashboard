@@ -1,0 +1,91 @@
+name: Preserve packaged browser qualification
+
+on:
+  workflow_call:
+    inputs:
+      candidate_artifact_id:
+        type: string
+        required: true
+      channel:
+        type: string
+        required: true
+      release_plan_artifact:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  preserve:
+    name: Require exact packaged browser evidence
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && (vars.CI_RUNNER_RELEASE_LABELS || '[]') || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Download the frozen release plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: .
+      - name: Apply the same version inputs used by the package
+        run: python3 scripts/version_plan.py sync --plan .release-plan.json
+      - name: Download only the selected immutable candidate
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ inputs.candidate_artifact_id }}
+          merge-multiple: true
+          path: .browser-qualification/candidate
+      - name: Download this attempt's individual packaged browser reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          # Two wildcard components match target IDs, excluding the aggregate verdict.
+          pattern: browser-release-*-*-${{ github.run_attempt }}
+          path: .browser-qualification/reports
+          merge-multiple: false
+      - name: Download this attempt's Service Worker evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: browser-pwa-${{ github.run_attempt }}
+          path: .browser-qualification/pwa
+      - name: Download this RC attempt's actual Safari smoke
+        if: ${{ inputs.channel == 'rc' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: browser-native-safari-${{ github.run_attempt }}
+          path: .browser-qualification/safari
+      - name: Validate all required targets and exact scenario/candidate identities
+        env:
+          CI_BROWSER_CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
+          QUALIFICATION_CHANNEL: ${{ inputs.channel }}
+        run: |
+          python3 scripts/verify_browser_release_evidence.py \
+            --artifacts .browser-qualification/candidate \
+            --prepared .browser-qualification/prepared \
+            --diagnostics .browser-qualification/diagnostics \
+            --evidence .browser-qualification/reports \
+            --prefix browser-release --channel "$QUALIFICATION_CHANNEL" \
+            --pwa-evidence .browser-qualification/pwa \
+            --safari-evidence .browser-qualification/safari \
+            --output .browser-qualification/browser-qualification.tar.gz
+      - name: Bind qualification to the same frozen release plan
+        run: |
+          python3 scripts/stage_release_assets.py --target browser-qualification \
+            --pattern .browser-qualification/browser-qualification.tar.gz
+      - name: Preserve qualification as a release asset
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets-browser-qualification-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: release-assets/browser-qualification/*
+          if-no-files-found: error
+          retention-days: 90

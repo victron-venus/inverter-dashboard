@@ -6,19 +6,35 @@ const http = require('node:http')
 const path = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
 const { waitForHydratedDashboard } = require('./browser-readiness.cjs')
-const { runReadinessControls } = require('./browser-readiness.test.cjs')
 const { trackMockSocket } = require('./browser-socket-fixture.cjs')
+const { runDashboardScenarios } = require('./browser-scenarios.cjs')
+const { verifyScenarioContract, verifyCandidateInventory } = require('./browser-scenarios-contract.cjs')
+const { candidatePath, workspacePath } = require('./pwa_acceptance.cjs')
 
 const root = path.resolve(__dirname, '..')
 // User flows follow inverter-dashboard-vue; this adapter serves only the exact
-// frontend bytes committed in this backend repository. Backend integration is
-// independently required by the repository's existing CI.
+// frontend bytes committed in this backend repository, or extracted from the
+// verified packaged candidate. Real backend acceptance is a separate required job.
 const crypto = require('node:crypto')
+const diagnostics = path.resolve(process.env.CI_BROWSER_DIAGNOSTICS || '.compatibility/local')
+const candidateFile = path.join(diagnostics, 'candidate.json')
+const candidateId = process.env.CI_BROWSER_CANDIDATE_ARTIFACT_ID
+const candidate = candidateId ? JSON.parse(fs.readFileSync(candidateFile, 'utf8')) : undefined
 const application = JSON.parse(fs.readFileSync(path.join(root, '.github/browser-application.json'), 'utf8'))
 assert(['python', 'go'].includes(application.manifestKind), 'Unsupported frontend provenance format')
-const dist = fs.realpathSync(path.resolve(root, application.distribution))
-const manifestFile = fs.realpathSync(path.resolve(root, application.manifest))
-assert(dist.startsWith(root + path.sep) && manifestFile.startsWith(root + path.sep), 'Frontend paths must remain inside checkout')
+let assetRoot = root
+if (candidate) {
+  assert.match(candidateId, /^[1-9]\d*$/, 'Candidate artifact ID must be numeric')
+  assert.equal(String(candidate.artifactId), candidateId, 'Candidate artifact ID differs')
+  assert.equal(candidate.manifestKind, application.manifestKind, 'Candidate frontend kind differs')
+  assert.equal(candidate.releaseReceipt, true, 'Candidate must carry a verified release receipt')
+  for (const key of ['archiveSha256', 'ociSha256', 'receiptSha256']) assert.match(candidate[key], /^[0-9a-f]{64}$/, `Candidate ${key} is required`)
+  assert.match(candidate.sourceSha, /^[0-9a-f]{40}$/, 'Candidate source must be immutable')
+  assetRoot = fs.realpathSync(workspacePath(process.env.CI_BROWSER_CANDIDATE_ROOT || 'browser-candidate-web', root))
+}
+const dist = fs.realpathSync(candidate ? candidatePath(candidate.distribution, root) : path.resolve(root, application.distribution))
+const manifestFile = fs.realpathSync(candidate ? candidatePath(candidate.manifestPath, root) : path.resolve(root, application.manifest))
+assert(dist.startsWith(assetRoot + path.sep) && manifestFile.startsWith(assetRoot + path.sep), 'Frontend paths must remain inside the verified asset root')
 const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
 assert.equal(manifest.repository, 'https://github.com/victron-venus/inverter-dashboard-vue')
 const entries = application.manifestKind === 'python'
@@ -49,6 +65,7 @@ for (const [file, hash] of expected) {
   assert.match(hash, /^[0-9a-f]{64}$/)
   assert.equal(actual.get(file), hash, `Frontend bytes changed: ${file}`)
 }
+if (candidate) verifyCandidateInventory(candidate, actual)
 const frontend = {
   sourceCommit: manifest.source_commit || manifest.commit,
   version: manifest.package_version,
@@ -58,8 +75,7 @@ const frontend = {
 assert.match(frontend.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
 assert.match(frontend.sourceCommit, /^[0-9a-f]{40}$/)
 assert.match(frontend.archiveSha256, /^[0-9a-f]{64}$/)
-console.log(`Verified embedded SPA ${frontend.version}, ${frontend.filesVerified} files`)
-const diagnostics = path.resolve(process.env.CI_BROWSER_DIAGNOSTICS || '.compatibility/local')
+console.log('Verified embedded frontend inventory')
 const evidence = path.resolve(process.env.CI_BROWSER_EVIDENCE || path.join(diagnostics, 'result.json'))
 const engine = process.env.CI_BROWSER_ENGINE || 'chromium'
 const channel = process.env.CI_BROWSER_CHANNEL || ''
@@ -67,6 +83,7 @@ const modulePath = process.env.CI_PLAYWRIGHT_MODULE
 assert(modulePath && path.isAbsolute(modulePath), 'Set CI_PLAYWRIGHT_MODULE to the isolated toolchain')
 assert(fs.existsSync(path.join(dist, 'index.html')), 'Build the real SPA before browser acceptance')
 const playwright = require(modulePath)
+const { runReadinessControls } = require('./browser-readiness.test.cjs')
 assert(['chromium', 'firefox', 'webkit'].includes(engine), 'Unsupported browser engine')
 fs.mkdirSync(diagnostics, { recursive: true })
 fs.rmSync(evidence, { force: true })
@@ -85,7 +102,7 @@ const fixture = {
     telemetry: { quality: 'live', source: 'mqtt', observed_at: new Date().toISOString() },
     ui_config: { settings: { camera_topic: '', mqtt_port: 1883, show_active_loads: true } },
   },
-  reject: false, paused: false, commands: [], sockets: new Set(), connections: 0,
+  reject: false, hold: false, paused: false, commands: [], sockets: new Set(), connections: 0,
 }
 const scenarios = []
 const failures = []
@@ -156,49 +173,54 @@ async function main() {
     const denied = await Promise.all(['/package.json', '/.git/config', '/%2e%2e%2fpackage.json'].map(async route => (await fetch(origin + route)).status))
     assert.deepEqual(denied, [404, 404, 404], 'Only inventoried distribution files may be served')
     browser = await playwright[engine].launch({ headless: true, ...(channel ? { channel } : {}) })
-    context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US', serviceWorkers: 'block' })
-    context.setDefaultTimeout(10000)
-    // Hosted browser scheduling can exceed 15s before the document request starts.
-    // Keep document loading bounded separately from the 10s readiness assertions.
-    context.setDefaultNavigationTimeout(30000)
-    await context.tracing.start({ screenshots: true, snapshots: true, sources: true })
-    await context.route('**/*', route => {
-      const url = new URL(route.request().url())
-      if (url.origin === origin) return route.continue()
-      blockedRequests.push(url.origin)
-      return route.abort('blockedbyclient')
-    })
-    await context.routeWebSocket('**/*', ws => {
-      const url = new URL(ws.url())
-      if (url.host !== new URL(origin).host || url.pathname !== '/ws') {
+    async function createContext(options = {}) {
+      const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US', serviceWorkers: 'block', ...options })
+      context.setDefaultTimeout(10000)
+      // Hosted browser scheduling can exceed 15s before the document request starts.
+      // Keep document loading bounded separately from the 10s readiness assertions.
+      context.setDefaultNavigationTimeout(30000)
+      await context.route('**/*', route => {
+        const url = new URL(route.request().url())
+        if (url.origin === origin) return route.continue()
         blockedRequests.push(url.origin)
-        ws.close()
-        return
-      }
-      if (fixture.paused) { ws.close(); return }
-      fixture.connections++
-      trackMockSocket(ws, fixture.sockets)
-      ws.onMessage(raw => {
-        const command = JSON.parse(raw.toString())
-        fixture.commands.push(command)
-        if (fixture.reject) {
-          ws.send(JSON.stringify({ type: 'command_error', action: command.action, request_id: command.request_id, error: 'Synthetic rejection' }))
+        return route.abort('blockedbyclient')
+      })
+      await context.routeWebSocket('**/*', ws => {
+        const url = new URL(ws.url())
+        if (url.host !== new URL(origin).host || url.pathname !== '/ws') {
+          blockedRequests.push(url.origin)
+          ws.close()
           return
         }
-        ws.send(JSON.stringify({ type: 'command_result', action: command.action, request_id: command.request_id, status: 'accepted' }))
-        if (command.action === 'set_settings') {
-          const patch = Object.fromEntries(Object.entries(command).filter(([key]) => !['action', 'request_id'].includes(key)))
-          Object.assign(fixture.state.ui_config.settings, patch)
-          broadcast()
-        }
+        if (fixture.paused) { ws.close(); return }
+        fixture.connections++
+        trackMockSocket(ws, fixture.sockets)
+        ws.onMessage(raw => {
+          const command = JSON.parse(raw.toString())
+          fixture.commands.push(command)
+          if (fixture.hold) return
+          if (fixture.reject) {
+            ws.send(JSON.stringify({ type: 'command_error', action: command.action, request_id: command.request_id, error: 'Synthetic rejection' }))
+            return
+          }
+          ws.send(JSON.stringify({ type: 'command_result', action: command.action, request_id: command.request_id, status: 'accepted' }))
+          if (command.action === 'set_settings') {
+            const patch = Object.fromEntries(Object.entries(command).filter(([key]) => !['action', 'request_id'].includes(key)))
+            Object.assign(fixture.state.ui_config.settings, patch)
+            broadcast()
+          }
+        })
+        ws.send(JSON.stringify(fixture.state))
       })
-      ws.send(JSON.stringify(fixture.state))
-    })
+      context.on('page', tab => {
+        tab.on('pageerror', error => browserErrors.push(String(error)))
+        tab.on('console', message => { if (message.type() === 'error') browserErrors.push(message.text()) })
+      })
+      return context
+    }
+    context = await createContext()
+    await context.tracing.start({ screenshots: true, snapshots: true, sources: true })
     page = await context.newPage()
-    page.on('pageerror', error => browserErrors.push(String(error)))
-    page.on('console', message => {
-      if (message.type() === 'error') browserErrors.push(message.text())
-    })
     await page.goto(origin, { waitUntil: 'load' })
     await waitForHydratedDashboard(page, fixture.state.battery_soc)
 
@@ -281,6 +303,7 @@ async function main() {
       await eventually(() => fixture.connections, count => count > before, 'Browser should reconnect')
       await eventually(() => page.getByTestId('transport-status').evaluate(element => element.dataset.connected), value => value === 'true', 'New telemetry should be live')
     })
+    await runDashboardScenarios({ page, fixture, scenario, broadcast, eventually, createContext, origin, waitForHydratedDashboard })
     await scenario('mobile-layout-keeps-settings-keyboard-accessible', async () => {
       await page.setViewportSize({ width: 390, height: 844 })
       await page.getByRole('button', { name: 'Settings', exact: true }).focus()
@@ -311,10 +334,9 @@ async function main() {
       schema: 1, target: 'local', channel, playwrightVersion: require(path.join(modulePath, 'package.json')).version,
       platform: process.platform, sourceSha: process.env.GITHUB_SHA || 'local', runId: process.env.GITHUB_RUN_ID || 'local', runAttempt: process.env.GITHUB_RUN_ATTEMPT || '1',
     }
-    const candidateFile = path.join(diagnostics, 'candidate.json')
-    const candidate = fs.existsSync(candidateFile) ? JSON.parse(fs.readFileSync(candidateFile, 'utf8')) : undefined
     if (candidate) assert.equal(candidate.sourceSha, runtime.sourceSha, 'Packaged candidate must match the tested source')
-    fs.writeFileSync(evidence, `${JSON.stringify({ ...runtime, engine: browser.browserType().name(), browserVersion: browser.version(), testsPassed: scenarios.length, testsFailed: 0, scenarios, frontend, ...(candidate ? { candidate } : {}) }, null, 2)}\n`)
+    const scenarioContract = verifyScenarioContract({ testsPassed: scenarios.length, testsFailed: 0, scenarios })
+    fs.writeFileSync(evidence, `${JSON.stringify({ ...runtime, engine: browser.browserType().name(), browserVersion: browser.version(), testsPassed: scenarios.length, testsFailed: 0, scenarios, scenarioContract, frontend, ...(candidate ? { candidate } : {}) }, null, 2)}\n`)
   } catch (error) {
     if (page) await page.screenshot({ path: path.join(diagnostics, 'failure.png'), fullPage: true }).catch(() => {})
     throw error
