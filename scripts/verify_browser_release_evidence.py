@@ -358,13 +358,18 @@ def pwa_engine_evidence(report: dict) -> None:
 
 def additional_evidence(folder: Path, candidate: dict, native: bool) -> dict[str, bytes]:
     """Keep engine/Safari smoke evidence without upgrading it to native acceptance."""
-    identity, _ = load(folder / "identity/candidate.json")
+    identity, identity_raw = load(folder / "identity/candidate.json")
     require(
         candidate_identity(identity) == candidate_identity(candidate),
         "Additional lane candidate differs",
     )
     name = "native-smoke.json" if native else RESULT_JSON
     report, raw = load(folder / "result" / name)
+    for value in (identity, report):
+        require(
+            value.get("frontendFiles") == candidate["frontendFiles"],
+            "Additional lane frontend inventory differs from the release candidate",
+        )
     binding = {key: candidate[key] for key in ("repository", "sourceSha", "runId", "runAttempt")}
     binding.update(
         candidateArtifactId=candidate["artifactId"], candidateSha256=candidate["archiveSha256"]
@@ -387,7 +392,7 @@ def additional_evidence(folder: Path, candidate: dict, native: bool) -> dict[str
         "Engine/native smoke cannot claim observed OS notification delivery",
     )
     prefix = "native-safari-smoke" if native else "pwa-engine"
-    payloads = {f"{prefix}/{name}": raw}
+    payloads = {f"{prefix}/{name}": raw, f"{prefix}/candidate.json": identity_raw}
     if native:
         payloads[f"{prefix}/native-smoke.png"] = native_smoke_evidence(folder, report, candidate)
     else:

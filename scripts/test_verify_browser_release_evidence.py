@@ -250,6 +250,7 @@ class BrowserReleaseEvidenceTests(TestCase):
             "schemaVersion": 1,
             "status": "passed",
             "candidate": binding,
+            "frontendFiles": dict(self.candidate["frontendFiles"]),
             "scenarios": [{"id": name, "status": "passed"} for name in sorted(names)],
             "osNotificationObserved": False,
         }
@@ -382,7 +383,65 @@ class BrowserReleaseEvidenceTests(TestCase):
             screenshot = bundle.extractfile("native-safari-smoke/native-smoke.png")
             self.assertEqual(pwa_member.read(), (pwa / "result/result.json").read_bytes())
             self.assertEqual(screenshot.read(), (safari / "result/native-smoke.png").read_bytes())
+            for prefix, folder in (("pwa-engine", pwa), ("native-safari-smoke", safari)):
+                saved_identity = bundle.extractfile(f"{prefix}/candidate.json")
+                self.assertEqual(
+                    saved_identity.read(), (folder / "identity/candidate.json").read_bytes()
+                )
             self.assertIn("package/release-plan.json", bundle.getnames())
+
+    def test_additional_lanes_reject_missing_or_changed_measured_inventory(self):
+        for native in (False, True):
+            folder = self.root / ("safari" if native else "pwa")
+            path = self.additional_report(native, folder)
+            original = path.read_text()
+            for inventory in (None, {}, {"index.html": "f" * 64}):
+                with self.subTest(native=native, inventory=inventory):
+                    path.write_text(original)
+                    self.mutate(
+                        path.parent,
+                        path.name,
+                        lambda value, expected=inventory: value.update(frontendFiles=expected),
+                    )
+                    with self.assertRaisesRegex(ValueError, "frontend inventory differs"):
+                        verifier.additional_evidence(folder, self.candidate, native)
+
+    def test_additional_lane_receipt_alone_cannot_replace_inventory(self):
+        for native in (False, True):
+            folder = self.root / ("safari" if native else "pwa")
+            self.additional_report(native, folder)
+            self.mutate(
+                folder / "identity", "candidate.json", lambda value: value.update(frontendFiles={})
+            )
+            with (
+                self.subTest(native=native),
+                self.assertRaisesRegex(ValueError, "frontend inventory differs"),
+            ):
+                verifier.additional_evidence(folder, self.candidate, native)
+
+    def test_matching_replaced_report_and_receipt_cannot_qualify_candidate(self):
+        argv, output, pwa, safari = self.entry_fixture("rc")
+        # Keep source/run/artifact identity and worker bytes, but substitute a
+        # non-worker asset in both lane records. The independently prepared
+        # release inventory must still reject them before an archive is written.
+        for folder, name in ((pwa, "result.json"), (safari, "native-smoke.json")):
+            identity = folder / "identity/candidate.json"
+            report = folder / "result" / name
+            originals = {path: path.read_bytes() for path in (identity, report)}
+            for path in originals:
+                self.mutate(
+                    path.parent,
+                    path.name,
+                    lambda value: value["frontendFiles"].update({"index.html": "f" * 64}),
+                )
+            with (
+                self.subTest(lane=name),
+                self.assertRaisesRegex(ValueError, "frontend inventory differs"),
+            ):
+                self.run_entry([*argv, "--safari-evidence", str(safari)])
+            self.assertFalse(output.exists())
+            for path, raw in originals.items():
+                path.write_bytes(raw)
 
     def test_entry_requires_pwa_evidence_before_writing_beta_archive(self):
         argv, output, pwa, _ = self.entry_fixture("beta")

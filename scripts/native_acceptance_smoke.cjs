@@ -8,7 +8,8 @@ const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
 const { execFileSync, spawn } = require('node:child_process')
-const { loadCandidate, fixtureCertificate, workspacePath, TRUSTED_PATH, waitFor } = require('./pwa_acceptance.cjs')
+const { setTimeout: delay } = require('node:timers/promises')
+const { loadCandidate, measuredFrontend, fixtureCertificate, workspacePath, TRUSTED_PATH } = require('./pwa_acceptance.cjs')
 const { verifiedSetupPython } = require('./native_acceptance_runtime.cjs')
 const { createNetworkGuard, finalizeNativeReceipt } = require('./native_acceptance_network.cjs')
 
@@ -104,6 +105,19 @@ function closeFixtureServer(server, forceAfterMs = 5000, deadlineMs = 8000) {
   })
 }
 
+async function waitForNativeDriver(driver, url, { timeoutMs = 10000, read = fetch, now = () => performance.now(), pause = delay } = {}) {
+  const deadline = now() + timeoutMs
+  while (true) {
+    assert(driver.exitCode === null && driver.signalCode === null, 'safaridriver exited during startup')
+    const remaining = deadline - now()
+    assert(remaining > 0, 'Timed out: safaridriver did not start')
+    const response = await read(url, { signal: AbortSignal.timeout(Math.max(1, Math.ceil(Math.min(2000, remaining)))) }).then(value => value.ok, () => false)
+    assert(now() < deadline, 'Timed out: safaridriver did not start')
+    if (response) return
+    await pause(Math.min(100, Math.max(0, deadline - now())))
+  }
+}
+
 async function unusedPort() {
   const server = net.createServer()
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -118,7 +132,8 @@ async function main() {
   const python = verifiedSetupPython(process.env.CI_NATIVE_PYTHON, process.env.CI_NATIVE_PYTHON_VERSION)
   const candidatePath = workspacePath(process.env.CI_PWA_CANDIDATE)
   assert(candidatePath && path.isAbsolute(candidatePath))
-  const { assets } = loadCandidate(candidatePath)
+  const { candidate, assets } = loadCandidate(candidatePath)
+  const frontendFiles = measuredFrontend(assets, candidate)
   const output = workspacePath(process.env.CI_NATIVE_OUTPUT || '.compatibility/native-safari')
   fs.mkdirSync(output, { recursive: true })
   const finalPath = workspacePath(path.join(output, 'native-smoke.json'))
@@ -173,11 +188,7 @@ async function main() {
     const port = await unusedPort()
     driver = spawn('/usr/bin/safaridriver', ['-p', String(port)], { stdio: 'inherit', env: { ...process.env, PATH: TRUSTED_PATH } })
     driver.on('error', () => {})
-    await waitFor(async () => {
-      assert.equal(driver.exitCode, null, 'safaridriver exited during startup')
-      try { return (await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) })).ok }
-      catch { return false }
-    }, ready => ready, 'safaridriver did not start', 40)
+    await waitForNativeDriver(driver, `http://127.0.0.1:${port}/status`)
     await run(python, ['-E', '-s', path.join(__dirname, 'native_acceptance_webdriver.py'), '--candidate', candidatePath, '--base-url', `https://127.0.0.1:${server.address().port}`, '--driver-url', `http://127.0.0.1:${port}`, '--platform', 'macOS', '--runtime', 'native-host', '--output', output])
     provisional = JSON.parse(fs.readFileSync(provisionalPath, 'utf8'))
   } finally {
@@ -191,8 +202,9 @@ async function main() {
 
   }
   // No positive receipt exists until child cleanup, parent counters and all teardown checks pass.
-  const receipt = finalizeNativeReceipt(provisional, network.observed, { applicationFrames, protocolErrors }, cleanupErrors)
+  measuredFrontend(assets, candidate)
+  const receipt = { ...finalizeNativeReceipt(provisional, network.observed, { applicationFrames, protocolErrors }, cleanupErrors), frontendFiles }
   fs.writeFileSync(finalPath, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' })
 }
-module.exports = { websocketFrame, clientFrameReader, websocketAccept, certificateFingerprint, closeFixtureServer, removeFixtureTrust }
+module.exports = { websocketFrame, clientFrameReader, websocketAccept, certificateFingerprint, closeFixtureServer, removeFixtureTrust, waitForNativeDriver }
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1 })

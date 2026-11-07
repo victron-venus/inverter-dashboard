@@ -47,6 +47,8 @@ Use `scripts/prepare_browser_candidate.py` to verify/extract the producing job's
 
 CLI inputs, extracted candidate files, toolchain paths and outputs must remain inside the repository checkout; parent traversal and symbolic links are rejected before file access. A pure unit helper can use an isolated temporary root, but no CLI option changes the trusted root. Outputs cannot overwrite verifier inputs or source evidence.
 
+Each PWA and final native report includes `frontendFiles`, measured from the actual buffers used to serve the candidate frontend and checked against the prepared inventory before browser startup and after the observations. The collector compares both the lane identity and measured report inventory with its independently prepared immutable candidate and archives the original lane identity. PWA runs require an entirely fresh output directory and create their result exclusively; existing inputs or evidence, including a candidate placed at the result path, are rejected and preserved. Native final receipt paths likewise remain exclusive.
+
 The example is schematic, not usable acceptance evidence. Go uses its own repository, run and package digest. Never reuse Python native evidence for the Go backend, or a different candidate/attempt. `artifactId`/`archiveSha256`, when present as aliases, must agree. The upstream verifier additionally binds package producer and OCI receipt. Keep the full producer receipt with the candidate evidence; a manually typed digest does not establish artifact provenance.
 
 ## Release workflow integration

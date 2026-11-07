@@ -77,6 +77,20 @@ function loadCandidate(filename, workspaceRoot) {
   return { candidate, assets }
 }
 
+function measuredFrontend(assets, candidate) {
+  const measured = Object.fromEntries([...assets].map(([name, data]) => [name.slice(1), sha(data)]))
+  assert.deepEqual(measured, candidate.frontendFiles, 'Served frontend inventory differs from candidate')
+  return Object.freeze(measured)
+}
+
+function createPwaOutput(value, root) {
+  const output = workspacePath(value, root)
+  assert(!fs.existsSync(output), 'PWA output directory must be fresh; existing inputs and evidence are preserved')
+  fs.mkdirSync(path.dirname(output), { recursive: true })
+  fs.mkdirSync(output)
+  return output
+}
+
 function binding(candidate) {
   return Object.fromEntries(['repository', 'sourceSha', 'runId', 'runAttempt', 'candidateArtifactId', 'candidateSha256'].map(key => [key, candidate[key]]))
 }
@@ -140,14 +154,13 @@ async function main() {
   assert(candidatePath && path.isAbsolute(candidatePath), 'CI_PWA_CANDIDATE must name the verified candidate receipt')
   assert(modulePath && path.isAbsolute(modulePath), 'CI_PLAYWRIGHT_MODULE must name the isolated installed toolchain')
   const { candidate, assets } = loadCandidate(candidatePath)
+  const frontendFiles = measuredFrontend(assets, candidate)
   const engine = process.env.CI_BROWSER_ENGINE || 'chromium'
   assert.equal(engine, 'chromium', 'This permission-override lane currently qualifies Chromium only')
-  const output = workspacePath(process.env.CI_PWA_OUTPUT || '.compatibility/pwa')
-  fs.mkdirSync(output, { recursive: true })
+  const output = createPwaOutput(process.env.CI_PWA_OUTPUT || '.compatibility/pwa')
   const resultPath = workspacePath(path.join(output, 'result.json'))
   const screenshotPath = workspacePath(path.join(output, 'pwa-settings.png'))
   const tracePath = workspacePath(path.join(output, 'trace.zip'))
-  fs.rmSync(resultPath, { force: true })
   const startedAt = new Date().toISOString()
   const scenarios = []
   const failures = []
@@ -315,6 +328,7 @@ async function main() {
     assert.deepEqual(external, [])
     assert.deepEqual(commands, [], 'PWA lifecycle must not issue actuator/settings commands')
     assert.deepEqual(scenarios.map(item => item.id), SCENARIOS)
+    measuredFrontend(assets, candidate)
     await page.screenshot({ path: screenshotPath, fullPage: true })
   } catch (error) {
     failures.push({ message: String(error.stack || error) })
@@ -330,15 +344,15 @@ async function main() {
     if (server) await new Promise(resolve => server.close(resolve))
     fs.rmSync(temp, { recursive: true, force: true })
     fs.writeFileSync(resultPath, JSON.stringify({
-      schemaVersion: 1, scope: 'engine-pwa-isolated', candidate: binding(candidate),
+      schemaVersion: 1, scope: 'engine-pwa-isolated', candidate: binding(candidate), frontendFiles,
       startedAt, finishedAt: new Date().toISOString(), engine, browserVersion,
       status: failures.length ? 'failed' : 'passed', scenarios, failures,
       serviceWorkers: 'allow', tlsTrust: 'isolated-self-signed', browserContextMode: 'isolated-persistent-profile',
       permissionMechanism: 'browser-test-override', subscriptionMechanism: 'isolated-ui-fixture',
       osNotificationObserved: false, nativeQualified: false, previousVersionUpgradeQualified: false,
-    }, null, 2) + '\n')
+    }, null, 2) + '\n', { flag: 'wx' })
   }
 }
 
-module.exports = { SCENARIOS, sha, loadCandidate, binding, fixtureCertificate, setNotificationPermission, workspacePath, candidatePath, TRUSTED_PATH, waitFor }
+module.exports = { SCENARIOS, sha, loadCandidate, measuredFrontend, createPwaOutput, binding, fixtureCertificate, setNotificationPermission, workspacePath, candidatePath, TRUSTED_PATH, waitFor }
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1 })

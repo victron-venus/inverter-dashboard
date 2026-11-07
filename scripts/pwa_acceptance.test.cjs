@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { SCENARIOS, loadCandidate, sha, binding, workspacePath, candidatePath, fixtureCertificate, waitFor } = require('./pwa_acceptance.cjs')
+const { SCENARIOS, loadCandidate, measuredFrontend, createPwaOutput, sha, binding, workspacePath, candidatePath, fixtureCertificate, waitFor } = require('./pwa_acceptance.cjs')
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pwa-contract-'))
@@ -324,4 +324,44 @@ test('admin trust and certificate removal are bounded and attempted independentl
   const fail = (_program, args) => { attempted.push(args[1]); throw new Error('synthetic cleanup failure') }
   assert.equal(removeFixtureTrust('/fixture/cert.pem', 'A'.repeat(64), fail).length, 2)
   assert.deepEqual(attempted, ['remove-trusted-cert', 'delete-certificate'])
+})
+
+
+test('PWA output refuses existing candidate and results without deleting either', t => {
+  const f = fixture(t), output = path.join(f.root, 'results')
+  fs.mkdirSync(output)
+  const candidate = path.join(output, 'result.json'), before = fs.readFileSync(f.filename)
+  fs.writeFileSync(candidate, before)
+  assert.throws(() => createPwaOutput(output, f.root), /must be fresh/)
+  assert.deepEqual(fs.readFileSync(candidate), before)
+  const fresh = path.join(f.root, 'new-output')
+  assert.equal(createPwaOutput(fresh, f.root), path.join(fs.realpathSync(f.root), 'new-output'))
+  assert.throws(() => createPwaOutput(fresh, f.root), /must be fresh/)
+})
+
+test('measured inventory binds every actual served buffer, independently of metadata', t => {
+  const f = fixture(t), loaded = loadCandidate(f.filename, f.root)
+  assert.deepEqual(measuredFrontend(loaded.assets, loaded.candidate), f.candidate.frontendFiles)
+  const changed = new Map(loaded.assets)
+  changed.set('/index.html', Buffer.from('different served page'))
+  assert.throws(() => measuredFrontend(changed, loaded.candidate), /inventory differs/)
+  const relabelled = { ...loaded.candidate, frontendFiles: { ...loaded.candidate.frontendFiles, 'index.html': 'f'.repeat(64) } }
+  assert.throws(() => measuredFrontend(loaded.assets, relabelled), /inventory differs/)
+  const omitted = new Map(loaded.assets); omitted.delete('/index.html')
+  assert.throws(() => measuredFrontend(omitted, loaded.candidate), /inventory differs/)
+})
+
+test('Safari startup uses a ten-second elapsed deadline and rejects exited drivers', async () => {
+  const { waitForNativeDriver } = require('./native_acceptance_smoke.cjs')
+  const driver = { exitCode: null, signalCode: null }
+  let elapsed = 0, reads = 0
+  const controls = { now: () => elapsed, pause: async milliseconds => { elapsed += milliseconds }, read: async () => { reads++; return { ok: elapsed >= 9000 } } }
+  await waitForNativeDriver(driver, 'http://127.0.0.1:12345/status', controls)
+  assert.equal(elapsed, 9000); assert(reads > 40)
+  elapsed = 0
+  await assert.rejects(waitForNativeDriver(driver, 'http://127.0.0.1:12345/status', { ...controls, read: async () => ({ ok: false }) }), /Timed out/)
+  assert.equal(elapsed, 10000)
+  elapsed = 0
+  await assert.rejects(waitForNativeDriver(driver, 'http://127.0.0.1:12345/status', { ...controls, read: async () => { elapsed = 10001; return { ok: true } } }), /Timed out/)
+  await assert.rejects(waitForNativeDriver({ exitCode: 1, signalCode: null }, 'http://127.0.0.1:12345/status', controls), /exited/)
 })

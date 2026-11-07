@@ -89,8 +89,18 @@ def verify_local_docker() -> None:
         raise ValueError("Docker endpoint must be the local hosted Unix socket")
 
 
-def record_container_logs(names: list[str], output: Path, credential: str | None) -> None:
-    """Diagnostics are best effort and must never prevent resource teardown."""
+def write_cleanup_diagnostic(output: Path, name: str, content: str, root: Path | None) -> None:
+    """Revalidate each diagnostic and never follow or replace an existing file."""
+    destination = workspace_path(output / name, root=root, kind="file", new=True)
+    with destination.open("x", encoding="utf-8") as stream:
+        stream.write(content)
+
+
+def record_container_logs(
+    names: list[str], output: Path, credential: str | None, root: Path | None
+) -> list[str]:
+    """Collect diagnostics failures for reporting after resource teardown."""
+    errors = []
     for name in names:
         try:
             # Docker emits application stderr on its own stderr stream. Merge both
@@ -98,11 +108,42 @@ def record_container_logs(names: list[str], output: Path, credential: str | None
             content = call("docker", "logs", "--tail", "1000", name, check=False, combine_logs=True)
             if credential:
                 content = content.replace(credential, "[redacted fixture credential]")
-            (output / f"{name}.log").write_text(content)
-        except (OSError, subprocess.SubprocessError) as error:
-            with suppress(OSError):
-                error_path = output / f"{name}-log-error.txt"
-                error_path.write_text(f"{type(error).__name__}\n")
+            write_cleanup_diagnostic(output, f"{name}.log", content, root)
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
+            # ValueError includes UnicodeError from decoding container output.
+            errors.append(f"logs {name}: {type(error).__name__}")
+    return errors
+
+
+def resource_already_absent(command: tuple[str, ...], detail: str) -> bool:
+    """Only exact Docker absence messages for the owned resource are idempotent.
+
+    Docker versions with another error format fail closed, rather than treating
+    a daemon/plugin failure containing 'not found' as successful teardown.
+    """
+    messages = {
+        "rm": f"Error response from daemon: No such container: {command[-1]}",
+        "network": f"Error response from daemon: network {command[-1]} not found",
+        "image": f"Error response from daemon: No such image: {command[-1]}",
+    }
+    return isinstance(detail, str) and detail.strip() == messages.get(command[1])
+
+
+def remove_cleanup_resources(names: list[str], network: str, image: str) -> list[str]:
+    """Attempt all removals after cleanup_owned has validated resource ownership."""
+    errors = []
+    commands = [("docker", "rm", "-f", name) for name in names]
+    commands += [("docker", "network", "rm", network), ("docker", "image", "rm", image)]
+    for command in commands:
+        try:
+            call(*command, timeout=30)
+        except subprocess.CalledProcessError as error:
+            detail = error.stderr or ""
+            if not resource_already_absent(command, detail):
+                errors.append(f"{command[1]}: {detail[-1000:]}")
+        except (OSError, subprocess.TimeoutExpired, UnicodeError) as error:
+            errors.append(f"{command[1]}: {type(error).__name__}")
+    return errors
 
 
 def cleanup_owned(
@@ -115,7 +156,6 @@ def cleanup_owned(
     credential: str | None = None,
 ) -> None:
     """Attempt every cleanup independently, including when log collection fails."""
-    output = workspace_path(output, root=root, kind="directory")
     if not re.fullmatch(r"browser-qa-[a-f0-9]{16}", network) or image != network + ":candidate":
         raise ValueError("Cleanup can only target this runner's UUID-owned resources")
     if len(names) != len(set(names)) or any(
@@ -124,24 +164,21 @@ def cleanup_owned(
     ):
         raise ValueError("Cleanup container does not belong to this runner")
     errors = []
-    record_container_logs(names, output, credential)
-    commands = [("docker", "rm", "-f", name) for name in names]
-    commands += [("docker", "network", "rm", network), ("docker", "image", "rm", image)]
-    for command in commands:
-        try:
-            call(*command, timeout=30)
-        except subprocess.CalledProcessError as error:
-            detail = error.stderr or ""
-            if not any(
-                marker in detail for marker in ("No such container", "No such image", "not found")
-            ):
-                errors.append(f"{command[1]}: {detail[-1000:]}")
-        except (OSError, subprocess.TimeoutExpired) as error:
-            errors.append(f"{command[1]}: {type(error).__name__}")
+    diagnostics = None
+    try:
+        diagnostics = workspace_path(output, root=root, kind="directory")
+    except (OSError, ValueError) as error:
+        errors.append(f"diagnostics: {type(error).__name__}")
+    if diagnostics is not None:
+        errors.extend(record_container_logs(names, diagnostics, credential, root))
+    errors.extend(remove_cleanup_resources(names, network, image))
     if errors:
-        with suppress(OSError):
-            (output / "cleanup-errors.log").write_text("\n".join(errors) + "\n")
-        raise RuntimeError("Owned fixture cleanup incomplete; see cleanup-errors.log")
+        if diagnostics is not None:
+            with suppress(OSError, ValueError):
+                write_cleanup_diagnostic(
+                    diagnostics, "cleanup-errors.log", "\n".join(errors) + "\n", root
+                )
+        raise RuntimeError("Owned fixture cleanup incomplete or diagnostics unavailable")
 
 
 def hash_file(path: Path) -> str:

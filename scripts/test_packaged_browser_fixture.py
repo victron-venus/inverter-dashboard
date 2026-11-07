@@ -159,7 +159,7 @@ class RunnerSafetyTests(unittest.TestCase):
                     execute(root, inputs, output, 1)
             cli.assert_not_called()
 
-    def test_cleanup_cannot_target_unowned_names_or_external_diagnostics(self):
+    def test_cleanup_cannot_target_unowned_resources(self):
         with (
             tempfile.TemporaryDirectory() as temporary,
             patch("packaged_browser_acceptance.call") as cli,
@@ -171,7 +171,6 @@ class RunnerSafetyTests(unittest.TestCase):
                 (["other-container"], OWNED, OWNED + ":candidate", output),
                 ([OWNED + "-fixtures"], "production", OWNED + ":candidate", output),
                 ([OWNED + "-fixtures"], OWNED, "production:latest", output),
-                ([OWNED + "-fixtures"], OWNED, OWNED + ":candidate", root.parent),
             ):
                 with self.assertRaises(ValueError):
                     cleanup_owned(names, network, image, destination, root=root)
@@ -223,13 +222,16 @@ class RunnerSafetyTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as temporary,
             patch("packaged_browser_acceptance.call", return_value="") as cli,
         ):
-            cleanup_owned(
-                [OWNED + "-fixtures"],
-                OWNED,
-                OWNED + ":candidate",
-                Path(temporary) / "gone",
-                root=Path(temporary),
-            )
+            root = Path(temporary)
+            output = root / "gone"
+            with self.assertRaisesRegex(RuntimeError, "diagnostics unavailable"):
+                cleanup_owned(
+                    [OWNED + "-fixtures"],
+                    OWNED,
+                    OWNED + ":candidate",
+                    output,
+                    root=root,
+                )
         self.assertIn(
             ("docker", "rm", "-f", OWNED + "-fixtures"), [item.args for item in cli.call_args_list]
         )
@@ -292,20 +294,96 @@ class RunnerSafetyTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as temporary,
             patch("packaged_browser_acceptance.call", return_value="") as cli,
-            patch.object(Path, "write_text", side_effect=OSError("disk full")),
+            patch.object(Path, "open", side_effect=OSError("disk full")),
         ):
-            (Path(temporary) / "output").mkdir()
-            cleanup_owned(
-                [OWNED + "-fixtures"],
-                OWNED,
-                OWNED + ":candidate",
-                Path(temporary) / "output",
-                root=Path(temporary),
-            )
+            root = Path(temporary)
+            output = root / "output"
+            output.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "diagnostics unavailable"):
+                cleanup_owned(
+                    [OWNED + "-fixtures"],
+                    OWNED,
+                    OWNED + ":candidate",
+                    output,
+                    root=root,
+                )
         arguments = [item.args for item in cli.call_args_list]
         self.assertIn(("docker", "rm", "-f", OWNED + "-fixtures"), arguments)
         self.assertIn(("docker", "network", "rm", OWNED), arguments)
         self.assertIn(("docker", "image", "rm", OWNED + ":candidate"), arguments)
+
+    def test_invalid_utf8_diagnostics_cannot_skip_owned_cleanup(self):
+        calls = []
+
+        def command(*args, **_kwargs):
+            calls.append(args)
+            if args[1] == "logs":
+                # Produce the actual decoder exception raised by subprocess text mode.
+                return b"\xff".decode("utf-8")
+            return ""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "output"
+            output.mkdir()
+            with (
+                patch("packaged_browser_acceptance.call", side_effect=command),
+                self.assertRaisesRegex(RuntimeError, "diagnostics unavailable"),
+            ):
+                cleanup_owned([OWNED + "-fixtures"], OWNED, OWNED + ":candidate", output, root=root)
+            self.assertIn("UnicodeDecodeError", (output / "cleanup-errors.log").read_text())
+        self.assertIn(("docker", "rm", "-f", OWNED + "-fixtures"), calls)
+        self.assertIn(("docker", "network", "rm", OWNED), calls)
+        self.assertIn(("docker", "image", "rm", OWNED + ":candidate"), calls)
+
+    def test_rejected_diagnostics_path_still_removes_only_owned_resources(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            outside = root / "outside"
+            outside.mkdir()
+            workspace = root / "workspace"
+            workspace.mkdir()
+            linked = workspace / "linked"
+            linked.symlink_to(outside, target_is_directory=True)
+            expected = [
+                ("docker", "rm", "-f", OWNED + "-fixtures"),
+                ("docker", "network", "rm", OWNED),
+                ("docker", "image", "rm", OWNED + ":candidate"),
+            ]
+            for output in (outside, linked):
+                with (
+                    patch("packaged_browser_acceptance.call", return_value="") as cli,
+                    self.assertRaisesRegex(RuntimeError, "diagnostics unavailable"),
+                ):
+                    cleanup_owned(
+                        [OWNED + "-fixtures"],
+                        OWNED,
+                        OWNED + ":candidate",
+                        output,
+                        root=workspace,
+                    )
+                self.assertEqual([item.args for item in cli.call_args_list], expected)
+                self.assertEqual(list(outside.iterdir()), [])
+
+    def test_diagnostic_file_symlinks_cannot_redirect_log_or_failure_writes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            protected = root / "protected.txt"
+            protected.write_text("untouched")
+            output = root / "output"
+            output.mkdir()
+            (output / f"{OWNED}-fixtures.log").symlink_to(protected)
+            (output / "cleanup-errors.log").symlink_to(protected)
+            with (
+                patch("packaged_browser_acceptance.call", return_value="container log") as cli,
+                self.assertRaisesRegex(RuntimeError, "diagnostics unavailable"),
+            ):
+                cleanup_owned([OWNED + "-fixtures"], OWNED, OWNED + ":candidate", output, root=root)
+            self.assertEqual(protected.read_text(), "untouched")
+            self.assertIn(
+                ("docker", "image", "rm", OWNED + ":candidate"),
+                [item.args for item in cli.call_args_list],
+            )
 
     def test_log_and_network_failure_do_not_skip_owned_cleanup(self):
         calls = []
@@ -333,6 +411,56 @@ class RunnerSafetyTests(unittest.TestCase):
                 )
         self.assertIn(("docker", "rm", "-f", OWNED + "-fixtures"), calls)
         self.assertIn(("docker", "image", "rm", OWNED + ":candidate"), calls)
+
+    def test_only_exact_owned_resource_absence_is_successful_cleanup(self):
+        messages = {
+            "rm": f"Error response from daemon: No such container: {OWNED}-fixtures",
+            "network": f"Error response from daemon: network {OWNED} not found",
+            "image": f"Error response from daemon: No such image: {OWNED}:candidate",
+        }
+        calls = []
+
+        def command(*args, **_kwargs):
+            calls.append(args)
+            if args[1] in messages:
+                raise subprocess.CalledProcessError(1, args, stderr=messages[args[1]] + "\n")
+            return "fixture diagnostics"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "output"
+            output.mkdir()
+            with patch("packaged_browser_acceptance.call", side_effect=command):
+                cleanup_owned([OWNED + "-fixtures"], OWNED, OWNED + ":candidate", output, root=root)
+            self.assertFalse((output / "cleanup-errors.log").exists())
+        self.assertEqual([args[1] for args in calls], ["logs", "rm", "network", "image"])
+
+    def test_unrelated_not_found_and_wrong_resource_errors_remain_fatal(self):
+        for detail in (
+            "Error response from daemon: authorization plugin qa-auth not found",
+            "Error response from daemon: network another-network not found",
+        ):
+            calls = []
+
+            def command(*args, observed=calls, failure=detail, **_kwargs):
+                observed.append(args)
+                if args[1] == "network":
+                    raise subprocess.CalledProcessError(1, args, stderr=failure)
+                return ""
+
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                output = root / "output"
+                output.mkdir()
+                with (
+                    patch("packaged_browser_acceptance.call", side_effect=command),
+                    self.assertRaisesRegex(RuntimeError, "cleanup incomplete"),
+                ):
+                    cleanup_owned(
+                        [OWNED + "-fixtures"], OWNED, OWNED + ":candidate", output, root=root
+                    )
+                self.assertIn(detail, (output / "cleanup-errors.log").read_text())
+            self.assertIn(("docker", "image", "rm", OWNED + ":candidate"), calls)
 
 
 if __name__ == "__main__":
