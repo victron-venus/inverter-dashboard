@@ -298,12 +298,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
             elif self.path.startswith("/v1/commands/"):
                 CAPTURE.append({"transport": "igw", "path": self.path, "body": body})
-            elif (
-                self.path == "/api/services/switch/toggle"
-                and body.get("entity_id") == "switch.fixture_light"
-            ):
-                HA_STATE = "on" if HA_STATE == "off" else "off"
+            elif self.path.startswith("/api/services/"):
+                # An invalid actuator request is still an attempted publication.
+                # Record it before rejecting so the journal cannot hide it.
                 CAPTURE.append({"transport": "ha", "path": self.path, "body": body})
+                if (
+                    self.path != "/api/services/switch/toggle"
+                    or body.get("entity_id") != "switch.fixture_light"
+                ):
+                    self.reply(404, {})
+                    return
+                HA_STATE = "on" if HA_STATE == "off" else "off"
             else:
                 self.reply(404, {})
                 return

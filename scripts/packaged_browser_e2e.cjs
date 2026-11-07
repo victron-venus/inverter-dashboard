@@ -5,7 +5,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
 const { workspacePath } = require('./pwa_acceptance.cjs')
-const { verifyFinalCommandJournal } = require('./packaged_browser_contract.cjs')
+const { expectedCommandJournal, verifyFinalCommandJournal } = require('./packaged_browser_contract.cjs')
 const { waitForHydratedDashboard } = require('./browser-readiness.cjs')
 const [base, fixture, transport, outputArgument, ociSha256, backend] = process.argv.slice(2)
 const output = workspacePath(outputArgument)
@@ -133,32 +133,32 @@ async function run(engine) {
     assert((await banner.locator('time').innerText()).trim().length > 0, 'Banner needs a visible source age')
     scenarios.push('real-transport-native-banner-preserves-source-time')
 
-    const before = (await fixtureState()).capture.length
+    const controllerInput = transport === 'mqtt'
+      ? { action: 'setpoint', value: 123, request_id: `accepted-${engine}` }
+      : { action: 'toggle', entity: 'charge_battery', state: true, request_id: `accepted-${engine}` }
+    const homeInput = { action: 'toggle', entity: 'switch.fixture_light', request_id: `home-${engine}` }
+    const expectedJournal = expectedCommandJournal(transport, controllerInput, homeInput)
+    await verifyFinalCommandJournal(fixtureState, [])
     const rejected = await command(page, { action: 'toggle', entity: 'switch.unconfigured', request_id: `unknown-${engine}` })
     assert.equal(rejected.type, 'command_error')
     await delay(200)
-    assert.equal((await fixtureState()).capture.length, before)
+    await verifyFinalCommandJournal(fixtureState, [])
     scenarios.push('unknown-home-target-rejected-without-publication')
 
-    const accepted = await command(page, transport === 'mqtt'
-      ? { action: 'setpoint', value: 123, request_id: `accepted-${engine}` }
-      : { action: 'toggle', entity: 'charge_battery', state: true, request_id: `accepted-${engine}` })
+    const accepted = await command(page, controllerInput)
     assert.equal(accepted.type, 'command_result')
     assert.equal(accepted.status, 'accepted')
-    const captured = await until(fixtureState, value => value.capture.length === before + 1, 'exact fixture command')
-    const publication = captured.capture.at(-1)
-    assert.equal(publication.transport, transport)
-    assert.equal(publication.path, transport === 'mqtt' ? 'inverter/cmd/setpoint' : '/v1/commands/toggle')
-    assert.deepEqual(publication.body, transport === 'mqtt' ? { value: 123 } : { entity: 'charge_battery', state: 'on' })
+    await until(fixtureState, value => value.capture.length >= 1, 'exact fixture command')
+    await verifyFinalCommandJournal(fixtureState, expectedJournal.slice(0, 1))
     scenarios.push('real-correlated-command-routes-once-to-selected-transport')
 
     await until(fixtureState, value => value.haReads > 0, 'real HA polling')
     await page.getByText('Fixture light', { exact: true }).waitFor()
-    const home = await command(page, { action: 'toggle', entity: 'switch.fixture_light', request_id: `home-${engine}` })
+    const home = await command(page, homeInput)
     assert.equal(home.type, 'command_result')
     assert.equal(home.status, 'accepted')
-    const ha = await until(fixtureState, value => value.capture.some(item => item.transport === 'ha'), 'real HA service')
-    assert.deepEqual(ha.capture.filter(item => item.transport === 'ha').map(item => item.body), [{ entity_id: 'switch.fixture_light' }])
+    await until(fixtureState, value => value.capture.some(item => item.transport === 'ha'), 'real HA service')
+    await verifyFinalCommandJournal(fixtureState, expectedJournal)
     scenarios.push('configured-home-only-real-ha-service-route')
 
     const hostile = await context.newPage()
@@ -174,19 +174,17 @@ async function run(engine) {
       await control('fresh-slot')
       const fresh = await until(state, value => value.notifications?.some(item => item.title === 'Fixture fresh alarm'), 'new generation alarm')
       assert(!fresh.notifications.find(item => item.title === 'Fixture fresh alarm').ts)
-      const count = (await fixtureState()).capture.length
+      await verifyFinalCommandJournal(fixtureState, expectedJournal)
       const stale = await command(page, { action: 'setpoint', value: 123, request_id: `retired-${engine}` })
       assert.equal(stale.type, 'command_error')
-      assert.equal((await fixtureState()).capture.length, count)
+      await verifyFinalCommandJournal(fixtureState, expectedJournal)
       scenarios.push('reconnect-retires-authority-and-source-event-time')
     }
     assert.deepEqual(unexpected, [], 'Packaged browser attempted an external destination')
     await page.screenshot({ path: output.replace(/\.json$/, `-${engine}.png`) })
     // Re-read after every later HA/reconnect scenario: earlier routes-once proof
     // must not hide a duplicate or new command delivered later in this run.
-    await verifyFinalCommandJournal(fixtureState, [...captured.capture, {
-      transport: 'ha', path: '/api/services/switch/toggle', body: { entity_id: 'switch.fixture_light' },
-    }])
+    await verifyFinalCommandJournal(fixtureState, expectedJournal)
     runs.push({ engine, browserVersion: browser.version(), transport, status: 'passed',
       scenarios, producer, ociSha256, testsPassed: scenarios.length, testsFailed: 0, backendVersion: actual.dashboard_version })
   } finally {

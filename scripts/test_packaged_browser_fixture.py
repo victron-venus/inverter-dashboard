@@ -105,6 +105,22 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(self.request("/api/states/switch.fixture_light")["state"], "off")
         self.assertEqual(self.request("/fixture/status")["haReads"], 1)
 
+    def test_invalid_ha_actuator_attempts_are_recorded_without_changing_state(self):
+        attempts = [
+            ("/api/services/switch/toggle", {"entity_id": "switch.unconfigured"}),
+            ("/api/services/switch/turn_on", {"entity_id": "switch.fixture_light"}),
+        ]
+        for route, body in attempts:
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.request(route, body=body)
+            self.assertEqual(caught.exception.code, 404)
+            caught.exception.close()
+        self.assertEqual(
+            self.request("/fixture/status")["capture"],
+            [{"transport": "ha", "path": route, "body": body} for route, body in attempts],
+        )
+        self.assertEqual(self.request("/api/states/switch.fixture_light")["state"], "off")
+
     def test_mqtt_real_handshake_and_subscribe(self):
         with socket.create_connection(self.broker.server_address, timeout=2) as client:
             client.sendall(
