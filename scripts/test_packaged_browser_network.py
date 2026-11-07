@@ -7,6 +7,7 @@ import socketserver
 import threading
 import unittest
 from contextlib import contextmanager
+from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import Mock, patch
 
@@ -98,8 +99,11 @@ class HTTPFixture(BaseHTTPRequestHandler):
             payload = bytes(value ^ mask[index % 4] for index, value in enumerate(raw))
             self.wfile.write(bytes([0x81, len(payload)]) + payload)
             return
-        payload = json.dumps({"path": self.path, "host": self.headers["Host"]}).encode()
+        self.server.observed_request = (self.path, self.headers["Host"])
+        payload = b'{"fixture":"loopback-http"}'
         self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -176,7 +180,10 @@ class RelayTests(unittest.TestCase):
             relay = network.LoopbackRelay(*server.server_address)
             self.addCleanup(relay.close)
             reply = json.loads(fetch(relay.base, "/probe", credential=""))
-            self.assertEqual(reply, {"path": "/probe", "host": relay.base.removeprefix("http://")})
+            self.assertEqual(reply, {"fixture": "loopback-http"})
+            self.assertEqual(
+                server.observed_request, ("/probe", relay.base.removeprefix("http://"))
+            )
             port = int(relay.base.rsplit(":", 1)[1])
             with socket.create_connection(("127.0.0.1", port), timeout=2) as client:
                 stream = client.makefile("rb")
@@ -199,6 +206,22 @@ class RelayTests(unittest.TestCase):
                 client.sendall(bytes([0x81, 0x80 | len(payload)]) + mask + frame)
                 self.assertEqual(stream.read(2), bytes([0x81, len(payload)]))
                 self.assertEqual(stream.read(len(payload)), payload)
+
+    def test_http_fixture_does_not_reflect_request_path_or_host(self):
+        with running_server(ThreadingHTTPServer(("127.0.0.1", 0), HTTPFixture)) as server:
+            relay = network.LoopbackRelay(*server.server_address)
+            self.addCleanup(relay.close)
+            connection = HTTPConnection("127.0.0.1", int(relay.base.rsplit(":", 1)[1]), timeout=2)
+            self.addCleanup(connection.close)
+            requested_path = "/<script>alert(1)</script>"
+            requested_host = "<script>alert(2)</script>"
+            connection.request("GET", requested_path, headers={"Host": requested_host})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("Content-Type"), "application/json")
+            self.assertEqual(response.getheader("X-Content-Type-Options"), "nosniff")
+            self.assertEqual(response.read(), b'{"fixture":"loopback-http"}')
+            self.assertEqual(server.observed_request, (requested_path, requested_host))
 
     def test_large_bidirectional_stream_survives_small_bounded_buffers(self):
         with (

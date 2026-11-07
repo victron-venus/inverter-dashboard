@@ -16,6 +16,7 @@ import time
 from contextlib import suppress
 
 OWNER_LABEL = "dashboard.packaged-qa"
+DOCKER_ID_PATTERN = r"[a-f0-9]{64}"
 MAX_CONNECTIONS = 32
 MAX_BUFFER = 65536
 CONNECT_TIMEOUT = 5
@@ -43,7 +44,8 @@ def internal_endpoint(network, container, name, port):
     network_id = network.get("Id", "")
     container_id = container.get("Id", "")
     require(
-        re.fullmatch(r"[a-f0-9]{64}", network_id) and re.fullmatch(r"[a-f0-9]{64}", container_id),
+        re.fullmatch(DOCKER_ID_PATTERN, network_id)
+        and re.fullmatch(DOCKER_ID_PATTERN, container_id),
         "Missing exact Docker resource IDs",
     )
     require(
@@ -76,7 +78,7 @@ def internal_endpoint(network, container, name, port):
     reciprocal = network.get("Containers", {}).get(container_id, {})
     require(
         member.get("NetworkID") == network_id
-        and re.fullmatch(r"[a-f0-9]{64}", member.get("EndpointID", ""))
+        and re.fullmatch(DOCKER_ID_PATTERN, member.get("EndpointID", ""))
         and member.get("EndpointID") == reciprocal.get("EndpointID")
         and reciprocal.get("Name") == name
         and not member.get("GlobalIPv6Address")

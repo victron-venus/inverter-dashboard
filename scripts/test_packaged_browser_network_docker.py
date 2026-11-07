@@ -27,6 +27,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         data=json.dumps({'identity':sys.argv[2],'path':self.path}).encode()
         self.send_response(200)
+        self.send_header('Content-Type','application/json')
+        self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('Content-Length',str(len(data)))
         self.end_headers()
         self.wfile.write(data)
