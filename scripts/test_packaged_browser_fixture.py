@@ -25,7 +25,9 @@ from packaged_browser_acceptance import (
     cleanup_owned,
     execute,
     fetch,
+    fixture_runtime_user,
     start_application,
+    start_fixture,
     verify_local_docker,
     wait_ready,
 )
@@ -161,6 +163,58 @@ class FixtureTests(unittest.TestCase):
 
 
 class RunnerSafetyTests(unittest.TestCase):
+    def test_fixture_runs_as_owner_without_widening_key_or_docker_access(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            key = directory / "fixture.key"
+            key.write_bytes(b"synthetic-key-permission-control")
+            key.chmod(0o600)
+            credential = secrets.token_urlsafe(32)
+            with (
+                patch("packaged_browser_acceptance.sys.platform", "linux"),
+                patch("packaged_browser_acceptance.call", return_value="") as cli,
+            ):
+                start_fixture(directory, directory, OWNED + "-fixtures", OWNED, credential)
+            command = cli.call_args.args
+            self.assertEqual(command[command.index("--user") + 1], f"{os.getuid()}:{os.getgid()}")
+            self.assertIn("--cap-drop=ALL", command)
+            self.assertIn("--read-only", command)
+            self.assertIn("--security-opt=no-new-privileges", command)
+            self.assertIn(f"{directory}:/qa-config:ro", command)
+            self.assertNotIn("--cap-add", command)
+            self.assertNotIn(credential, " ".join(command))
+            self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+
+    def test_fixture_rejects_root_foreign_owner_and_nonprivate_or_linked_key(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            key = directory / "fixture.key"
+            key.write_bytes(b"synthetic-key-permission-control")
+            for mode in (0o644, 0o640):
+                key.chmod(mode)
+                with (
+                    patch("packaged_browser_acceptance.sys.platform", "linux"),
+                    self.assertRaises(ValueError),
+                ):
+                    fixture_runtime_user(directory)
+            key.chmod(0o600)
+            for uid, gid in ((0, os.getgid()), (os.getuid(), 0), (os.getuid() + 1, os.getgid())):
+                with (
+                    patch("packaged_browser_acceptance.sys.platform", "linux"),
+                    patch("packaged_browser_acceptance.os.getuid", return_value=uid),
+                    patch("packaged_browser_acceptance.os.getgid", return_value=gid),
+                    self.assertRaises(ValueError),
+                ):
+                    fixture_runtime_user(directory)
+            target = directory / "actual.key"
+            key.rename(target)
+            key.symlink_to(target)
+            with (
+                patch("packaged_browser_acceptance.sys.platform", "linux"),
+                self.assertRaises(ValueError),
+            ):
+                fixture_runtime_user(directory)
+
     def test_runner_rejects_outside_or_linked_outputs_before_docker(self):
         with (
             tempfile.TemporaryDirectory() as temporary,
