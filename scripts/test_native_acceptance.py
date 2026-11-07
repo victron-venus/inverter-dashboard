@@ -173,11 +173,13 @@ class NativeAcceptanceTests(unittest.TestCase):
         for key in gate.CANDIDATE_FIELDS:
             with self.subTest(key=key):
                 old = self.first()["candidate"][key]
-                self.first()["candidate"][key] = (
-                    old + 1
-                    if isinstance(old, int)
-                    else ("victron-venus/other" if key == "repository" else "f" * len(old))
-                )
+                if isinstance(old, int):
+                    replacement = old + 1
+                elif key == "repository":
+                    replacement = "victron-venus/other"
+                else:
+                    replacement = "f" * len(old)
+                self.first()["candidate"][key] = replacement
                 self.save_receipts()
                 with self.assertRaisesRegex(ValueError, "Receipt candidate mismatch"):
                     self.verify()

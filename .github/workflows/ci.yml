@@ -37,7 +37,7 @@ jobs:
           python3 scripts/test_native_acceptance.py
           python3 scripts/test_native_acceptance_webdriver.py
       - name: Reject incomplete or duplicated scenario evidence
-        run: node --test scripts/browser-scenarios-contract.test.cjs scripts/pwa_acceptance.test.cjs
+        run: node --test scripts/browser-scenarios-contract.test.cjs scripts/pwa_acceptance.test.cjs scripts/packaged_browser_contract.test.cjs
   browser-compatibility:
     name: Embedded frontend browser acceptance
     uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@ffa568e48a9510bf66dcfe01d6646f6840382431 # main

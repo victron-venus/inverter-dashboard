@@ -195,6 +195,7 @@ jobs:
         run: |
           python3 scripts/test_prepare_browser_candidate.py
           python3 scripts/test_packaged_browser_fixture.py
+          node --test scripts/packaged_browser_contract.test.cjs
           node --check scripts/packaged_browser_e2e.cjs
       - name: Exercise exact OCI without rebuilding or equipment access
         env:

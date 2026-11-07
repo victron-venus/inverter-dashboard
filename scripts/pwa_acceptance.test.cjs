@@ -192,7 +192,7 @@ function pythonRuntimeFixture(t) {
   const framework = path.join(roots.framework, '3.12')
   fs.mkdirSync(install, { recursive: true }); fs.mkdirSync(path.join(framework, 'bin'), { recursive: true })
   const executable = path.join(framework, 'bin/python3.12')
-  fs.writeFileSync(executable, 'Synthetic nonexecuted interpreter path fixture'); fs.chmodSync(executable, 0o755)
+  fs.writeFileSync(executable, 'Synthetic nonexecuted interpreter path fixture'); fs.chmodSync(executable, 0o700)
   fs.symlinkSync(path.join(framework, 'bin'), path.join(install, 'bin'))
   fs.symlinkSync('python3.12', path.join(framework, 'bin/python'))
   return { root, roots, install, executable, supplied: path.join(install, 'bin/python') }
@@ -212,9 +212,9 @@ test('setup-python selection resolves only documented toolcache-to-framework lin
 test('setup-python selection rejects redirected runtime links and nonexecutables', t => {
   const { resolveSetupPython } = require('./native_acceptance_runtime.cjs')
   const f = pythonRuntimeFixture(t)
-  fs.chmodSync(f.executable, 0o644)
+  fs.chmodSync(f.executable, 0o600)
   assert.throws(() => resolveSetupPython(f.supplied, '3.12.13', 'arm64', f.roots), /regular executable/)
-  fs.chmodSync(f.executable, 0o755)
+  fs.chmodSync(f.executable, 0o700)
   const outside = path.join(f.root, 'outside'); fs.mkdirSync(outside)
   fs.writeFileSync(path.join(outside, 'python'), 'not executed')
   fs.unlinkSync(path.join(f.install, 'bin')); fs.symlinkSync(outside, path.join(f.install, 'bin'))

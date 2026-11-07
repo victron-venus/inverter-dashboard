@@ -105,50 +105,6 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(self.request("/api/states/switch.fixture_light")["state"], "off")
         self.assertEqual(self.request("/fixture/status")["haReads"], 1)
 
-    def test_final_journal_detects_duplicate_after_initial_routes_once_check(self):
-        # Exercise the same checker with actual fixture HTTP publication/reads;
-        # the duplicate is injected only after the initial journal has passed.
-        script = r"""
-const assert = require('node:assert/strict')
-const { verifyFinalCommandJournal } = require(process.argv[1])
-const base = process.argv[2]
-const headers = { Authorization: 'Bearer ' + process.env.CI_PACKAGED_BROWSER_TOKEN }
-async function publish() {
-  const response = await fetch(base + '/v1/commands/toggle', {
-    method: 'POST', headers, body: JSON.stringify({ entity: 'charge_battery', state: 'on' }),
-    signal: AbortSignal.timeout(2000),
-  })
-  assert.equal(response.status, 200)
-}
-const read = async () => (await fetch(base + '/fixture/status', {
-  signal: AbortSignal.timeout(2000),
-})).json()
-;(async () => {
-  await publish()
-  const initial = await read()
-  assert.equal(initial.capture.length, 1)
-  await verifyFinalCommandJournal(read, initial.capture)
-  await publish()
-  await assert.rejects(verifyFinalCommandJournal(read, initial.capture), /Unexpected late, duplicate/)
-  process.stdout.write('late duplicate detected')
-})().catch(error => { console.error(error.message); process.exitCode = 1 })
-"""
-        result = subprocess.run(
-            [
-                "node",
-                "-e",
-                script,
-                str(Path(__file__).with_name("packaged_browser_contract.cjs")),
-                self.base,
-            ],
-            env={**os.environ, fixture.CREDENTIAL_ENV: self.credential},
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=True,
-        )
-        self.assertEqual(result.stdout, "late duplicate detected")
-
     def test_mqtt_real_handshake_and_subscribe(self):
         with socket.create_connection(self.broker.server_address, timeout=2) as client:
             client.sendall(

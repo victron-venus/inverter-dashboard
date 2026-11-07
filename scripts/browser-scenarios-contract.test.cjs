@@ -54,7 +54,7 @@ test('candidate receipt paths resolve portable POSIX paths under a fixed checkou
     for (const relative of ['browser-candidate-web/frontend', 'browser-candidate-web/manifest.json']) {
       assert.equal(candidatePath(relative, root), path.join(fs.realpathSync(root), ...relative.split('/')))
     }
-    for (const invalid of ['', '/tmp/frontend', 'C:/frontend', 'C:\\frontend', '../frontend', 'browser-candidate-web/../frontend', 'browser-candidate-web/./frontend', 'browser-candidate-web//frontend', 'browser-candidate-web/frontend/']) {
+    for (const invalid of ['', '/outside/frontend', 'C:/frontend', String.raw`browser-candidate-web\frontend`, '../frontend', 'browser-candidate-web/../frontend', 'browser-candidate-web/./frontend', 'browser-candidate-web//frontend', 'browser-candidate-web/frontend/']) {
       assert.throws(() => candidatePath(invalid, root), 'Noncanonical or escaping candidate paths must fail')
     }
     fs.symlinkSync(path.join(root, 'browser-candidate-web', 'frontend'), path.join(root, 'linked-frontend'), 'dir')

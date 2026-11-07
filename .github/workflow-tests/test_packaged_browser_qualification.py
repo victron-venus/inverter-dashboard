@@ -36,6 +36,12 @@ class PackagedBrowserQualificationTests(unittest.TestCase):
         self.assertEqual(matrix["with"]["browser-extended"], "${{ inputs.channel == 'rc' }}")
         self.assertEqual(matrix["with"]["browser-evidence-prefix"], "browser-release")
         self.assertIn("prepare_browser_candidate.py", matrix["with"]["browser-prepare-command"])
+        runtime_checks = "\n".join(step.get("run", "") for step in runtime["steps"])
+        self.assertIn("node --test scripts/packaged_browser_contract.test.cjs", runtime_checks)
+        source_checks = "\n".join(
+            step.get("run", "") for step in jobs("ci.yml")["qualification-contracts"]["steps"]
+        )
+        self.assertIn("scripts/packaged_browser_contract.test.cjs", source_checks)
 
     def test_preserved_release_evidence_depends_on_every_lane(self):
         workflow = jobs("release-build.yml")
