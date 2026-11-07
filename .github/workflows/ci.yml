@@ -6,6 +6,37 @@ permissions:
   contents: read
 
 jobs:
+  qualification-contracts:
+    name: Browser qualification contracts
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Check qualification helper security with the locked analyzer
+        run: |
+          python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-bandit.txt
+          python3 -m bandit -q scripts/prepare_browser_candidate.py scripts/packaged_browser_acceptance.py scripts/packaged_browser_fixture.py scripts/native_acceptance.py scripts/native_acceptance_capture.py scripts/native_acceptance_webdriver.py scripts/verify_browser_release_evidence.py
+      - name: Verify candidate and native evidence boundaries
+        run: |
+          python3 scripts/test_prepare_browser_candidate.py
+          python3 scripts/test_packaged_browser_fixture.py
+          python3 scripts/test_verify_browser_release_evidence.py
+          python3 scripts/test_native_acceptance.py
+          python3 scripts/test_native_acceptance_webdriver.py
+      - name: Reject incomplete or duplicated scenario evidence
+        run: node --test scripts/browser-scenarios-contract.test.cjs scripts/pwa_acceptance.test.cjs
   browser-compatibility:
     name: Embedded frontend browser acceptance
     uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@ffa568e48a9510bf66dcfe01d6646f6840382431 # main

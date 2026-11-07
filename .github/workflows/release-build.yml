@@ -94,6 +94,8 @@ jobs:
     name: Build container archive
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && (vars.CI_RUNNER_RELEASE_LABELS || '[]') || '["ubuntu-latest"]') }}
     timeout-minutes: 60
+    outputs:
+      oci-artifact-id: ${{ steps.release-container.outputs.artifact-id }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
@@ -143,9 +145,123 @@ jobs:
           RELEASE_ASSET_PATTERN_0: inverter-dashboard-container.oci.tar
         run: python3 scripts/stage_release_assets.py --target "$RELEASE_ASSET_TARGET" --pattern "$RELEASE_ASSET_PATTERN_0"
       - name: Store release assets
+        id: release-container
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets-container-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: release-assets/container/*
           if-no-files-found: error
           retention-days: 14
+  packaged-browser:
+    name: Exact OCI backend and browser acceptance
+    needs: container
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      browser-artifact-id: ${{ steps.candidate.outputs.artifact-id }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22'
+      - name: Download exact same-run container artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.container.outputs.oci-artifact-id }}
+          path: packaged-container
+          merge-multiple: true
+      - name: Download frozen release plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: .
+      - name: Install isolated, locked browser toolchain and OCI loader
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+          npm ci --prefix tools/browser-compatibility/playwright-1-64-0 --ignore-scripts
+          node tools/browser-compatibility/playwright-1-64-0/node_modules/playwright/cli.js install --with-deps chromium firefox webkit
+      - name: Check candidate safety contracts
+        run: |
+          python3 scripts/test_prepare_browser_candidate.py
+          python3 scripts/test_packaged_browser_fixture.py
+          node --check scripts/packaged_browser_e2e.cjs
+      - name: Exercise exact OCI without rebuilding or equipment access
+        env:
+          CI_PLAYWRIGHT_MODULE: ${{ github.workspace }}/tools/browser-compatibility/playwright-1-64-0/node_modules/playwright
+          CONTAINER_ARTIFACT_ID: ${{ needs.container.outputs.oci-artifact-id }}
+        run: python3 scripts/packaged_browser_acceptance.py --artifacts packaged-container --output packaged-browser-output --artifact-id "$CONTAINER_ARTIFACT_ID"
+      - name: Upload exact served frontend candidate
+        id: candidate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: browser-candidate-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            packaged-browser-output/browser-candidate.tar.gz
+            packaged-browser-output/browser-candidate.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve actual backend and browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: packaged-browser-diagnostics-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            packaged-browser-output/*.json
+            packaged-browser-output/*.png
+            packaged-browser-output/*.log
+          if-no-files-found: error
+          retention-days: 14
+  browser-release:
+    name: Packaged frontend platform matrix
+    needs: packaged-browser
+    permissions:
+      contents: read
+      actions: read
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@ffa568e48a9510bf66dcfe01d6646f6840382431
+    with:
+      node-version: '22'
+      run-node-ci: false
+      browser-matrix-file: .github/browser-compatibility.json
+      browser-test-command: node scripts/browser-acceptance.cjs
+      browser-artifact-id: ${{ needs.packaged-browser.outputs.browser-artifact-id }}
+      browser-artifact-path: browser-candidate
+      browser-release-channel: ${{ inputs.channel }}
+      browser-extended: ${{ inputs.channel == 'rc' }}
+      browser-evidence-prefix: browser-release
+      browser-prepare-command: |
+        PYTHON=python3
+        if ! "$PYTHON" -c 'import sys; assert sys.version_info >= (3, 12)' 2>/dev/null; then PYTHON=python; fi
+        "$PYTHON" scripts/prepare_browser_candidate.py browser-candidate browser-candidate-web
+
+  native-browser:
+    name: Candidate worker lifecycle and native Safari smoke
+    needs: packaged-browser
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/native-browser-acceptance.yml
+    with:
+      candidate_artifact_id: ${{ needs.packaged-browser.outputs.browser-artifact-id }}
+      channel: ${{ inputs.channel }}
+  browser-qualification:
+    name: Preserve complete packaged qualification
+    needs: [packaged-browser, browser-release, native-browser]
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/browser-release-evidence.yml
+    with:
+      candidate_artifact_id: ${{ needs.packaged-browser.outputs.browser-artifact-id }}
+      channel: ${{ inputs.channel }}
+      release_plan_artifact: ${{ inputs.release_plan_artifact }}

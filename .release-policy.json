@@ -66,7 +66,8 @@
       "release-inputs-linux-x86_64.json",
       "release-inputs-macos-arm64.json",
       "release-inputs-macos-x86_64.json",
-      "release-inputs-windows-x86_64.json"
+      "release-inputs-windows-x86_64.json",
+      "release-inputs-browser-qualification.json"
     ]
   },
   "single_entry_ci": true,

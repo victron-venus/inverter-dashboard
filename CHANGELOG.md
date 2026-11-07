@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.35] - 2026-11-07
+
+### Added
+
+- Bind release browser acceptance to the exact container artifact and its served
+  frontend bytes; test real backend HTTP/WebSocket boundaries with isolated
+  MQTT, gateway and Home Assistant fixtures before the wider browser matrix.
+- Require a versioned set of 25 browser scenarios, including warning occurrence
+  time, reconnect replay, External mode confirmation/rejection, Home/Water
+  availability, appliance visibility, six languages, timezones and touch input.
+- Preserve the per-target evidence and exact package identity as a checksummed
+  release asset. RC uses all 35 targets; beta retains the five-target baseline.
+- Add Service Worker lifecycle and native Safari smoke tooling, plus a separate
+  reviewed device/OS-notification evidence contract. Engine tests and provider
+  acceptance never count as observed native notification delivery.
+
+### Security
+
+Keep authentication and TLS enabled when updating. The package qualification
+requires rejection of unauthorized HTTP/WebSocket access, cross-origin sockets
+and unconfigured control targets using isolated test peers. Preserve existing
+private notification keys and subscriptions; never copy them into test fixtures.
+
+### Upgrade
+
+No configuration or data migration is required. These changes strengthen release
+qualification; they do not change embedded frontend product bytes. Native-device
+and system-notification acceptance must be recorded for the exact candidate
+before stable approval; source/engine checks alone do not establish it.
+
 ## [1.8.34] - 2026-11-02
 
 ### Changed

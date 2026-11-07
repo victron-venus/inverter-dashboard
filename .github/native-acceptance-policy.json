@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "qualification": "native-browser-and-observed-notifications",
+  "requiredFor": ["stable"],
+  "targets": [
+    {
+      "id": "macos-safari",
+      "platform": "macOS",
+      "browser": "Safari",
+      "installation": "browser",
+      "runtimes": ["native-host", "native-device"],
+      "scenarios": ["native-runtime-identity", "telemetry-alarms-controls", "keyboard-layout", "background-resume-source-fence", "permission-denied", "permission-granted-subscription", "subscription-revoke", "worker-update-no-cache", "closed-tab-os-notification", "notification-click-root"]
+    },
+    {
+      "id": "ios-safari-pwa",
+      "platform": "iOS",
+      "browser": "Safari",
+      "installation": "standalone",
+      "runtimes": ["native-device", "native-simulator"],
+      "scenarios": ["native-runtime-identity", "telemetry-alarms-controls", "touch-software-keyboard", "installed-launch", "background-resume-source-fence", "permission-denied", "permission-granted-subscription", "subscription-revoke", "worker-update-no-cache", "closed-tab-os-notification", "notification-click-root"]
+    },
+    {
+      "id": "android-chrome-pwa",
+      "platform": "Android",
+      "browser": "Chrome",
+      "installation": "standalone",
+      "runtimes": ["native-device", "native-emulator"],
+      "scenarios": ["native-runtime-identity", "telemetry-alarms-controls", "touch-software-keyboard", "installed-launch", "background-resume-source-fence", "permission-denied", "permission-granted-subscription", "subscription-revoke", "worker-update-no-cache", "closed-tab-os-notification", "notification-click-root"]
+    }
+  ]
+}

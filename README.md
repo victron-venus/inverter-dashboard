@@ -105,7 +105,7 @@ The [MIT license](LICENSE) applies. Report vulnerabilities privately through [SE
 
 ## Browser compatibility
 
-The [embedded frontend acceptance suite](docs/browser-compatibility.md) verifies the shipped SPA in real browser engines across Linux, Windows and macOS. Its required matrix is part of the existing CI gate, with expanded version coverage for scheduled and manual release qualification.
+The [browser acceptance suite](docs/browser-compatibility.md) checks the embedded SPA across Linux, Windows and macOS. Release qualification additionally tests the actual packaged backend with isolated devices and binds the wider browser matrix to the frontend bytes served by that package. The [native browser and notification runbook](docs/native-browser-acceptance.md) separates Safari/device/PWA observations from browser-engine emulation; an accepted push request alone does not prove a displayed system notification.
 
 ## Project practices
 

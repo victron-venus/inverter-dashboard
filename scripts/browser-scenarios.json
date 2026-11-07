@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "id": "dashboard-browser-behavior-v2",
+  "scenarios": [
+    "live-telemetry-load-order-and-real-chart",
+    "telemetry-updates-without-reload",
+    "theme-persists-across-reload",
+    "native-settings-dialog-focus-and-escape",
+    "invalid-settings-stay-local-before-valid-save",
+    "saved-section-visibility-survives-reload",
+    "rejected-command-shows-error-without-changing-state",
+    "disconnect-and-reconnect-restores-live-telemetry",
+    "retained-warning-displays-source-time-not-receipt-time",
+    "incomplete-warning-time-is-never-invented",
+    "reconnect-replay-keeps-event-time-and-history-unique",
+    "external-menu-all-six-modes-use-correlated-observation",
+    "external-menu-stale-and-dry-controls-send-nothing",
+    "external-rejection-and-unrelated-replies-do-not-change-selection",
+    "home-controls-use-only-configured-entities-and-fresh-state",
+    "home-command-rejection-does-not-optimistically-toggle",
+    "water-controls-have-independent-availability-and-confirmation",
+    "water-command-rejection-preserves-observed-state",
+    "appliance-cards-require-running-and-enabled-state",
+    "six-locales-persist-without-server-configuration-writes",
+    "warning-exact-time-respects-timezone-and-dst",
+    "touch-context-opens-menu-and-settings-without-overflow",
+    "mobile-layout-keeps-settings-keyboard-accessible",
+    "public-mode-has-telemetry-but-no-write-controls",
+    "no-browser-errors-or-external-requests"
+  ]
+}
