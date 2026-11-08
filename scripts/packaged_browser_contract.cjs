@@ -1,5 +1,53 @@
 /** Final real-fixture command journal checks shared by runtime QA and controls. */
 const assert = require('node:assert/strict')
+const { setTimeout: delay } = require('node:timers/promises')
+
+function seedIdentity(response) {
+  assert.equal(response?.ok, true, 'Fixture seed must be acknowledged')
+  for (const key of ['journalEpoch', 'eventEpoch']) {
+    assert(Number.isSafeInteger(response[key]) && response[key] > 0,
+      `Seed must bind a positive ${key}`)
+  }
+  return Object.freeze({ journalEpoch: response.journalEpoch, eventEpoch: response.eventEpoch })
+}
+
+function eventEpochFromTime(value) {
+  if (typeof value !== 'string') return null
+  const epoch = Date.parse(value) / 1000
+  return Number.isSafeInteger(epoch) && epoch > 0 ? epoch : null
+}
+
+function nativeAlarmEpoch(value) {
+  const alarms = value?.notifications?.filter(item => item.id === 'victron-platform-0-1' &&
+    item.title === 'Fixture old alarm' && item.source === 'victron')
+  return alarms?.length === 1 ? eventEpochFromTime(alarms[0].ts) : null
+}
+
+function assertSeedIdentity(status, identity) {
+  assert(status?.journalEpoch === identity.journalEpoch, 'Fixture command journal changed during seed consumption')
+  assert(status?.eventEpoch === identity.eventEpoch, 'Fixture event identity changed during seed consumption')
+}
+
+async function waitForSeedEvent(readEpoch, readFixture, identity, workDeadline) {
+  const deadline = Math.min(Date.now() + 25000, workDeadline)
+  async function poll() {
+    remainingWork(deadline)
+    const status = await readFixture()
+    remainingWork(deadline)
+    assertSeedIdentity(status, identity)
+    const observed = await readEpoch()
+    remainingWork(deadline)
+    if (observed === identity.eventEpoch) {
+      assertSeedIdentity(await readFixture(), identity)
+      remainingWork(deadline)
+      return observed
+    }
+    // Serial reads observe propagation; no reseed or new identity is accepted.
+    await delay(Math.min(150, remainingWork(deadline)))
+    return poll()
+  }
+  return withinWorkDeadline(poll, deadline)
+}
 
 function expectedCommandJournal(transport, controller, home) {
   assert(['mqtt', 'igw'].includes(transport), 'Unexpected test transport')
@@ -51,12 +99,14 @@ function failureState(value) {
   if (['mqtt', 'igw'].includes(value?.data_source)) result.data_source = value.data_source
   result.batterySoc = Array.isArray(value?.batteries)
     ? value.batteries.slice(0, 8).map(item => Number.isFinite(item?.soc) ? item.soc : null) : []
+  result.nativeAlarmEpoch = nativeAlarmEpoch(value)
   return result
 }
 
 function failureFixture(value) {
   const result = { commandAttempts: Array.isArray(value?.capture) ? value.capture.length : null }
   if (Number.isSafeInteger(value?.journalEpoch)) result.journalEpoch = value.journalEpoch
+  if (Number.isSafeInteger(value?.eventEpoch)) result.eventEpoch = value.eventEpoch
   for (const key of ['generation', 'activeSessions', 'readySessions']) {
     if (Number.isSafeInteger(value?.mqtt?.[key])) result[key] = value.mqtt[key]
   }
@@ -205,6 +255,7 @@ async function withOwnedBrowser(server, work, diagnostics,
 }
 
 module.exports = {
+  seedIdentity, eventEpochFromTime, nativeAlarmEpoch, waitForSeedEvent,
   expectedCommandJournal, verifyFinalCommandJournal, PACKAGED_BANK_SOC, assertPackagedTelemetry,
   failureState, failureFixture, boundedDiagnostic, visibleFailureDom, failureMessage, withStartupDiagnostics,
   withOwnedBrowser, remainingWork, withinWorkDeadline,

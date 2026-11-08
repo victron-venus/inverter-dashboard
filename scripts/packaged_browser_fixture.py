@@ -127,18 +127,34 @@ def required_topics() -> set[str]:
     }
 
 
-def seed(authority: bool = True, event: bool = True) -> dict[str, set[int]]:
+def next_event_epoch() -> int:
+    """Caller holds LOCK; distinct seed identity must remain at least an hour old."""
+    now = int(time.time())
+    candidate = max(now - 4500, EVENT_EPOCH + 1)
+    if not 0 < candidate <= min(now - 3600, 2**53 - 1):
+        raise ValueError("Cannot allocate a distinct source-aged fixture event")
+    return candidate
+
+
+def seed(
+    authority: bool = True, event: bool = True, *, reset_journal: bool = False
+) -> dict[str, set[int]]:
     """Publish source-aged warnings and a synthetic controller observation."""
     global SNAPSHOT, EVENT_EPOCH, HA_READS, HA_STATE
-    EVENT_EPOCH = int(time.time()) - 4500
     inverter = {
         "version": "packaged-fixture",
         "dry_run": False,
         "booleans": {"charge_battery": False, "only_charging": False},
     }
-    groups = source_groups(EVENT_EPOCH, event)
     deliveries = {}
     with LOCK:
+        # Validate before any journal/state mutation. Reconnect has no event and
+        # does not allocate a replacement identity for the original seed.
+        event_epoch = next_event_epoch() if event else EVENT_EPOCH
+        groups = source_groups(event_epoch, event)
+        if reset_journal:
+            reset_command_journal()
+        EVENT_EPOCH = event_epoch
         HA_READS = 0
         HA_STATE = "off"
         SNAPSHOT = {
@@ -200,22 +216,39 @@ def reset_command_journal():
         CAPTURE.clear()
 
 
+def seed_control(client=None) -> tuple[int, dict]:
+    """Caller holds LOCK through event allocation, journal reset and ACK."""
+    try:
+        deliveries = seed(reset_journal=True)
+    except ValueError:
+        return 409, {"error": "Distinct source-aged fixture event unavailable"}
+    if client and any(client.session_id not in sent for sent in deliveries.values()):
+        return 503, {"error": "MQTT live publication failed"}
+    binding = (
+        {**client.binding(), "livePublications": len(deliveries)}
+        if client
+        else {"transport": "igw"}
+    )
+    return 200, {
+        "ok": True,
+        **binding,
+        "journalEpoch": JOURNAL_EPOCH,
+        "eventEpoch": EVENT_EPOCH,
+    }
+
+
 def fixture_control(action: str, body: dict) -> tuple[int, dict]:
     """Validate current subscriber identity before any mutation; caller holds LOCK."""
     if action == "seed" and body == {"transport": "igw"}:
-        reset_command_journal()
-        seed()
-        return 200, {"ok": True, "transport": "igw", "journalEpoch": JOURNAL_EPOCH}
+        return seed_control()
     if body.get("transport") != "mqtt" or (client := selected_session(body)) is None:
         return 409, {"error": "Current subscribed MQTT session required"}
     if action == "reconnect":
         return 200, reconnect_fixture()
     if action == "seed":
-        reset_command_journal()
-        deliveries = seed()
-    else:
-        topic = f"N/{PORTAL}/platform/0/Notifications/1/Description"
-        deliveries = {topic: publish(topic, {"value": "Fixture fresh alarm"})}
+        return seed_control(client)
+    topic = f"N/{PORTAL}/platform/0/Notifications/1/Description"
+    deliveries = {topic: publish(topic, {"value": "Fixture fresh alarm"})}
     if any(client.session_id not in delivered for delivered in deliveries.values()):
         return 503, {"error": "MQTT live publication failed"}
     return 200, {

@@ -107,6 +107,41 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(self.request("/api/states/switch.fixture_light")["state"], "off")
         self.assertEqual(self.request("/fixture/status")["haReads"], 1)
 
+    def test_frozen_clock_seeds_have_distinct_source_aged_acknowledged_events(self):
+        now = 1_800_000_000
+        with (
+            patch.object(fixture, "EVENT_EPOCH", 0),
+            patch.object(fixture.time, "time", return_value=now),
+        ):
+            first = self.request("/fixture/seed", body={"transport": "igw"})
+            second = self.request("/fixture/seed", body={"transport": "igw"})
+            self.assertEqual(first["eventEpoch"], now - 4500)
+            self.assertEqual(second["eventEpoch"], first["eventEpoch"] + 1)
+            self.assertGreater(second["journalEpoch"], first["journalEpoch"])
+            self.assertLessEqual(second["eventEpoch"], now - 3600)
+            status = self.request("/fixture/status")
+            snapshot = self.request("/v1/snapshot")
+            self.assertEqual(status["eventEpoch"], second["eventEpoch"])
+            self.assertEqual(status["journalEpoch"], second["journalEpoch"])
+            self.assertEqual(
+                snapshot["platform"]["0/Notifications/1/DateTime"], second["eventEpoch"]
+            )
+
+    def test_clock_regression_cannot_reset_journal_or_create_a_recent_event(self):
+        self.request("/api/services/switch/toggle", body={"entity_id": "switch.fixture_light"})
+        before = self.request("/fixture/status")
+        snapshot = self.request("/v1/snapshot")
+        with fixture.LOCK:
+            messages = dict(fixture.MESSAGES)
+            ha_state = fixture.HA_STATE
+        with patch.object(fixture.time, "time", return_value=before["eventEpoch"] + 3600):
+            self.assert_control_rejected("/fixture/seed", {"transport": "igw"})
+        self.assertEqual(self.request("/fixture/status"), before)
+        self.assertEqual(self.request("/v1/snapshot"), snapshot)
+        with fixture.LOCK:
+            self.assertEqual(fixture.MESSAGES, messages)
+            self.assertEqual(fixture.HA_STATE, ha_state)
+
     def test_invalid_ha_actuator_attempts_are_recorded_without_changing_state(self):
         attempts = [
             ("/api/services/switch/toggle", {"entity_id": "switch.unconfigured"}),
@@ -234,6 +269,11 @@ class FixtureTests(unittest.TestCase):
         self.assertIsNotNone(binding)
         accepted = self.request("/fixture/seed", body={"transport": "mqtt", **binding})
         self.assertEqual(accepted["journalEpoch"], self.request("/fixture/status")["journalEpoch"])
+        self.assertEqual(accepted["eventEpoch"], self.request("/fixture/status")["eventEpoch"])
+        self.assertEqual(
+            accepted["eventEpoch"],
+            self.request("/v1/snapshot")["platform"]["0/Notifications/1/DateTime"],
+        )
         expected_publications = len(fixture.required_topics())
         self.assertEqual(accepted["livePublications"], expected_publications)
         topics = set()

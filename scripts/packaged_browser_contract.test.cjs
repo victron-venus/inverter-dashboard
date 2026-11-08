@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process')
 const { once } = require('node:events')
 const test = require('node:test')
 const { expectedCommandJournal, verifyFinalCommandJournal, assertPackagedTelemetry,
+  seedIdentity, eventEpochFromTime, nativeAlarmEpoch, waitForSeedEvent,
   failureState, failureFixture, boundedDiagnostic, visibleFailureDom, failureMessage, withStartupDiagnostics,
   withOwnedBrowser, remainingWork, withinWorkDeadline } = require('./packaged_browser_contract.cjs')
 
@@ -75,6 +76,100 @@ async function journalFixture(t) {
 const controllerInput = { action: 'toggle', entity: 'charge_battery', state: true }
 const homeInput = { action: 'toggle', entity: 'switch.fixture_light' }
 
+const seededEvent = Object.freeze({ journalEpoch: 5, eventEpoch: 1794105313 })
+const eventIso = epoch => new Date(epoch * 1000).toISOString()
+const eventState = epoch => ({ notifications: [{ id: 'victron-platform-0-1',
+  title: 'Fixture old alarm', source: 'victron', ts: eventIso(epoch) }] })
+
+test('seed consumption waits past a prior backend snapshot with the identical title', async () => {
+  let reads = 0
+  const read = async () => nativeAlarmEpoch(eventState(++reads === 1 ? seededEvent.eventEpoch - 2 : seededEvent.eventEpoch))
+  assert.equal(await waitForSeedEvent(read, async () => seededEvent, seededEvent, Date.now() + 2000), seededEvent.eventEpoch)
+  assert.equal(reads, 2)
+})
+
+test('seed consumption separately waits for the DOM after the backend is current', async () => {
+  await waitForSeedEvent(async () => nativeAlarmEpoch(eventState(seededEvent.eventEpoch)),
+    async () => seededEvent, seededEvent, Date.now() + 2000)
+  let reads = 0
+  const readDom = async () => eventEpochFromTime(eventIso(++reads === 1 ? seededEvent.eventEpoch - 2 : seededEvent.eventEpoch))
+  assert.equal(await waitForSeedEvent(readDom, async () => seededEvent, seededEvent, Date.now() + 2000), seededEvent.eventEpoch)
+  assert.equal(reads, 2)
+})
+
+test('seed consumption never matching the timestamp fails within the existing work deadline', { timeout: 2000 }, async () => {
+  const started = Date.now()
+  await assert.rejects(waitForSeedEvent(async () => seededEvent.eventEpoch - 2,
+    async () => seededEvent, seededEvent, started + 30), /work deadline exceeded/)
+  assert(Date.now() - started < 1000)
+})
+
+test('seed consumption bounds a blocked source read by the same work deadline', { timeout: 2000 }, async () => {
+  const started = Date.now()
+  await assert.rejects(waitForSeedEvent(() => new Promise(() => {}),
+    async () => seededEvent, seededEvent, started + 30), /work deadline exceeded/)
+  assert(Date.now() - started < 1000)
+})
+
+test('seed consumption does not start an epoch read when a held fixture response arrives after the deadline', { timeout: 2000 }, async () => {
+  let releaseFixture
+  const heldFixture = new Promise(resolve => { releaseFixture = resolve })
+  let epochReads = 0
+  await assert.rejects(waitForSeedEvent(async () => { epochReads++; return seededEvent.eventEpoch },
+    () => heldFixture, seededEvent, Date.now() + 30), /work deadline exceeded/)
+  assert.equal(epochReads, 0)
+  releaseFixture(seededEvent)
+  // Drain the deferred continuation, rather than assuming an elapsed sleep is proof.
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(epochReads, 0)
+})
+
+test('seed consumption rejects an event identity change before reading stale backend data', async () => {
+  let reads = 0
+  await assert.rejects(waitForSeedEvent(async () => { reads++; return seededEvent.eventEpoch },
+    async () => ({ ...seededEvent, eventEpoch: seededEvent.eventEpoch + 1 }), seededEvent, Date.now() + 2000),
+  /event identity changed/)
+  assert.equal(reads, 0)
+})
+
+test('seed consumption rejects a journal reset after a matching timestamp without repinning', async () => {
+  let fixtureReads = 0
+  await assert.rejects(waitForSeedEvent(async () => seededEvent.eventEpoch,
+    async () => ++fixtureReads === 1 ? seededEvent : { ...seededEvent, journalEpoch: 6 },
+    seededEvent, Date.now() + 2000), /command journal changed/)
+  assert.equal(fixtureReads, 2)
+})
+
+test('seed consumption rejects an event replacement after a matching DOM timestamp', async () => {
+  let fixtureReads = 0
+  await assert.rejects(waitForSeedEvent(async () => eventEpochFromTime(eventIso(seededEvent.eventEpoch)),
+    async () => ++fixtureReads === 1 ? seededEvent : { ...seededEvent, eventEpoch: seededEvent.eventEpoch + 1 },
+    seededEvent, Date.now() + 2000), /event identity changed/)
+})
+
+test('seed acknowledgement requires immutable positive integer event and journal identities', () => {
+  const ack = { ok: true, ...seededEvent }
+  const identity = seedIdentity(ack)
+  assert.deepEqual(identity, seededEvent)
+  assert(Object.isFrozen(identity))
+  ack.eventEpoch++
+  assert.equal(identity.eventEpoch, seededEvent.eventEpoch)
+  for (const invalid of [undefined, null, 0, -1, 1.5, '1794105313', Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => seedIdentity({ ...ack, eventEpoch: invalid }), /positive eventEpoch/)
+    assert.throws(() => seedIdentity({ ...ack, journalEpoch: invalid }), /positive journalEpoch/)
+  }
+  assert.throws(() => seedIdentity({ ...ack, ok: false }), /must be acknowledged/)
+})
+
+test('seed timestamp matching requires the exact native event and whole source seconds', () => {
+  assert.equal(nativeAlarmEpoch(eventState(seededEvent.eventEpoch)), seededEvent.eventEpoch)
+  assert.equal(nativeAlarmEpoch({ notifications: [{ ...eventState(seededEvent.eventEpoch).notifications[0], source: 'other' }] }), null)
+  assert.equal(nativeAlarmEpoch({ notifications: [...eventState(seededEvent.eventEpoch).notifications, ...eventState(seededEvent.eventEpoch).notifications] }), null)
+  assert.equal(eventEpochFromTime(undefined), null)
+  assert.equal(eventEpochFromTime('invalid'), null)
+  assert.equal(eventEpochFromTime(eventIso(seededEvent.eventEpoch).replace('.000Z', '.001Z')), null)
+})
+
 async function publishAllowed(publish) {
   await publish('/v1/commands/toggle', { entity: 'charge_battery', state: 'on' })
   await publish('/api/services/switch/toggle', { entity_id: 'switch.fixture_light' })
@@ -138,11 +233,13 @@ test('failure projections cannot persist credentials or arbitrary state strings'
     dashboard_version: secret, token: secret, gateway_url: secret, current_state: secret,
     batteries: [{ name: secret, soc: 73, token: secret }, { soc: secret }], controller_controls_available: secret })
   assert.deepEqual(state, { mqtt_connected: true, battery_soc: 78, battery_voltage: 51.2,
-    data_source: 'mqtt', batterySoc: [73, null] })
-  const fixture = failureFixture({ journalEpoch: 3, mqtt: { generation: 2, activeSessions: 1, readySessions: 1,
+    data_source: 'mqtt', batterySoc: [73, null], nativeAlarmEpoch: null })
+  const fixture = failureFixture({ journalEpoch: 3, eventEpoch: seededEvent.eventEpoch, mqtt: { generation: 2, activeSessions: 1, readySessions: 1,
     readySession: { token: secret } }, capture: [{ body: { token: secret } }], haReads: 3, token: secret })
   assert.equal(fixture.commandAttempts, 1)
   assert.equal(fixture.journalEpoch, 3)
+  assert.equal(fixture.eventEpoch, seededEvent.eventEpoch)
+  assert(!Object.hasOwn(failureFixture({ eventEpoch: secret }), 'eventEpoch'))
   assert(!Object.hasOwn(failureFixture({ journalEpoch: secret }), 'journalEpoch'))
   assert(!JSON.stringify({ state, fixture }).includes(secret))
 })
