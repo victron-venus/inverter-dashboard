@@ -2,11 +2,13 @@
 
 import base64
 import copy
+import http.client
 import io
 import json
 import tempfile
 import threading
 import unittest
+import urllib.error
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -72,7 +74,7 @@ class NativeToolTests(unittest.TestCase):
         ):
             driver.macos_host_identity()
 
-    def protocol_server(self):
+    def protocol_server(self, status=200, body=b'{"value":{"ready":true}}'):
         paths = []
 
         class Handler(BaseHTTPRequestHandler):
@@ -83,10 +85,14 @@ class NativeToolTests(unittest.TestCase):
                     self.send_header("Location", "/must-not-be-followed")
                     self.end_headers()
                     return
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"value":{"ready":true}}')
+                self.wfile.write(body)
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                self.do_GET()
 
             def log_message(self, *_args):
                 # Keep fixture HTTP logs quiet; each request is asserted through paths above.
@@ -158,6 +164,185 @@ class NativeToolTests(unittest.TestCase):
         with patch.object(transport.opener, "open", return_value=response) as opened:
             self.assertTrue(transport.call("GET", "/status"))
         self.assertEqual(opened.call_args.kwargs["timeout"], 45)
+
+    def test_real_session_rejection_preserves_bounded_w3c_reason(self):
+        body = json.dumps(
+            {
+                "value": {
+                    "error": "session not created",
+                    "message": "Safari could not create an automation session.",
+                    "stacktrace": "NOT_RETAINED",
+                    "data": {"token": "NOT_RETAINED"},
+                }
+            }
+        ).encode()
+        origin, paths = self.protocol_server(status=500, body=body)
+        with self.assertRaises(driver.WebDriverHTTPError) as caught:
+            driver.WebDriver(origin).call("POST", "/session", {"capabilities": {}})
+        self.assertEqual(paths, ["/session"])
+        self.assertEqual(
+            caught.exception.diagnostic,
+            {
+                "httpStatus": 500,
+                "responseKind": "w3c-error",
+                "errorCode": "session not created",
+                "message": "Safari could not create an automation session.",
+                "messageTruncated": False,
+            },
+        )
+        self.assertNotIn("NOT_RETAINED", str(caught.exception))
+
+    def rejected_response(self, response):
+        error = urllib.error.HTTPError(
+            "http://127.0.0.1:4444/session",
+            500,
+            "untrusted server text",
+            response.headers,
+            response,
+        )
+        transport = driver.WebDriver("http://127.0.0.1:4444")
+        with (
+            patch.object(transport.opener, "open", side_effect=error),
+            self.assertRaises(driver.WebDriverHTTPError) as caught,
+        ):
+            transport.call("POST", "/session", {})
+        self.assertTrue(response.closed)
+        self.assertEqual(caught.exception.diagnostic["httpStatus"], 500)
+        self.assertNotIn("untrusted server text", str(caught.exception))
+        return caught.exception
+
+    def test_http_failure_fallbacks_keep_status_and_close_body(self):
+        cases = [
+            (b"PRIVATE", "text/html", None, "non-json"),
+            (b"not json PRIVATE", "application/json", None, "unavailable"),
+            (b"{}", "application/json", None, "invalid-schema"),
+            (b'{"value":[]}', "application/json", None, "invalid-schema"),
+            (b'{"value":{"error":12}}', "application/json", None, "invalid-schema"),
+            (b"PRIVATE", "application/json", "invalid", "invalid-or-oversized-length"),
+            (b"PRIVATE", "application/json", "9" * 5000, "invalid-or-oversized-length"),
+            (
+                b"PRIVATE",
+                "application/json",
+                driver.MAX_WEBDRIVER_ERROR_RESPONSE + 1,
+                "invalid-or-oversized-length",
+            ),
+            (
+                b"x" * (driver.MAX_WEBDRIVER_ERROR_RESPONSE + 1),
+                "application/json",
+                None,
+                "oversized-body",
+            ),
+        ]
+        for body, content_type, length, kind in cases:
+            with self.subTest(kind=kind, length=length):
+                response = self.response(body, content_type, length)
+                error = self.rejected_response(response)
+                self.assertEqual(error.diagnostic, {"httpStatus": 500, "responseKind": kind})
+                self.assertNotIn("PRIVATE", str(error))
+
+    def test_http_failure_body_read_error_does_not_mask_status(self):
+        for failure in (OSError("PRIVATE"), http.client.IncompleteRead(b"PRIVATE", 10)):
+            with self.subTest(failure=type(failure).__name__):
+                response = self.response(b"")
+                with patch.object(response, "read", side_effect=failure):
+                    error = self.rejected_response(response)
+                self.assertEqual(error.diagnostic["responseKind"], "unavailable")
+
+    def test_http_error_redacts_quoted_credential_assignments(self):
+        for message in (
+            '{"token":"SENSITIVE_MARKER"}',
+            '{"password":"SENSITIVE_MARKER"}',
+            "{'secret': 'SENSITIVE_MARKER'}",
+        ):
+            with self.subTest(message=message):
+                response = self.response(
+                    json.dumps(
+                        {
+                            "value": {
+                                "error": "session not created",
+                                "message": message,
+                            }
+                        }
+                    ).encode()
+                )
+                self.assertNotIn("SENSITIVE_MARKER", str(self.rejected_response(response)))
+
+    def test_http_failure_json_recursion_error_does_not_mask_status(self):
+        response = self.response(b"[]")
+        with patch.object(driver.json, "loads", side_effect=RecursionError):
+            error = self.rejected_response(response)
+        self.assertEqual(error.diagnostic["responseKind"], "unavailable")
+
+    def test_http_error_omits_credentials_paths_controls_and_unrecognized_code(self):
+        message = (
+            "Failure at https://user:pass@example.com/path?token=URL_PRIVATE "
+            'password="PASSWORD_PRIVATE" token=TOKEN_PRIVATE '
+            "Bearer BEARER_PRIVATE Basic BASIC_PRIVATE "
+            "/Users/private/FILE_PRIVATE C:\\private\\WIN_PRIVATE "
+            "\x1b\n" + "Z" * 40 + " useful reason " + "more words " * 200
+        )
+        response = self.response(
+            json.dumps(
+                {
+                    "value": {
+                        "error": "UNKNOWN_PRIVATE",
+                        "message": message,
+                        "stacktrace": "STACK_PRIVATE",
+                        "data": {"token": "DATA_PRIVATE"},
+                    }
+                }
+            ).encode()
+        )
+        error = self.rejected_response(response)
+        self.assertEqual(error.diagnostic["errorCode"], "unrecognized")
+        self.assertLessEqual(len(error.diagnostic["message"]), 768)
+        self.assertTrue(error.diagnostic["messageTruncated"])
+        self.assertIn("useful reason", error.diagnostic["message"])
+        self.assertNotIn("PRIVATE", str(error))
+        self.assertNotIn("Z" * 40, str(error))
+        self.assertTrue(all(c.isprintable() for c in error.diagnostic["message"]))
+
+    def test_session_rejection_is_recorded_without_positive_scenarios(self):
+        transport = Mock(session=None)
+        failure = driver.WebDriverHTTPError(
+            500,
+            {
+                "responseKind": "w3c-error",
+                "errorCode": "session not created",
+                "message": "Safari could not start",
+                "messageTruncated": False,
+            },
+        )
+        transport.call.side_effect = failure
+        candidate = {
+            "repository": "victron-venus/test",
+            "sourceSha": "a" * 40,
+            "runId": 1,
+            "runAttempt": 1,
+            "candidateArtifactId": 2,
+            "candidateSha256": "b" * 64,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            with (
+                patch.dict("os.environ", {"GITHUB_ACTIONS": "true"}),
+                patch.object(driver, "WebDriver", return_value=transport),
+                patch.object(driver, "macos_host_identity", return_value={"osName": "macOS"}),
+                self.assertRaises(driver.WebDriverHTTPError),
+            ):
+                driver.execute(
+                    candidate,
+                    "https://127.0.0.1",
+                    "http://127.0.0.1:4444",
+                    "macOS",
+                    "native-host",
+                    output,
+                )
+            record = gate.read_json(output / "native-smoke.provisional.json")
+            self.assertEqual(record["status"], "failed")
+            self.assertEqual(record["scenarios"], [])
+            self.assertEqual(record["driverFailure"], failure.diagnostic)
+            self.assertFalse((output / "native-smoke.json").exists())
 
     def test_capture_is_pending_and_never_overwrites(self):
         candidate = {

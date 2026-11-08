@@ -319,11 +319,55 @@ test('admin trust and certificate removal are bounded and attempted independentl
     ['/usr/bin/security', 'remove-trusted-cert', '-d', '/fixture/cert.pem'],
     ['/usr/bin/security', 'delete-certificate', '-Z', 'A'.repeat(64), '/Library/Keychains/System.keychain'],
   ])
-  for (const call of calls) { assert.equal(call.program, '/usr/bin/sudo'); assert.equal(call.options.timeout, 30000) }
+  for (const call of calls) {
+    assert.equal(call.program, '/usr/bin/sudo')
+    assert.equal(call.options.timeout, 30000)
+    assert.equal(call.options.stdio, 'ignore')
+  }
   const attempted = []
   const fail = (_program, args) => { attempted.push(args[1]); throw new Error('synthetic cleanup failure') }
   assert.equal(removeFixtureTrust('/fixture/cert.pem', 'A'.repeat(64), fail).length, 2)
   assert.deepEqual(attempted, ['remove-trusted-cert', 'delete-certificate'])
+})
+
+test('trust cleanup distinguishes timeout and exit status without retaining raw errors', () => {
+  const { removeFixtureTrust } = require('./native_acceptance_smoke.cjs')
+  const secret = 'synthetic-cleanup-secret-never-exported'
+  const attempts = []
+  const invoke = (_program, args, options) => {
+    attempts.push(args[1])
+    assert.equal(options.stdio, 'ignore')
+    assert.equal(options.timeout, 30000)
+    const error = new Error(secret)
+    Object.assign(error, { command: secret, env: { token: secret }, stdout: secret, stderr: secret })
+    if (args[1] === 'remove-trusted-cert') Object.assign(error, { code: 'ETIMEDOUT', status: null, signal: 'SIGTERM' })
+    else Object.assign(error, { status: 1, signal: null })
+    throw error
+  }
+  const failures = removeFixtureTrust('/fixture/cert.pem', 'A'.repeat(64), invoke)
+  assert.deepEqual(attempts, ['remove-trusted-cert', 'delete-certificate'])
+  assert.deepEqual(failures, [
+    'Temporary fixture admin trust cleanup failed {"code":"ETIMEDOUT","exitStatus":null,"signal":"SIGTERM"}',
+    'Temporary fixture certificate cleanup failed {"code":null,"exitStatus":1,"signal":null}',
+  ])
+  assert(!failures.join('; ').includes(secret))
+  const { finalizeNativeReceipt } = require('./native_acceptance_network.cjs')
+  const provisional = { scope: 'native-smoke', status: 'pending-parent-validation', sessionCleanupSucceeded: true, cspProbeObserved: true }
+  const network = { probeReports: 1, candidateViolations: 0, malformedReports: 0, httpWrites: 0, policySha256: 'a'.repeat(64) }
+  assert.throws(() => finalizeNativeReceipt(provisional, network, { applicationFrames: 0, protocolErrors: 0 }, failures), /cleanup/)
+})
+
+test('trust cleanup excludes arbitrary code, status and signal payloads', () => {
+  const { removeFixtureTrust } = require('./native_acceptance_smoke.cjs')
+  const secret = 'synthetic-untrusted-process-field'
+  let attempts = 0
+  const failures = removeFixtureTrust('/fixture/cert.pem', 'A'.repeat(64), () => {
+    attempts++
+    throw Object.assign(new Error(secret), { code: secret, status: attempts === 1 ? secret : 999999, signal: secret })
+  })
+  assert.equal(attempts, 2)
+  assert(failures.every(value => value.endsWith('{"code":"other","exitStatus":null,"signal":null}')))
+  assert(!failures.join('; ').includes(secret))
 })
 
 

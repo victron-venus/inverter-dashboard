@@ -7,9 +7,11 @@ Not an installed-PWA, software-keyboard, physical-device or OS notification test
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import platform
+import re
 
 # Subprocess is limited to the literal read-only /usr/bin/sw_vers call below.
 import subprocess  # nosec B404
@@ -63,6 +65,79 @@ def loopback_url(value, scheme):
 
 
 MAX_WEBDRIVER_RESPONSE = 8 * 1024 * 1024
+MAX_WEBDRIVER_ERROR_RESPONSE = 16 * 1024
+W3C_ERROR_CODES = frozenset(
+    {
+        "invalid argument",
+        "invalid session id",
+        "no such driver",
+        "session not created",
+        "unknown error",
+        "unknown command",
+        "unsupported operation",
+        "timeout",
+        "script timeout",
+        "javascript error",
+        "unexpected alert open",
+        "no such window",
+    }
+)
+
+
+def diagnostic_message(value):
+    """Bound a controlled hosted-driver message; omit common credential/path values."""
+    value = " ".join("".join(char if char.isprintable() else " " for char in value).split())
+    value = re.sub(r"(?i)\b(?:bearer|basic)\s+\S+", "[credential]", value)
+    value = re.sub(
+        r"(?i)\b(?:authorization|token|password|secret|api[_-]?key|cookie|session[_-]?id)"
+        r"[\"']?\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+        "[credential]",
+        value,
+    )
+    value = re.sub(r"(?i)\b[a-z][a-z0-9+.-]*://\S+", "[url]", value)
+    value = re.sub(r"(?:[A-Za-z]:[\\/]|/)[^\s\"']+", "[path]", value)
+    value = re.sub(r"[A-Za-z0-9_+/=-]{24,}", "[opaque]", value)
+    return value
+
+
+def driver_error_details(response):
+    """Read a small W3C error only; arbitrary response bodies are never retained."""
+    details = {"responseKind": "unavailable"}
+    length = response.headers.get("Content-Length")
+    if length is not None and (
+        not length.isdecimal() or len(length) > 6 or int(length) > MAX_WEBDRIVER_ERROR_RESPONSE
+    ):
+        return {"responseKind": "invalid-or-oversized-length"}
+    if response.headers.get_content_type() != "application/json":
+        return {"responseKind": "non-json"}
+    try:
+        body = response.read(MAX_WEBDRIVER_ERROR_RESPONSE + 1)
+        if len(body) > MAX_WEBDRIVER_ERROR_RESPONSE:
+            return {"responseKind": "oversized-body"}
+        document = json.loads(body)
+    except (OSError, ValueError, RecursionError, http.client.HTTPException):
+        return details
+    if not isinstance(document, dict) or set(document) != {"value"}:
+        return {"responseKind": "invalid-schema"}
+    value = document["value"]
+    if not isinstance(value, dict) or not isinstance(value.get("error"), str):
+        return {"responseKind": "invalid-schema"}
+    details = {
+        "responseKind": "w3c-error",
+        "errorCode": value["error"] if value["error"] in W3C_ERROR_CODES else "unrecognized",
+    }
+    message = value.get("message")
+    if isinstance(message, str):
+        redacted = diagnostic_message(message)
+        details["message"] = redacted[:768]
+        details["messageTruncated"] = len(redacted) > 768
+    return details
+
+
+class WebDriverHTTPError(ValueError):
+    def __init__(self, status, details):
+        self.diagnostic = {"httpStatus": status, **details}
+        super().__init__(f"WebDriver rejected HTTP status {status}: " + json.dumps(details))
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -120,8 +195,11 @@ class WebDriver:
                 return decode_driver_response(response)
         except urllib.error.HTTPError as error:
             status = error.code
-            error.close()
-            raise ValueError(f"WebDriver rejected HTTP status {status}") from None
+            try:
+                details = driver_error_details(error)
+            finally:
+                error.close()
+            raise WebDriverHTTPError(status, details) from None
 
     def command(self, method, route, payload=None):
         return self.call(method, "/session/" + self.session + route, payload)
@@ -322,6 +400,8 @@ fetch(origin+'/__native-csp-probe__').then(()=>finish(false)).catch(()=>{});""",
         subprocess.SubprocessError,
     ) as exc:
         record["error"] = str(exc)[:1000]
+        if isinstance(exc, WebDriverHTTPError):
+            record["driverFailure"] = exc.diagnostic
         raise
     finally:
         finalize_observation(driver, record, evidence_path)
