@@ -100,7 +100,7 @@ class FixtureTests(unittest.TestCase):
         self.request("/api/states")
         self.request("/api/services/switch/toggle", body={"entity_id": "switch.fixture_light"})
         self.assertGreater(self.request("/fixture/status")["haReads"], 0)
-        self.request("/fixture/seed", body={})
+        self.request("/fixture/seed", body={"transport": "igw"})
         reset = self.request("/fixture/status")
         self.assertEqual(reset["haReads"], 0)
         self.assertEqual(reset["capture"], [])
@@ -140,6 +140,157 @@ class FixtureTests(unittest.TestCase):
             self.assertEqual(client.recv(5), b"\x90\x03\x00\x01\x00")
             self.assertIn(b"inverter/state", client.recv(4096))
             client.sendall(b"\xe0\x00")
+
+    def mqtt_connect(self):
+        client = socket.create_connection(self.broker.server_address, timeout=2)
+        self.addCleanup(client.close)
+        client.sendall(
+            fixture.packet(
+                0x10,
+                fixture.mqtt_string("MQTT")
+                + b"\x04\x02\x00\x3c"
+                + fixture.mqtt_string("readiness-control"),
+            )
+        )
+        self.assertEqual(client.recv(4), b"\x20\x02\x00\x00")
+        return client
+
+    def mqtt_packet(self, client):
+        def read_exact(size):
+            data = bytearray()
+            while len(data) < size:
+                chunk = client.recv(size - len(data))
+                if not chunk:
+                    raise EOFError("Fixture socket closed before packet completed")
+                data.extend(chunk)
+            return bytes(data)
+
+        header = read_exact(1)[0]
+        size, multiplier = 0, 1
+        for _ in range(4):
+            value = read_exact(1)[0]
+            size += (value & 127) * multiplier
+            if not value & 128:
+                return header, read_exact(size)
+            multiplier *= 128
+        raise ValueError("Unbounded fixture packet")
+
+    def mqtt_subscribe_all(self, client):
+        with fixture.LOCK:
+            retained_count = len(fixture.MESSAGES)
+        client.sendall(fixture.packet(0x82, b"\x00\x01" + fixture.mqtt_string("#") + b"\x00"))
+        self.assertEqual(self.mqtt_packet(client), (0x90, b"\x00\x01\x00"))
+        for _ in range(retained_count):
+            self.assertEqual(self.mqtt_packet(client)[0], 0x31)
+        return self.request("/fixture/status")["mqtt"]["readySession"]
+
+    def assert_control_rejected(self, route, body, code=409):
+        before = self.request("/fixture/status")
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request(route, body=body)
+        self.assertEqual(caught.exception.code, code)
+        caught.exception.close()
+        after = self.request("/fixture/status")
+        self.assertEqual(after["capture"], before["capture"])
+        self.assertEqual(after["eventEpoch"], before["eventEpoch"])
+
+    def test_seed_waits_for_real_subscription_then_publishes_live_once(self):
+        client = self.mqtt_connect()
+        self.request("/api/services/switch/toggle", body={"entity_id": "switch.fixture_light"})
+        status = self.request("/fixture/status")["mqtt"]
+        self.assertEqual(status["activeSessions"], 1)
+        self.assertIsNone(status["readySession"])
+        client.sendall(
+            fixture.packet(0x82, b"\x00\x02" + fixture.mqtt_string("inverter/state") + b"\x00")
+        )
+        self.assertEqual(self.mqtt_packet(client), (0x90, b"\x00\x02\x00"))
+        self.assertEqual(self.mqtt_packet(client)[0], 0x31)
+        self.assertIsNone(self.request("/fixture/status")["mqtt"]["readySession"])
+        self.assert_control_rejected(
+            "/fixture/seed",
+            {"transport": "mqtt", "generation": status["generation"], "sessionId": 1},
+        )
+        binding = self.mqtt_subscribe_all(client)
+        self.assertIsNotNone(binding)
+        accepted = self.request("/fixture/seed", body={"transport": "mqtt", **binding})
+        self.assertEqual(accepted["livePublications"], len(fixture.required_topics()))
+        topics = set()
+        for _ in range(accepted["livePublications"]):
+            header, payload = self.mqtt_packet(client)
+            self.assertEqual(header, 0x30, "Accepted live seed must not be retained replay")
+            length = int.from_bytes(payload[:2], "big")
+            topics.add(payload[2 : 2 + length].decode())
+        self.assertEqual(topics, fixture.required_topics())
+        self.assertEqual(self.request("/fixture/status")["capture"], [])
+
+    def test_reconnect_rejects_old_identity_and_waits_for_new_subscriptions(self):
+        old = self.mqtt_connect()
+        binding = self.mqtt_subscribe_all(old)
+        with fixture.LOCK:
+            retired = next(iter(fixture.CLIENTS))
+        self.request("/api/services/switch/toggle", body={"entity_id": "switch.fixture_light"})
+        generation = self.request("/fixture/reconnect", body={"transport": "mqtt", **binding})
+        self.assertGreater(generation["generation"], binding["generation"])
+        self.assertIsNone(self.request("/fixture/status")["mqtt"]["readySession"])
+        for action in ("seed", "fresh-slot", "reconnect"):
+            self.assert_control_rejected("/fixture/" + action, {"transport": "mqtt", **binding})
+        current = self.mqtt_connect()
+        self.assertIsNone(self.request("/fixture/status")["mqtt"]["readySession"])
+        new_binding = self.mqtt_subscribe_all(current)
+        self.assertEqual(new_binding["generation"], generation["generation"])
+        self.assertNotEqual(new_binding["sessionId"], binding["sessionId"])
+        # A delayed old finish cannot retire the new connection or satisfy readiness.
+        with fixture.LOCK:
+            fixture.CLIENTS.add(retired)
+        self.assertEqual(self.request("/fixture/status")["mqtt"]["readySession"], new_binding)
+        retired.finish()
+        accepted = self.request("/fixture/fresh-slot", body={"transport": "mqtt", **new_binding})
+        self.assertEqual(accepted["livePublications"], 1)
+        header, payload = self.mqtt_packet(current)
+        self.assertEqual(header, 0x30)
+        self.assertIn(b"Fixture fresh alarm", payload)
+        self.assertEqual(len(self.request("/fixture/status")["capture"]), 1)
+
+    def test_failed_live_send_cannot_acknowledge_seed(self):
+        client = self.mqtt_connect()
+        binding = self.mqtt_subscribe_all(client)
+        with fixture.LOCK:
+            handler = next(iter(fixture.CLIENTS))
+        with (
+            patch.object(handler, "send", return_value=False),
+            self.assertRaises(urllib.error.HTTPError) as caught,
+        ):
+            self.request("/fixture/seed", body={"transport": "mqtt", **binding})
+        self.assertEqual(caught.exception.code, 503)
+        caught.exception.close()
+
+    def test_socket_send_error_retires_session_without_successful_acknowledgement(self):
+        class ClosedSocket:
+            closed = False
+
+            def sendall(self, _data):
+                raise OSError("synthetic closed socket")
+
+            def close(self):
+                self.closed = True
+
+        handler = fixture.Broker.__new__(fixture.Broker)
+        handler.output_lock = threading.Lock()
+        handler.request = ClosedSocket()
+        handler.retired = False
+        self.assertFalse(handler.send(b"synthetic packet"))
+        self.assertTrue(handler.retired)
+        self.assertTrue(handler.request.closed)
+        self.assertFalse(handler.output_lock.locked())
+
+    def test_ambiguous_subscribers_cannot_clear_command_journal(self):
+        one = self.mqtt_connect()
+        binding = self.mqtt_subscribe_all(one)
+        two = self.mqtt_connect()
+        self.mqtt_subscribe_all(two)
+        self.request("/api/services/switch/toggle", body={"entity_id": "switch.fixture_light"})
+        self.assertIsNone(self.request("/fixture/status")["mqtt"]["readySession"])
+        self.assert_control_rejected("/fixture/seed", {"transport": "mqtt", **binding})
 
     def test_unknown_routes_do_not_forward(self):
         with self.assertRaises(urllib.error.HTTPError) as caught:

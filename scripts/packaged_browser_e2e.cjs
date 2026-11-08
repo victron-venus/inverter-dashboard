@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /** Real HTTP/WebSocket acceptance against an isolated, exact packaged backend. */
+const workDeadline = Date.now() + 270000 // One total budget; reserve 30s inside the unchanged parent 300s limit.
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
 const { workspacePath } = require('./pwa_acceptance.cjs')
-const { expectedCommandJournal, verifyFinalCommandJournal } = require('./packaged_browser_contract.cjs')
+const { expectedCommandJournal, verifyFinalCommandJournal, PACKAGED_BANK_SOC, assertPackagedTelemetry,
+  failureState, failureFixture, boundedDiagnostic, visibleFailureDom, failureMessage, withOwnedBrowser, remainingWork, withinWorkDeadline } = require('./packaged_browser_contract.cjs')
 const { waitForHydratedDashboard } = require('./browser-readiness.cjs')
 const [base, fixture, transport, outputArgument, ociSha256, backend] = process.argv.slice(2)
 const output = workspacePath(outputArgument)
@@ -36,9 +38,9 @@ async function request(address, route, options = {}) {
 }
 const state = () => request(base, '/api/state', { headers: { Authorization: `Bearer ${token}` } })
 const fixtureState = () => request(fixture, '/fixture/status')
-const control = action => request(fixture, '/fixture/' + action, { method: 'POST', body: '{}' })
+const control = (action, body) => request(fixture, '/fixture/' + action, { method: 'POST', body: JSON.stringify(body) })
 async function until(read, predicate, label) {
-  const deadline = Date.now() + 25000
+  const deadline = Math.min(Date.now() + 25000, workDeadline)
   async function poll() {
     if (Date.now() >= deadline) throw new Error(`Timed out: ${label}`)
     const value = await read()
@@ -47,6 +49,41 @@ async function until(read, predicate, label) {
     return poll()
   }
   return poll()
+}
+
+async function subscribedSession(generation) {
+  const status = await until(fixtureState, value => value.mqtt?.readySession &&
+    (generation === undefined || value.mqtt.generation === generation), 'current MQTT subscriptions')
+  return status.mqtt.readySession
+}
+
+function liveAcknowledgement(response, binding, publications) {
+  assert.equal(response.ok, true)
+  assert.equal(response.generation, binding.generation)
+  assert.equal(response.sessionId, binding.sessionId)
+  assert.equal(response.livePublications, publications, 'Fixture must acknowledge every live publication')
+}
+
+async function saveFailureDiagnostics(page, engine, stage) {
+  // API state collection is independent of renderer health. No raw state,
+  // URLs, headers, query credentials, exception text or arbitrary DOM is saved.
+  const [source, peer, dom] = await Promise.all([
+    boundedDiagnostic(async () => failureState(await state())),
+    boundedDiagnostic(async () => failureFixture(await fixtureState())),
+    page ? boundedDiagnostic(() => page.evaluate(visibleFailureDom, token)) : { status: 'unavailable' },
+  ])
+  let screenshot = { status: 'unavailable' }
+  if (dom.status === 'available' && dom.value.safeForScreenshot === true) {
+    screenshot = await boundedDiagnostic(async () => {
+      await page.screenshot({ path: workspacePath(output.replace(/\.json$/, `-${engine}.failure.png`)),
+        timeout: 1000, mask: [page.locator('input, textarea'), page.getByText(token, { exact: false })] })
+      return 'saved'
+    })
+  }
+  // Ownership cleanup follows immediately, including when no page was created
+  // or a renderer exceeded its independent collection deadline.
+  fs.writeFileSync(workspacePath(output.replace(/\.json$/, `-${engine}.failure.json`)),
+    JSON.stringify({ engine, transport, stage, source, peer, dom, screenshot }, null, 2) + '\n', { flag: 'wx' })
 }
 
 async function command(page, value) {
@@ -77,28 +114,38 @@ async function rejectedSocket(page, credential) {
 }
 
 async function run(engine) {
-  await control('seed')
-  const browser = await playwright[engine].launch({ headless: true })
-  const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1280, height: 900 }, serviceWorkers: 'block' })
-  const unexpected = []
-  await context.route('**/*', route => {
-    const address = new URL(route.request().url())
-    if ([base, fixture].includes(address.origin)) return route.continue()
-    unexpected.push(address.origin)
-    return route.abort('blockedbyclient')
-  })
-  await context.routeWebSocket('**/*', route => {
-    const address = new URL(route.url())
-    if (address.origin === base.replace('http:', 'ws:') && address.pathname === '/ws') {
-      route.connectToServer()
-      return
-    }
-    unexpected.push(address.origin)
-    route.close({ code: 1008, reason: 'Only isolated backend WebSockets allowed' })
-  })
-  const page = await context.newPage()
-  const scenarios = []
-  try {
+  const session = await withinWorkDeadline(async () => {
+    const binding = transport === 'mqtt' ? await subscribedSession() : {}
+    const seeded = await control('seed', { transport, ...binding })
+    if (transport === 'mqtt') liveAcknowledgement(seeded, binding, 16)
+    return binding
+  }, workDeadline)
+  const server = await playwright[engine].launchServer({ headless: true, host: '127.0.0.1', timeout: remainingWork(workDeadline) })
+  let page
+  let stage = 'browser-connect'
+  await withOwnedBrowser(server, async () => {
+    const browser = await playwright[engine].connect(server.wsEndpoint(), { timeout: remainingWork(workDeadline, 10000) })
+    stage = 'browser-context-and-routes'
+    const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1280, height: 900 }, serviceWorkers: 'block' })
+    const unexpected = []
+    await context.route('**/*', route => {
+      const address = new URL(route.request().url())
+      if ([base, fixture].includes(address.origin)) return route.continue()
+      unexpected.push(address.origin)
+      return route.abort('blockedbyclient')
+    })
+    await context.routeWebSocket('**/*', route => {
+      const address = new URL(route.url())
+      if (address.origin === base.replace('http:', 'ws:') && address.pathname === '/ws') {
+        route.connectToServer()
+        return
+      }
+      unexpected.push(address.origin)
+      route.close({ code: 1008, reason: 'Only isolated backend WebSockets allowed' })
+    })
+    page = await context.newPage()
+    const scenarios = []
+    stage = 'http-auth'
     // Route guard only blocks external traffic; all permitted HTTP/WS uses production backend code.
     const response = await fetch(base + '/api/state', { signal: AbortSignal.timeout(5000), redirect: 'error' })
     if (backend === 'python') {
@@ -113,15 +160,23 @@ async function run(engine) {
     }
     const protectedSettings = await fetch(base + '/api/settings', { signal: AbortSignal.timeout(5000), redirect: 'error' })
     assert([401, 403].includes(protectedSettings.status), 'Protected settings require authorization')
+    stage = 'backend-telemetry'
     await page.goto(`${base}/?token=${token}`, { waitUntil: 'domcontentloaded' })
-    await waitForHydratedDashboard(page, 73)
+    const telemetry = await until(state, value => value.battery_soc === PACKAGED_BANK_SOC &&
+      value.batteries?.some(item => item.name === 'Fixture battery' && item.soc === 73), 'real projected bank and battery telemetry')
+    assertPackagedTelemetry(telemetry)
+    stage = 'visible-telemetry'
+    await waitForHydratedDashboard(page, PACKAGED_BANK_SOC)
+    await page.getByText('73.0%', { exact: true }).waitFor({ state: 'visible' })
     await rejectedSocket(page, 'wrong-fixture-token')
     scenarios.push('real-http-auth-and-websocket-token-rejection')
 
+    stage = 'source-authority'
     const actual = await until(state, value => value.data_source === transport &&
       (value.mqtt_connected || value.gateway_connected) && value.controller_controls_available === true,
     'real source and controller authority')
     assert(actual.dashboard_version, 'Packaged application must expose its actual version')
+    stage = 'native-banner'
     const current = await until(state, value => value.notifications?.some(item => item.title === 'Fixture old alarm'), 'real native notification')
     const alarm = current.notifications.find(item => item.title === 'Fixture old alarm')
     const source = await fixtureState()
@@ -152,6 +207,7 @@ async function run(engine) {
     await verifyFinalCommandJournal(fixtureState, expectedJournal.slice(0, 1))
     scenarios.push('real-correlated-command-routes-once-to-selected-transport')
 
+    stage = 'command-routing'
     await until(fixtureState, value => value.haReads > 0, 'real HA polling')
     await page.getByText('Fixture light', { exact: true }).waitFor()
     const home = await command(page, homeInput)
@@ -168,10 +224,14 @@ async function run(engine) {
     scenarios.push('cross-origin-websocket-rejected-even-with-valid-token')
 
     if (transport === 'mqtt') {
-      await control('reconnect')
+      stage = 'mqtt-reconnect'
+      const retired = await control('reconnect', { transport, ...session })
       await until(state, value => value.mqtt_connected === true && !value.controller_controls_available &&
         !value.notifications?.some(item => item.source === 'victron'), 'reconnected source clears authority and alarms')
-      await control('fresh-slot')
+      const nextSession = await subscribedSession(retired.generation)
+      assert.notEqual(nextSession.sessionId, session.sessionId)
+      const freshAck = await control('fresh-slot', { transport, ...nextSession })
+      liveAcknowledgement(freshAck, nextSession, 1)
       const fresh = await until(state, value => value.notifications?.some(item => item.title === 'Fixture fresh alarm'), 'new generation alarm')
       assert(!fresh.notifications.find(item => item.title === 'Fixture fresh alarm').ts)
       await verifyFinalCommandJournal(fixtureState, expectedJournal)
@@ -187,13 +247,12 @@ async function run(engine) {
     await verifyFinalCommandJournal(fixtureState, expectedJournal)
     runs.push({ engine, browserVersion: browser.version(), transport, status: 'passed',
       scenarios, producer, ociSha256, testsPassed: scenarios.length, testsFailed: 0, backendVersion: actual.dashboard_version })
-  } finally {
-    await browser.close()
-  }
+  }, () => saveFailureDiagnostics(page, engine, stage), undefined, workDeadline)
 }
 
 ;(async () => {
   // Each engine mutates the same synthetic peer; serialize its complete reset/run/cleanup.
   await ['chromium', 'firefox', 'webkit'].reduce((previous, engine) => previous.then(() => run(engine)), Promise.resolve())
+  remainingWork(workDeadline)
   fs.writeFileSync(output, JSON.stringify({ runs }, null, 2) + '\n', { flag: 'wx' })
-})().catch(error => { console.error(error.message); process.exitCode = 1 })
+})().catch(error => { console.error(failureMessage(error, token)); process.exitCode = 1 })
