@@ -66,6 +66,7 @@ def loopback_url(value, scheme):
 
 MAX_WEBDRIVER_RESPONSE = 8 * 1024 * 1024
 MAX_WEBDRIVER_ERROR_RESPONSE = 16 * 1024
+JSON_CONTENT_TYPE = "application/json"
 W3C_ERROR_CODES = frozenset(
     {
         "invalid argument",
@@ -108,7 +109,7 @@ def driver_error_details(response):
         not length.isdecimal() or len(length) > 6 or int(length) > MAX_WEBDRIVER_ERROR_RESPONSE
     ):
         return {"responseKind": "invalid-or-oversized-length"}
-    if response.headers.get_content_type() != "application/json":
+    if response.headers.get_content_type() != JSON_CONTENT_TYPE:
         return {"responseKind": "non-json"}
     try:
         body = response.read(MAX_WEBDRIVER_ERROR_RESPONSE + 1)
@@ -153,7 +154,7 @@ def decode_driver_response(response):
             "WebDriver response exceeds limit",
         )
     require(
-        response.headers.get_content_type() == "application/json", "WebDriver response is not JSON"
+        response.headers.get_content_type() == JSON_CONTENT_TYPE, "WebDriver response is not JSON"
     )
     data = response.read(MAX_WEBDRIVER_RESPONSE + 1)
     require(len(data) <= MAX_WEBDRIVER_RESPONSE, "WebDriver response exceeds limit")
@@ -188,7 +189,7 @@ class WebDriver:
         )
         encoded = None if payload is None else json.dumps(payload).encode()
         request = urllib.request.Request(
-            self.origin + route, encoded, {"Content-Type": "application/json"}, method=method
+            self.origin + route, encoded, {"Content-Type": JSON_CONTENT_TYPE}, method=method
         )
         try:
             with self.opener.open(request, timeout=45) as response:

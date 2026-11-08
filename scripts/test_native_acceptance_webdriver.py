@@ -166,19 +166,21 @@ class NativeToolTests(unittest.TestCase):
         self.assertEqual(opened.call_args.kwargs["timeout"], 45)
 
     def test_real_session_rejection_preserves_bounded_w3c_reason(self):
+        marker = "NOT_RETAINED"
         body = json.dumps(
             {
                 "value": {
                     "error": "session not created",
                     "message": "Safari could not create an automation session.",
-                    "stacktrace": "NOT_RETAINED",
-                    "data": {"token": "NOT_RETAINED"},
+                    "stacktrace": marker,
+                    "data": {"token": marker},
                 }
             }
         ).encode()
         origin, paths = self.protocol_server(status=500, body=body)
+        transport = driver.WebDriver(origin)
         with self.assertRaises(driver.WebDriverHTTPError) as caught:
-            driver.WebDriver(origin).call("POST", "/session", {"capabilities": {}})
+            transport.call("POST", "/session", {"capabilities": {}})
         self.assertEqual(paths, ["/session"])
         self.assertEqual(
             caught.exception.diagnostic,
@@ -190,7 +192,7 @@ class NativeToolTests(unittest.TestCase):
                 "messageTruncated": False,
             },
         )
-        self.assertNotIn("NOT_RETAINED", str(caught.exception))
+        self.assertNotIn(marker, str(caught.exception))
 
     def rejected_response(self, response):
         error = urllib.error.HTTPError(
@@ -274,6 +276,7 @@ class NativeToolTests(unittest.TestCase):
         self.assertEqual(error.diagnostic["responseKind"], "unavailable")
 
     def test_http_error_omits_credentials_paths_controls_and_unrecognized_code(self):
+        marker = "DATA_PRIVATE"
         message = (
             "Failure at https://user:pass@example.com/path?token=URL_PRIVATE "
             'password="PASSWORD_PRIVATE" token=TOKEN_PRIVATE '
@@ -288,7 +291,7 @@ class NativeToolTests(unittest.TestCase):
                         "error": "UNKNOWN_PRIVATE",
                         "message": message,
                         "stacktrace": "STACK_PRIVATE",
-                        "data": {"token": "DATA_PRIVATE"},
+                        "data": {"token": marker},
                     }
                 }
             ).encode()
