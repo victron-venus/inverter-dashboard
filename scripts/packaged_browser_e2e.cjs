@@ -7,6 +7,7 @@ const path = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
 const { workspacePath } = require('./pwa_acceptance.cjs')
 const { expectedCommandJournal, verifyFinalCommandJournal, PACKAGED_BANK_SOC, assertPackagedTelemetry,
+  seedIdentity, eventEpochFromTime, nativeAlarmEpoch, waitForSeedEvent,
   failureState, failureFixture, boundedDiagnostic, visibleFailureDom, failureMessage, withStartupDiagnostics,
   withOwnedBrowser, remainingWork, withinWorkDeadline } = require('./packaged_browser_contract.cjs')
 const { waitForHydratedDashboard } = require('./browser-readiness.cjs')
@@ -116,19 +117,19 @@ async function rejectedSocket(page, credential) {
 
 async function run(engine) {
   let stage = 'mqtt-subscriptions'
-  const { session, server, journalEpoch } = await withStartupDiagnostics(async () => {
+  const { session, server, identity } = await withStartupDiagnostics(async () => {
     const seed = await withinWorkDeadline(async () => {
       const binding = transport === 'mqtt' ? await subscribedSession() : {}
       stage = 'fixture-seed'
       const seeded = await control('seed', { transport, ...binding })
       if (transport === 'mqtt') liveAcknowledgement(seeded, binding, 16)
-      assert(Number.isSafeInteger(seeded.journalEpoch) && seeded.journalEpoch > 0, 'Seed must bind a positive journal epoch')
-      return { session: binding, journalEpoch: seeded.journalEpoch }
+      return { session: binding, identity: seedIdentity(seeded) }
     }, workDeadline)
     stage = 'browser-launch'
     const server = await playwright[engine].launchServer({ headless: true, host: '127.0.0.1', timeout: remainingWork(workDeadline) })
     return { ...seed, server }
   }, () => saveFailureDiagnostics(undefined, engine, stage))
+  const { journalEpoch, eventEpoch } = identity
   let page
   stage = 'browser-connect'
   await withOwnedBrowser(server, async () => {
@@ -184,15 +185,19 @@ async function run(engine) {
       (value.mqtt_connected || value.gateway_connected) && value.controller_controls_available === true,
     'real source and controller authority')
     assert(actual.dashboard_version, 'Packaged application must expose its actual version')
-    stage = 'native-banner'
-    const current = await until(state, value => value.notifications?.some(item => item.title === 'Fixture old alarm'), 'real native notification')
-    const alarm = current.notifications.find(item => item.title === 'Fixture old alarm')
-    const source = await fixtureState()
-    assert.equal(Math.floor(Date.parse(alarm.ts) / 1000), source.eventEpoch)
-    await page.getByText('Fixture old alarm', { exact: true }).waitFor()
+    stage = 'native-banner-api-time'
+    const observedApiEpoch = await waitForSeedEvent(async () => nativeAlarmEpoch(await state()),
+      fixtureState, identity, workDeadline)
+    assert.equal(observedApiEpoch, eventEpoch)
+    stage = 'native-banner-dom-time'
     const banner = page.getByText('Fixture old alarm', { exact: true }).locator('..')
+    const observedDomEpoch = await waitForSeedEvent(async () => eventEpochFromTime(
+      await banner.locator('time').evaluateAll(elements => elements.length === 1
+        ? elements[0].getAttribute('datetime') : null)), fixtureState, identity, workDeadline)
+    assert.equal(observedDomEpoch, eventEpoch)
+    await banner.waitFor({ state: 'visible', timeout: remainingWork(workDeadline) })
     assert(!/just now/i.test(await banner.innerText()), 'Source-aged alarm was reset to arrival time')
-    assert.equal(Math.floor(Date.parse(await banner.locator('time').getAttribute('datetime')) / 1000), source.eventEpoch)
+    assert.equal(eventEpochFromTime(await banner.locator('time').getAttribute('datetime')), eventEpoch)
     assert((await banner.locator('time').innerText()).trim().length > 0, 'Banner needs a visible source age')
     scenarios.push('real-transport-native-banner-preserves-source-time')
 
