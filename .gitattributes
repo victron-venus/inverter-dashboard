@@ -1,2 +1,5 @@
 # Published frontend files are verified by SHA-256; preserve their exact bytes.
 /src/inverter_dashboard/static/** -text
+
+# Browser evidence binds the scenario contract's original SHA-256.
+/scripts/browser-scenarios.json -text

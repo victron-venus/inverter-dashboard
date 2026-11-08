@@ -1,4 +1,4 @@
-"""Git must preserve published frontend bytes even with Windows line endings."""
+"""Git must preserve published frontend and scenario contract bytes on Windows."""
 
 import hashlib
 import json
@@ -23,6 +23,9 @@ class VueCheckoutTests(unittest.TestCase):
         manifest_path = Path(application["manifest"])
         manifest_bytes = (ROOT / manifest_path).read_bytes()
         manifest = json.loads(manifest_bytes)
+        contract_path = Path("scripts/browser-scenarios.json")
+        contract_bytes = (ROOT / contract_path).read_bytes()
+        contract_sha256 = hashlib.sha256(contract_bytes).hexdigest()
         inventory = (
             {entry["path"]: entry["sha256"] for entry in manifest["files"]}
             if application["manifestKind"] == "python"
@@ -38,6 +41,8 @@ class VueCheckoutTests(unittest.TestCase):
             shutil.copyfile(ROOT / ".gitattributes", repository / ".gitattributes")
             shutil.copytree(ROOT / distribution, repository / distribution)
             (repository / manifest_path).write_bytes(manifest_bytes)
+            (repository / contract_path).parent.mkdir(parents=True)
+            (repository / contract_path).write_bytes(contract_bytes)
             # Exercise mixed endings as well as the current release's LF files.
             mixed_path = distribution / "assets" / "checkout-fixture.txt"
             mixed_bytes = b"first\r\nsecond\nthird\r\n"
@@ -77,6 +82,13 @@ class VueCheckoutTests(unittest.TestCase):
                         b"\r\n" if autocrlf == "true" else b"\n"
                     )
                     self.assertEqual((output / "control.txt").read_bytes(), expected_control)
+                    checked_out_contract = (output / contract_path).read_bytes()
+                    self.assertEqual(
+                        hashlib.sha256(checked_out_contract).hexdigest(),
+                        contract_sha256,
+                        str(contract_path),
+                    )
+                    self.assertEqual(checked_out_contract, contract_bytes)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,12 @@ checks a real disposable Git add/checkout against every manifest hash, preserves
 mixed line endings, and verifies that ordinary files still follow Git's normal
 line-ending setting. The browser's strict inventory check remains unchanged.
 
+`scripts/browser-scenarios.json` is also marked `-text` because every browser
+report binds its original SHA-256. The same real Git checkout regression verifies
+the contract bytes and hash with `core.autocrlf=false` and `true`, alongside the
+frontend inventory and ordinary text conversion. Producers and the final evidence
+collector continue comparing the original contract without line-ending normalization.
+
 The adapter reuses the dashboard user flows developed in
 [inverter-dashboard-vue](https://github.com/victron-venus/inverter-dashboard-vue/blob/00f406c278cdd53c4da68eea68eff6b606f94308/scripts/browser-acceptance.cjs).
 Keep the two backend adapters aligned when those common frontend flows change.
