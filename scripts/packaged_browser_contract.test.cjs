@@ -138,6 +138,10 @@ test('visible credential or unqualified DOM cannot authorize a failure screensho
   assert(!JSON.stringify(blocked).includes(credential))
   root.body.innerText = '78%'
   assert.equal(visibleFailureDom(credential, root).safeForScreenshot, true)
+  root.querySelector = () => ({ dataset: { connected: 'true' } })
+  assert.equal(visibleFailureDom(credential, root).connected, true)
+  root.querySelector = () => ({ dataset: { connected: 'false' } })
+  assert.equal(visibleFailureDom(credential, root).connected, false)
   root.querySelectorAll = selector => selector === 'div,span' ? [number] : [{ value: credential }]
   assert.equal(visibleFailureDom(credential, root).safeForScreenshot, false)
 })
@@ -179,8 +183,9 @@ test('a fulfilled close without process exit is not cleanup proof', { timeout: 3
   assert.equal(child.signalCode, 'SIGKILL')
 })
 
-test('connect and context/route/page setup failures retain original error and reap their owned child', { timeout: 10000 }, async t => {
-  for (const stage of ['connect', 'newContext', 'route', 'routeWebSocket', 'newPage']) {
+// Node executes these independent top-level tests sequentially by default.
+for (const stage of ['connect', 'newContext', 'route', 'routeWebSocket', 'newPage']) {
+  test(`${stage} failure retains the original error and reaps its owned child`, { timeout: 3000 }, async t => {
     const { child, kill } = await ownedChild(t)
     const original = new Error(stage + ': injected-ephemeral-fixture-nonce')
     const server = { process: () => child, close: () => new Promise(() => {}), kill }
@@ -188,7 +193,22 @@ test('connect and context/route/page setup failures retain original error and re
       async () => { throw original }, () => new Promise(() => {}), cleanupBudgets), error => error === original)
     assert.equal(child.signalCode, 'SIGKILL')
     assert(!failureMessage(original, 'injected-ephemeral-fixture-nonce').includes('injected-ephemeral-fixture-nonce'))
-  }
+  })
+}
+
+test('a cleanup failure preserves an earlier scenario error and remains a failed qualification', { timeout: 3000 }, async t => {
+  const { child } = await ownedChild(t)
+  const original = new Error('Original scenario failure')
+  const warning = t.mock.method(console, 'error', () => {})
+  const server = { process: () => child, close: async () => {}, kill: async () => {} }
+  await assert.rejects(withOwnedBrowser(server, async () => { throw original }, async () => {}, cleanupBudgets),
+    error => error === original)
+  assert.equal(warning.mock.calls.length, 1)
+  assert.deepEqual(warning.mock.calls[0].arguments,
+    ['Owned browser cleanup failed; original scenario failure retained'])
+  assert.equal(child.exitCode, null)
+  assert.equal(child.signalCode, null)
+  // The test-owned after hook must reap the deliberately failed-cleanup child.
 })
 
 test('failed kill or missing reap cannot produce a successful qualification', { timeout: 3000 }, async t => {

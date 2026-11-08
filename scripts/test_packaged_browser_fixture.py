@@ -213,9 +213,10 @@ class FixtureTests(unittest.TestCase):
         binding = self.mqtt_subscribe_all(client)
         self.assertIsNotNone(binding)
         accepted = self.request("/fixture/seed", body={"transport": "mqtt", **binding})
-        self.assertEqual(accepted["livePublications"], len(fixture.required_topics()))
+        expected_publications = len(fixture.required_topics())
+        self.assertEqual(accepted["livePublications"], expected_publications)
         topics = set()
-        for _ in range(accepted["livePublications"]):
+        for _ in range(expected_publications):
             header, payload = self.mqtt_packet(client)
             self.assertEqual(header, 0x30, "Accepted live seed must not be retained replay")
             length = int.from_bytes(payload[:2], "big")

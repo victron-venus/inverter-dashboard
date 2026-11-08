@@ -31,6 +31,7 @@ def credential_from_env(environment: dict | None = None) -> str:
 
 
 PORTAL = "browserqa"
+CONTROLLER_STATE_TOPIC = "inverter/state"
 LOCK = threading.RLock()
 CLIENTS: set = set()
 MESSAGES: dict[str, bytes] = {}
@@ -116,7 +117,7 @@ def source_groups(event_epoch: int, event: bool) -> dict:
 
 def required_topics() -> set[str]:
     return {
-        "inverter/state",
+        CONTROLLER_STATE_TOPIC,
         *(
             f"N/{PORTAL}/{kind}/{key}"
             for kind, leaves in source_groups(0, True).items()
@@ -150,7 +151,7 @@ def seed(authority: bool = True, event: bool = True) -> dict[str, set[int]]:
                 topic = f"N/{PORTAL}/{service}/{key}"
                 deliveries[topic] = publish(topic, {"value": value})
         if authority:
-            deliveries["inverter/state"] = publish("inverter/state", inverter)
+            deliveries[CONTROLLER_STATE_TOPIC] = publish(CONTROLLER_STATE_TOPIC, inverter)
     return deliveries
 
 

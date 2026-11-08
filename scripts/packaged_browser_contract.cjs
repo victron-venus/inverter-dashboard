@@ -85,7 +85,7 @@ function visibleFailureDom(credential, root = document) {
     percentages: Array.from(root.querySelectorAll('div,span')).filter(element =>
       element.children.length === 0 && /^\d{1,3}(?:\.\d)?%$/.test(element.textContent.trim()) &&
       element.getClientRects().length > 0).slice(0, 12).map(element => element.textContent.trim()),
-    connected: root.querySelector('[data-testid="transport-status"]')?.getAttribute('data-connected') === 'true',
+    connected: root.querySelector('[data-testid="transport-status"]')?.dataset.connected === 'true',
   }
 }
 
@@ -145,26 +145,37 @@ async function stopOwnedBrowser(server, owned, budgets) {
   return 'killed'
 }
 
+const BROWSER_CLEANUP_BUDGETS = Object.freeze({ diagnostics: 5000, close: 2000, kill: 3000, reap: 1000 })
+
 async function withOwnedBrowser(server, work, diagnostics,
-  budgets = { diagnostics: 5000, close: 2000, kill: 3000, reap: 1000 }, deadline = Date.now() + 270000) {
+  budgets = BROWSER_CLEANUP_BUDGETS, deadline = Date.now() + 270000) {
   const owned = observeOwnedBrowser(server)
+  let result
+  let failure
   let failed = false
   try {
-    return await withinWorkDeadline(work, deadline)
+    result = await withinWorkDeadline(work, deadline)
   } catch (error) {
     failed = true
+    failure = error
     await boundedDiagnostic(diagnostics, budgets.diagnostics)
-    throw error
-  } finally {
-    try {
-      await stopOwnedBrowser(server, owned, budgets)
-    } catch (cleanupError) {
-      if (!failed) throw cleanupError
-      console.error('Owned browser cleanup failed; original scenario failure retained')
-    } finally {
-      owned.dispose()
-    }
   }
+  let cleanupFailure
+  let cleanupFailed = false
+  try {
+    await stopOwnedBrowser(server, owned, budgets)
+  } catch (error) {
+    cleanupFailed = true
+    cleanupFailure = error
+  } finally {
+    owned.dispose()
+  }
+  if (failed) {
+    if (cleanupFailed) console.error('Owned browser cleanup failed; original scenario failure retained')
+    throw failure
+  }
+  if (cleanupFailed) throw cleanupFailure
+  return result
 }
 
 module.exports = {
