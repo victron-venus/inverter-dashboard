@@ -31,14 +31,18 @@ def credential_from_env(environment: dict | None = None) -> str:
 
 
 PORTAL = "browserqa"
+CONTROLLER_STATE_TOPIC = "inverter/state"
 LOCK = threading.RLock()
 CLIENTS: set = set()
 MESSAGES: dict[str, bytes] = {}
 CAPTURE: list[dict] = []
+JOURNAL_EPOCH = 0
 SNAPSHOT: dict = {}
 EVENT_EPOCH = 0
 HA_STATE = "off"
 HA_READS = 0
+MQTT_GENERATION = 1
+SESSION_SEQUENCE = 0
 
 
 def packet(header: int, payload: bytes) -> bytes:
@@ -68,24 +72,23 @@ def topic_matches(pattern: str, topic: str) -> bool:
     return len(parts) == len(names)
 
 
-def publish(topic: str, value) -> None:
+def publish(topic: str, value) -> set[int]:
     data = json.dumps(value, separators=(",", ":")).encode()
+    delivered = set()
     with LOCK:
         MESSAGES[topic] = data
         for client in CLIENTS:
-            if any(topic_matches(p, topic) for p in client.subscriptions):
-                client.send(packet(0x30, mqtt_string(topic) + data))
+            if (
+                client.current()
+                and any(topic_matches(p, topic) for p in client.subscriptions)
+                and client.send(packet(0x30, mqtt_string(topic) + data))
+            ):
+                delivered.add(client.session_id)
+    return delivered
 
 
-def seed(authority: bool = True, event: bool = True) -> None:
-    """Publish source-aged warnings and a synthetic controller observation."""
-    global SNAPSHOT, EVENT_EPOCH, HA_READS, HA_STATE
-    EVENT_EPOCH = int(time.time()) - 4500
-    inverter = {
-        "version": "packaged-fixture",
-        "dry_run": False,
-        "booleans": {"charge_battery": False, "only_charging": False},
-    }
+def source_groups(event_epoch: int, event: bool) -> dict:
+    """One fixed topic inventory for source data and subscription readiness."""
     groups = {
         "system": {
             "0/Ac/Grid/L1/Power": 420,
@@ -102,7 +105,7 @@ def seed(authority: bool = True, event: bool = True) -> None:
         groups["platform"] = {
             f"0/Notifications/1/{key}": value
             for key, value in {
-                "DateTime": EVENT_EPOCH,
+                "DateTime": event_epoch,
                 "Type": 1,
                 "DeviceName": "Fixture battery",
                 "Active": False,
@@ -110,6 +113,31 @@ def seed(authority: bool = True, event: bool = True) -> None:
                 "Description": "Fixture old alarm",
             }.items()
         }
+    return groups
+
+
+def required_topics() -> set[str]:
+    return {
+        CONTROLLER_STATE_TOPIC,
+        *(
+            f"N/{PORTAL}/{kind}/{key}"
+            for kind, leaves in source_groups(0, True).items()
+            for key in leaves
+        ),
+    }
+
+
+def seed(authority: bool = True, event: bool = True) -> dict[str, set[int]]:
+    """Publish source-aged warnings and a synthetic controller observation."""
+    global SNAPSHOT, EVENT_EPOCH, HA_READS, HA_STATE
+    EVENT_EPOCH = int(time.time()) - 4500
+    inverter = {
+        "version": "packaged-fixture",
+        "dry_run": False,
+        "booleans": {"charge_battery": False, "only_charging": False},
+    }
+    groups = source_groups(EVENT_EPOCH, event)
+    deliveries = {}
     with LOCK:
         HA_READS = 0
         HA_STATE = "off"
@@ -121,27 +149,121 @@ def seed(authority: bool = True, event: bool = True) -> None:
         MESSAGES.clear()
         for service, leaves in groups.items():
             for key, value in leaves.items():
-                publish(f"N/{PORTAL}/{service}/{key}", {"value": value})
+                topic = f"N/{PORTAL}/{service}/{key}"
+                deliveries[topic] = publish(topic, {"value": value})
         if authority:
-            publish("inverter/state", inverter)
+            deliveries[CONTROLLER_STATE_TOPIC] = publish(CONTROLLER_STATE_TOPIC, inverter)
+    return deliveries
+
+
+def mqtt_status() -> dict:
+    """Caller holds LOCK; a socket count is never a subscription barrier."""
+    active = [client for client in CLIENTS if client.current()]
+    ready = [client for client in active if client.ready()]
+    selected = ready[0] if len(active) == len(ready) == 1 else None
+    return {
+        "generation": MQTT_GENERATION,
+        "activeSessions": len(active),
+        "readySessions": len(ready),
+        "readySession": selected.binding() if selected else None,
+    }
+
+
+def selected_session(body: dict):
+    current = mqtt_status()["readySession"]
+    expected = {"generation": body.get("generation"), "sessionId": body.get("sessionId")}
+    if any(type(value) is not int or value <= 0 for value in expected.values()):
+        return None
+    if current != expected:
+        return None
+    return next(client for client in CLIENTS if client.binding() == current)
+
+
+def reconnect_fixture() -> dict:
+    """Retire the old generation before closing sockets or releasing LOCK."""
+    global MQTT_GENERATION
+    MQTT_GENERATION += 1
+    for client in CLIENTS:
+        client.retired = True
+        with suppress(OSError):
+            client.request.shutdown(2)
+        client.request.close()
+    seed(authority=False, event=False)
+    return {"generation": MQTT_GENERATION}
+
+
+def reset_command_journal():
+    """Every clear changes the identity pinned by the owning browser scenario."""
+    global JOURNAL_EPOCH
+    with LOCK:
+        JOURNAL_EPOCH += 1
+        CAPTURE.clear()
+
+
+def fixture_control(action: str, body: dict) -> tuple[int, dict]:
+    """Validate current subscriber identity before any mutation; caller holds LOCK."""
+    if action == "seed" and body == {"transport": "igw"}:
+        reset_command_journal()
+        seed()
+        return 200, {"ok": True, "transport": "igw", "journalEpoch": JOURNAL_EPOCH}
+    if body.get("transport") != "mqtt" or (client := selected_session(body)) is None:
+        return 409, {"error": "Current subscribed MQTT session required"}
+    if action == "reconnect":
+        return 200, reconnect_fixture()
+    if action == "seed":
+        reset_command_journal()
+        deliveries = seed()
+    else:
+        topic = f"N/{PORTAL}/platform/0/Notifications/1/Description"
+        deliveries = {topic: publish(topic, {"value": "Fixture fresh alarm"})}
+    if any(client.session_id not in delivered for delivered in deliveries.values()):
+        return 503, {"error": "MQTT live publication failed"}
+    return 200, {
+        "ok": True,
+        **client.binding(),
+        "livePublications": len(deliveries),
+        "journalEpoch": JOURNAL_EPOCH,
+    }
 
 
 class Broker(socketserver.BaseRequestHandler):
     """Minimal real MQTT peer: framing, subscription, retained delivery, captures."""
 
     def setup(self):
+        global SESSION_SEQUENCE
         self.subscriptions: list[str] = []
+        self.connected = False
+        self.retired = False
         self.output_lock = threading.Lock()
         self.request.settimeout(30)
         with LOCK:
+            SESSION_SEQUENCE += 1
+            self.session_id = SESSION_SEQUENCE
+            self.generation = MQTT_GENERATION
             CLIENTS.add(self)
+
+    def current(self) -> bool:
+        return self.connected and not self.retired and self.generation == MQTT_GENERATION
+
+    def binding(self) -> dict:
+        return {"generation": self.generation, "sessionId": self.session_id}
+
+    def ready(self) -> bool:
+        return self.current() and all(
+            any(topic_matches(pattern, topic) for pattern in self.subscriptions)
+            for topic in required_topics()
+        )
 
     def send(self, value: bytes):
         try:
             with self.output_lock:
                 self.request.sendall(value)
+            return True
         except OSError:
+            with LOCK:
+                self.retired = True
             self.request.close()
+            return False
 
     def read_exact(self, size: int) -> bytes:
         value = bytearray()
@@ -173,8 +295,9 @@ class Broker(socketserver.BaseRequestHandler):
             patterns.append(data[position : position + length].decode())
             position += length + 1
         with LOCK:
+            if not self.current() or not self.send(packet(0x90, data[:2] + bytes(len(patterns)))):
+                return
             self.subscriptions.extend(patterns)
-            self.send(packet(0x90, data[:2] + bytes(len(patterns))))
             for topic, payload in MESSAGES.items():
                 if any(topic_matches(p, topic) for p in patterns):
                     self.send(packet(0x31, mqtt_string(topic) + payload))
@@ -198,7 +321,8 @@ class Broker(socketserver.BaseRequestHandler):
                 header, data = self.read_packet()
                 kind = header >> 4
                 if kind == 1:
-                    self.send(b"\x20\x02\x00\x00")
+                    with LOCK:
+                        self.connected = not self.retired and self.send(b"\x20\x02\x00\x00")
                 elif kind == 8:
                     self.subscribe(data)
                 elif kind == 3:
@@ -245,8 +369,10 @@ class Handler(BaseHTTPRequestHandler):
                     200,
                     {
                         "capture": CAPTURE,
+                        "journalEpoch": JOURNAL_EPOCH,
                         "eventEpoch": EVENT_EPOCH,
                         "mqttClients": len(CLIENTS),
+                        "mqtt": mqtt_status(),
                         "haReads": HA_READS,
                     },
                 )
@@ -290,23 +416,13 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self.reply(400, {})
             return
+        if not isinstance(body, dict):
+            self.reply(400, {})
+            return
         response = (200, {"ok": True})
         with LOCK:
-            if self.path == "/fixture/seed":
-                CAPTURE.clear()
-                seed()
-            elif self.path == "/fixture/reconnect":
-                MESSAGES.clear()
-                for client in CLIENTS:
-                    with suppress(OSError):
-                        client.request.shutdown(2)
-                    client.request.close()
-                seed(authority=False, event=False)
-            elif self.path == "/fixture/fresh-slot":
-                publish(
-                    f"N/{PORTAL}/platform/0/Notifications/1/Description",
-                    {"value": "Fixture fresh alarm"},
-                )
+            if self.path in {"/fixture/seed", "/fixture/reconnect", "/fixture/fresh-slot"}:
+                response = fixture_control(self.path.rsplit("/", 1)[1], body)
             elif self.headers.get("Authorization") != f"Bearer {self.server.fixture_credential}":
                 self.reply(401, {})
                 return
