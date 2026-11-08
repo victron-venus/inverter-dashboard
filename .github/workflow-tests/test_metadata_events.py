@@ -202,7 +202,7 @@ class MetadataEventsTests(unittest.TestCase):
     def test_withdrawals_survive_later_positive_and_ignored_events(self):
         """Every withdrawal keeps a queue slot without cancelling the positive waiter."""
         workflow = definition(CALLERS[1])
-        assert workflow["concurrency"]["cancel-in-progress"] == "false"
+        self.assertEqual(workflow["concurrency"]["cancel-in-progress"], "false")
         for action in ("unlabeled", "converted_to_draft", "edited"):
             withdrawals = []
             for run in ("20", "21"):
@@ -221,13 +221,17 @@ class MetadataEventsTests(unittest.TestCase):
             pending = {group(workflow, event): event for event in withdrawals + later}
             with self.subTest(action=action):
                 for event in withdrawals:
-                    assert event in pending.values()
-                    assert evaluate(workflow["jobs"]["auto-merge"]["if"], event)
-                assert group(workflow, withdrawals[0]) != group(workflow, withdrawals[1])
-                assert all(
-                    group(workflow, event) != group(workflow, following)
-                    for event in withdrawals
-                    for following in later
+                    self.assertIn(event, pending.values())
+                    self.assertTrue(evaluate(workflow["jobs"]["auto-merge"]["if"], event))
+                self.assertNotEqual(
+                    group(workflow, withdrawals[0]), group(workflow, withdrawals[1])
+                )
+                self.assertTrue(
+                    all(
+                        group(workflow, event) != group(workflow, following)
+                        for event in withdrawals
+                        for following in later
+                    )
                 )
 
     def test_nonwithdrawals_keep_the_positive_queue(self):
@@ -239,7 +243,7 @@ class MetadataEventsTests(unittest.TestCase):
         returned = context("edited", {"base": {"ref": {"from": "other"}}}, run="31")
         for event in (unrelated, returned, context("synchronize", run="32")):
             with self.subTest(event=event):
-                assert group(workflow, event) == expected
+                self.assertEqual(group(workflow, event), expected)
 
 
 if __name__ == "__main__":
