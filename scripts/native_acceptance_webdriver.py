@@ -71,20 +71,38 @@ WEBDRIVER_CALL_TIMEOUT = 45
 MAX_WEBDRIVER_RESPONSE = 8 * 1024 * 1024
 MAX_WEBDRIVER_ERROR_RESPONSE = 16 * 1024
 JSON_CONTENT_TYPE = "application/json"
+# JSON error-code column, W3C WebDriver Working Draft 2 July 2026, section 6.6.
+# https://www.w3.org/TR/2026/WD-webdriver2-20260702/#errors
 W3C_ERROR_CODES = frozenset(
     {
+        "detached shadow root",
+        "element click intercepted",
+        "element not interactable",
+        "insecure certificate",
         "invalid argument",
+        "invalid cookie domain",
+        "invalid element state",
+        "invalid selector",
         "invalid session id",
-        "no such driver",
-        "session not created",
-        "unknown error",
-        "unknown command",
-        "unsupported operation",
-        "timeout",
-        "script timeout",
         "javascript error",
-        "unexpected alert open",
+        "move target out of bounds",
+        "no such alert",
+        "no such cookie",
+        "no such element",
+        "no such frame",
+        "no such shadow root",
         "no such window",
+        "script timeout",
+        "session not created",
+        "stale element reference",
+        "timeout",
+        "unable to capture screen",
+        "unable to set cookie",
+        "unexpected alert open",
+        "unknown command",
+        "unknown error",
+        "unknown method",
+        "unsupported operation",
     }
 )
 

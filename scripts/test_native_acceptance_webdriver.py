@@ -197,10 +197,10 @@ class NativeToolTests(unittest.TestCase):
         )
         self.assertNotIn(marker, str(caught.exception))
 
-    def rejected_response(self, response):
+    def rejected_response(self, response, status=500):
         error = urllib.error.HTTPError(
             "http://127.0.0.1:4444/session",
-            500,
+            status,
             "untrusted server text",
             response.headers,
             response,
@@ -212,9 +212,85 @@ class NativeToolTests(unittest.TestCase):
         ):
             transport.call("POST", "/session", {})
         self.assertTrue(response.closed)
-        self.assertEqual(caught.exception.diagnostic["httpStatus"], 500)
+        self.assertEqual(caught.exception.diagnostic["httpStatus"], status)
         self.assertNotIn("untrusted server text", str(caught.exception))
         return caught.exception
+
+    def test_documented_w3c_error_table_preserves_code_and_http_rejection(self):
+        # Independent JSON-code/status table from the dated W3C section 6.6.
+        documented = {
+            "element click intercepted": 400,
+            "element not interactable": 400,
+            "insecure certificate": 400,
+            "invalid argument": 400,
+            "invalid cookie domain": 400,
+            "invalid element state": 400,
+            "invalid selector": 400,
+            "invalid session id": 404,
+            "javascript error": 500,
+            "move target out of bounds": 500,
+            "no such alert": 404,
+            "no such cookie": 404,
+            "no such element": 404,
+            "no such frame": 404,
+            "no such window": 404,
+            "no such shadow root": 404,
+            "script timeout": 500,
+            "session not created": 500,
+            "stale element reference": 404,
+            "detached shadow root": 404,
+            "timeout": 500,
+            "unable to set cookie": 500,
+            "unable to capture screen": 500,
+            "unexpected alert open": 500,
+            "unknown command": 404,
+            "unknown error": 500,
+            "unknown method": 405,
+            "unsupported operation": 500,
+        }
+        self.assertEqual(driver.W3C_ERROR_CODES, frozenset(documented))
+        for code, status in documented.items():
+            with self.subTest(code=code, status=status):
+                response = self.response(
+                    json.dumps(
+                        {
+                            "value": {
+                                "error": code,
+                                "message": "Synthetic documented driver failure",
+                            }
+                        }
+                    ).encode()
+                )
+                error = self.rejected_response(response, status)
+                self.assertEqual(error.diagnostic["errorCode"], code)
+                self.assertEqual(error.diagnostic["responseKind"], "w3c-error")
+
+    def test_nonstandard_error_codes_remain_unrecognized_and_rejected(self):
+        for code in ("no such driver", "NO SUCH ELEMENT", "no such element ", "PRIVATE_extension"):
+            with self.subTest(code=code):
+                response = self.response(json.dumps({"value": {"error": code}}).encode())
+                error = self.rejected_response(response, 404)
+                self.assertEqual(error.diagnostic["errorCode"], "unrecognized")
+                self.assertNotIn(code, str(error))
+
+    def test_real_missing_element_response_preserves_standard_code(self):
+        body = json.dumps(
+            {
+                "value": {
+                    "error": "no such element",
+                    "message": "Synthetic settings locator was not found",
+                }
+            }
+        ).encode()
+        origin, paths = self.protocol_server(status=404, body=body)
+        transport = driver.WebDriver(origin)
+        with self.assertRaises(driver.WebDriverHTTPError) as caught:
+            transport.call(
+                "POST", "/session/fixture/element", {"using": "css selector", "value": "#settings"}
+            )
+        self.assertEqual(paths, ["/session/fixture/element"])
+        self.assertEqual(caught.exception.diagnostic["httpStatus"], 404)
+        self.assertEqual(caught.exception.diagnostic["errorCode"], "no such element")
 
     def test_http_failure_fallbacks_keep_status_and_close_body(self):
         cases = [
@@ -326,8 +402,10 @@ class NativeToolTests(unittest.TestCase):
                     self.assertEqual(
                         driver.diagnostic_message(message), "[credential-bearing message omitted]"
                     )
+        credential_field = "password"
+        malformed_value = '"unterminated ' + marker
         self.assertEqual(
-            driver.diagnostic_message('password="unterminated ' + marker),
+            driver.diagnostic_message(credential_field + "=" + malformed_value),
             "[credential-bearing message omitted]",
         )
 
