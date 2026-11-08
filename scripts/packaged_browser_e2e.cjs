@@ -7,7 +7,8 @@ const path = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
 const { workspacePath } = require('./pwa_acceptance.cjs')
 const { expectedCommandJournal, verifyFinalCommandJournal, PACKAGED_BANK_SOC, assertPackagedTelemetry,
-  failureState, failureFixture, boundedDiagnostic, visibleFailureDom, failureMessage, withOwnedBrowser, remainingWork, withinWorkDeadline } = require('./packaged_browser_contract.cjs')
+  failureState, failureFixture, boundedDiagnostic, visibleFailureDom, failureMessage, withStartupDiagnostics,
+  withOwnedBrowser, remainingWork, withinWorkDeadline } = require('./packaged_browser_contract.cjs')
 const { waitForHydratedDashboard } = require('./browser-readiness.cjs')
 const [base, fixture, transport, outputArgument, ociSha256, backend] = process.argv.slice(2)
 const output = workspacePath(outputArgument)
@@ -114,15 +115,22 @@ async function rejectedSocket(page, credential) {
 }
 
 async function run(engine) {
-  const session = await withinWorkDeadline(async () => {
-    const binding = transport === 'mqtt' ? await subscribedSession() : {}
-    const seeded = await control('seed', { transport, ...binding })
-    if (transport === 'mqtt') liveAcknowledgement(seeded, binding, 16)
-    return binding
-  }, workDeadline)
-  const server = await playwright[engine].launchServer({ headless: true, host: '127.0.0.1', timeout: remainingWork(workDeadline) })
+  let stage = 'mqtt-subscriptions'
+  const { session, server, journalEpoch } = await withStartupDiagnostics(async () => {
+    const seed = await withinWorkDeadline(async () => {
+      const binding = transport === 'mqtt' ? await subscribedSession() : {}
+      stage = 'fixture-seed'
+      const seeded = await control('seed', { transport, ...binding })
+      if (transport === 'mqtt') liveAcknowledgement(seeded, binding, 16)
+      assert(Number.isSafeInteger(seeded.journalEpoch) && seeded.journalEpoch > 0, 'Seed must bind a positive journal epoch')
+      return { session: binding, journalEpoch: seeded.journalEpoch }
+    }, workDeadline)
+    stage = 'browser-launch'
+    const server = await playwright[engine].launchServer({ headless: true, host: '127.0.0.1', timeout: remainingWork(workDeadline) })
+    return { ...seed, server }
+  }, () => saveFailureDiagnostics(undefined, engine, stage))
   let page
-  let stage = 'browser-connect'
+  stage = 'browser-connect'
   await withOwnedBrowser(server, async () => {
     const browser = await playwright[engine].connect(server.wsEndpoint(), { timeout: remainingWork(workDeadline, 10000) })
     stage = 'browser-context-and-routes'
@@ -193,18 +201,18 @@ async function run(engine) {
       : { action: 'toggle', entity: 'charge_battery', state: true, request_id: `accepted-${engine}` }
     const homeInput = { action: 'toggle', entity: 'switch.fixture_light', request_id: `home-${engine}` }
     const expectedJournal = expectedCommandJournal(transport, controllerInput, homeInput)
-    await verifyFinalCommandJournal(fixtureState, [])
+    await verifyFinalCommandJournal(fixtureState, [], journalEpoch)
     const rejected = await command(page, { action: 'toggle', entity: 'switch.unconfigured', request_id: `unknown-${engine}` })
     assert.equal(rejected.type, 'command_error')
     await delay(200)
-    await verifyFinalCommandJournal(fixtureState, [])
+    await verifyFinalCommandJournal(fixtureState, [], journalEpoch)
     scenarios.push('unknown-home-target-rejected-without-publication')
 
     const accepted = await command(page, controllerInput)
     assert.equal(accepted.type, 'command_result')
     assert.equal(accepted.status, 'accepted')
     await until(fixtureState, value => value.capture.length >= 1, 'exact fixture command')
-    await verifyFinalCommandJournal(fixtureState, expectedJournal.slice(0, 1))
+    await verifyFinalCommandJournal(fixtureState, expectedJournal.slice(0, 1), journalEpoch)
     scenarios.push('real-correlated-command-routes-once-to-selected-transport')
 
     stage = 'command-routing'
@@ -214,7 +222,7 @@ async function run(engine) {
     assert.equal(home.type, 'command_result')
     assert.equal(home.status, 'accepted')
     await until(fixtureState, value => value.capture.some(item => item.transport === 'ha'), 'real HA service')
-    await verifyFinalCommandJournal(fixtureState, expectedJournal)
+    await verifyFinalCommandJournal(fixtureState, expectedJournal, journalEpoch)
     scenarios.push('configured-home-only-real-ha-service-route')
 
     const hostile = await context.newPage()
@@ -234,17 +242,17 @@ async function run(engine) {
       liveAcknowledgement(freshAck, nextSession, 1)
       const fresh = await until(state, value => value.notifications?.some(item => item.title === 'Fixture fresh alarm'), 'new generation alarm')
       assert(!fresh.notifications.find(item => item.title === 'Fixture fresh alarm').ts)
-      await verifyFinalCommandJournal(fixtureState, expectedJournal)
+      await verifyFinalCommandJournal(fixtureState, expectedJournal, journalEpoch)
       const stale = await command(page, { action: 'setpoint', value: 123, request_id: `retired-${engine}` })
       assert.equal(stale.type, 'command_error')
-      await verifyFinalCommandJournal(fixtureState, expectedJournal)
+      await verifyFinalCommandJournal(fixtureState, expectedJournal, journalEpoch)
       scenarios.push('reconnect-retires-authority-and-source-event-time')
     }
     assert.deepEqual(unexpected, [], 'Packaged browser attempted an external destination')
     await page.screenshot({ path: output.replace(/\.json$/, `-${engine}.png`) })
     // Re-read after every later HA/reconnect scenario: earlier routes-once proof
     // must not hide a duplicate or new command delivered later in this run.
-    await verifyFinalCommandJournal(fixtureState, expectedJournal)
+    await verifyFinalCommandJournal(fixtureState, expectedJournal, journalEpoch)
     runs.push({ engine, browserVersion: browser.version(), transport, status: 'passed',
       scenarios, producer, ociSha256, testsPassed: scenarios.length, testsFailed: 0, backendVersion: actual.dashboard_version })
   }, () => saveFailureDiagnostics(page, engine, stage), undefined, workDeadline)

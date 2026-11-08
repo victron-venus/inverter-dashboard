@@ -39,7 +39,7 @@ class FixtureTests(unittest.TestCase):
     def setUp(self):
         self.credential = secrets.token_urlsafe(32)
         with fixture.LOCK:
-            fixture.CAPTURE.clear()
+            fixture.reset_command_journal()
             fixture.CLIENTS.clear()
             fixture.seed()
         self.broker = socketserver.ThreadingTCPServer(("127.0.0.1", 0), fixture.Broker)
@@ -133,12 +133,14 @@ class FixtureTests(unittest.TestCase):
                     + fixture.mqtt_string("unit-fixture"),
                 )
             )
-            self.assertEqual(client.recv(4), b"\x20\x02\x00\x00")
+            self.assertEqual(self.mqtt_packet(client), (0x20, b"\x00\x00"))
             client.sendall(
                 fixture.packet(0x82, b"\x00\x01" + fixture.mqtt_string("inverter/state") + b"\x00")
             )
-            self.assertEqual(client.recv(5), b"\x90\x03\x00\x01\x00")
-            self.assertIn(b"inverter/state", client.recv(4096))
+            self.assertEqual(self.mqtt_packet(client), (0x90, b"\x00\x01\x00"))
+            header, payload = self.mqtt_packet(client)
+            self.assertEqual(header, 0x31)
+            self.assertIn(b"inverter/state", payload)
             client.sendall(b"\xe0\x00")
 
     def mqtt_connect(self):
@@ -152,8 +154,25 @@ class FixtureTests(unittest.TestCase):
                 + fixture.mqtt_string("readiness-control"),
             )
         )
-        self.assertEqual(client.recv(4), b"\x20\x02\x00\x00")
+        self.assertEqual(self.mqtt_packet(client), (0x20, b"\x00\x00"))
         return client
+
+    def test_connack_accepts_fragmented_socket_reads_and_rejects_truncation(self):
+        class FragmentedSocket:
+            def __init__(self, fragments):
+                self.fragments = iter(fragments)
+
+            def recv(self, size):
+                chunk = next(self.fragments, b"")
+                if len(chunk) > size:
+                    raise AssertionError("Control must respect socket recv size")
+                return chunk
+
+        complete = FragmentedSocket([b"\x20", b"\x02", b"\x00", b"\x00"])
+        self.assertEqual(self.mqtt_packet(complete), (0x20, b"\x00\x00"))
+        truncated = FragmentedSocket([b"\x20", b"\x02", b"\x00"])
+        with self.assertRaises(EOFError):
+            self.mqtt_packet(truncated)
 
     def mqtt_packet(self, client):
         def read_exact(size):
@@ -192,6 +211,7 @@ class FixtureTests(unittest.TestCase):
         caught.exception.close()
         after = self.request("/fixture/status")
         self.assertEqual(after["capture"], before["capture"])
+        self.assertEqual(after["journalEpoch"], before["journalEpoch"])
         self.assertEqual(after["eventEpoch"], before["eventEpoch"])
 
     def test_seed_waits_for_real_subscription_then_publishes_live_once(self):
@@ -213,6 +233,7 @@ class FixtureTests(unittest.TestCase):
         binding = self.mqtt_subscribe_all(client)
         self.assertIsNotNone(binding)
         accepted = self.request("/fixture/seed", body={"transport": "mqtt", **binding})
+        self.assertEqual(accepted["journalEpoch"], self.request("/fixture/status")["journalEpoch"])
         expected_publications = len(fixture.required_topics())
         self.assertEqual(accepted["livePublications"], expected_publications)
         topics = set()
@@ -223,6 +244,21 @@ class FixtureTests(unittest.TestCase):
             topics.add(payload[2 : 2 + length].decode())
         self.assertEqual(topics, fixture.required_topics())
         self.assertEqual(self.request("/fixture/status")["capture"], [])
+
+    def test_igw_reset_after_forbidden_command_changes_journal_identity(self):
+        initial = self.request("/fixture/seed", body={"transport": "igw"})
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request("/api/services/switch/toggle", body={"entity_id": "switch.unconfigured"})
+        self.assertEqual(caught.exception.code, 404)
+        caught.exception.close()
+        before = self.request("/fixture/status")
+        self.assertEqual(before["journalEpoch"], initial["journalEpoch"])
+        self.assertEqual(len(before["capture"]), 1)
+        reset = self.request("/fixture/seed", body={"transport": "igw"})
+        after = self.request("/fixture/status")
+        self.assertGreater(reset["journalEpoch"], initial["journalEpoch"])
+        self.assertEqual(after["journalEpoch"], reset["journalEpoch"])
+        self.assertEqual(after["capture"], [])
 
     def test_reconnect_rejects_old_identity_and_waits_for_new_subscriptions(self):
         old = self.mqtt_connect()

@@ -36,6 +36,7 @@ LOCK = threading.RLock()
 CLIENTS: set = set()
 MESSAGES: dict[str, bytes] = {}
 CAPTURE: list[dict] = []
+JOURNAL_EPOCH = 0
 SNAPSHOT: dict = {}
 EVENT_EPOCH = 0
 HA_STATE = "off"
@@ -191,25 +192,38 @@ def reconnect_fixture() -> dict:
     return {"generation": MQTT_GENERATION}
 
 
+def reset_command_journal():
+    """Every clear changes the identity pinned by the owning browser scenario."""
+    global JOURNAL_EPOCH
+    with LOCK:
+        JOURNAL_EPOCH += 1
+        CAPTURE.clear()
+
+
 def fixture_control(action: str, body: dict) -> tuple[int, dict]:
     """Validate current subscriber identity before any mutation; caller holds LOCK."""
     if action == "seed" and body == {"transport": "igw"}:
-        CAPTURE.clear()
+        reset_command_journal()
         seed()
-        return 200, {"ok": True, "transport": "igw"}
+        return 200, {"ok": True, "transport": "igw", "journalEpoch": JOURNAL_EPOCH}
     if body.get("transport") != "mqtt" or (client := selected_session(body)) is None:
         return 409, {"error": "Current subscribed MQTT session required"}
     if action == "reconnect":
         return 200, reconnect_fixture()
     if action == "seed":
-        CAPTURE.clear()
+        reset_command_journal()
         deliveries = seed()
     else:
         topic = f"N/{PORTAL}/platform/0/Notifications/1/Description"
         deliveries = {topic: publish(topic, {"value": "Fixture fresh alarm"})}
     if any(client.session_id not in delivered for delivered in deliveries.values()):
         return 503, {"error": "MQTT live publication failed"}
-    return 200, {"ok": True, **client.binding(), "livePublications": len(deliveries)}
+    return 200, {
+        "ok": True,
+        **client.binding(),
+        "livePublications": len(deliveries),
+        "journalEpoch": JOURNAL_EPOCH,
+    }
 
 
 class Broker(socketserver.BaseRequestHandler):
@@ -355,6 +369,7 @@ class Handler(BaseHTTPRequestHandler):
                     200,
                     {
                         "capture": CAPTURE,
+                        "journalEpoch": JOURNAL_EPOCH,
                         "eventEpoch": EVENT_EPOCH,
                         "mqttClients": len(CLIENTS),
                         "mqtt": mqtt_status(),

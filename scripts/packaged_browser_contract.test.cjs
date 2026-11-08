@@ -5,18 +5,21 @@ const { spawn } = require('node:child_process')
 const { once } = require('node:events')
 const test = require('node:test')
 const { expectedCommandJournal, verifyFinalCommandJournal, assertPackagedTelemetry,
-  failureState, failureFixture, boundedDiagnostic, visibleFailureDom, failureMessage, withOwnedBrowser, remainingWork, withinWorkDeadline } = require('./packaged_browser_contract.cjs')
+  failureState, failureFixture, boundedDiagnostic, visibleFailureDom, failureMessage, withStartupDiagnostics,
+  withOwnedBrowser, remainingWork, withinWorkDeadline } = require('./packaged_browser_contract.cjs')
 
 async function journalFixture(t) {
   const capture = []
+  let journalEpoch = 0
+  const seedRoute = '/fixture/seed'
   const routes = new Map([['/v1/commands/toggle', 'igw'], ['/api/services/switch/toggle', 'ha']])
   const server = http.createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json')
     if (request.method === 'GET' && request.url === '/fixture/status') {
-      response.end(JSON.stringify({ capture }))
+      response.end(JSON.stringify({ capture, journalEpoch }))
       return
     }
-    if (request.method !== 'POST' || !routes.has(request.url)) {
+    if (request.method !== 'POST' || (!routes.has(request.url) && request.url !== seedRoute)) {
       response.writeHead(404).end('{}')
       return
     }
@@ -26,7 +29,15 @@ async function journalFixture(t) {
         body += chunk.toString('utf8')
         assert(body.length <= 4096, 'Fixture request exceeds its bound')
       }
-      capture.push({ transport: routes.get(request.url), path: request.url, body: JSON.parse(body) })
+      const value = JSON.parse(body)
+      if (request.url === seedRoute) {
+        assert.deepEqual(value, { transport: 'igw' })
+        journalEpoch++
+        capture.length = 0
+        response.end(JSON.stringify({ journalEpoch }))
+        return
+      }
+      capture.push({ transport: routes.get(request.url), path: request.url, body: value })
       response.end('{}')
     } catch {
       response.writeHead(400).end('{}')
@@ -50,14 +61,15 @@ async function journalFixture(t) {
       body: JSON.stringify(body), signal: AbortSignal.timeout(2000),
     })
     assert.equal(response.status, 200)
-    await response.json()
+    return response.json()
   }
   const read = async () => {
     const response = await fetch(origin + '/fixture/status', { signal: AbortSignal.timeout(2000) })
     assert.equal(response.status, 200)
     return response.json()
   }
-  return { publish, read }
+  const seed = async () => (await publish(seedRoute, { transport: 'igw' })).journalEpoch
+  return { publish, read, seed }
 }
 
 const controllerInput = { action: 'toggle', entity: 'charge_battery', state: true }
@@ -69,24 +81,39 @@ async function publishAllowed(publish) {
 }
 
 test('final journal rejects a duplicate published after the initial check', { timeout: 10000 }, async t => {
-  const { publish, read } = await journalFixture(t)
+  const { publish, read, seed } = await journalFixture(t)
+  const epoch = await seed()
   const expected = expectedCommandJournal('igw', controllerInput, homeInput)
   await publishAllowed(publish)
-  await verifyFinalCommandJournal(read, expected)
+  await verifyFinalCommandJournal(read, expected, epoch)
   // The initial routes-once check has passed. A later duplicate must invalidate it.
   await publish('/v1/commands/toggle', { entity: 'charge_battery', state: 'on' })
-  await assert.rejects(verifyFinalCommandJournal(read, expected), /Unexpected late, duplicate/)
+  await assert.rejects(verifyFinalCommandJournal(read, expected, epoch), /Unexpected late, duplicate/)
   assert.equal((await read()).capture.length, 3)
 })
 
 test('unsolicited command before the first capture cannot become an expected baseline', { timeout: 10000 }, async t => {
-  const { publish, read } = await journalFixture(t)
+  const { publish, read, seed } = await journalFixture(t)
+  const epoch = await seed()
   const expected = expectedCommandJournal('igw', controllerInput, homeInput)
   await publish('/v1/commands/toggle', { entity: 'charge_battery', state: 'off' })
   await publishAllowed(publish)
   // No journal has been read yet. Expected publications come only from test inputs.
-  await assert.rejects(verifyFinalCommandJournal(read, expected), /Unexpected late, duplicate/)
+  await assert.rejects(verifyFinalCommandJournal(read, expected, epoch), /Unexpected late, duplicate/)
   assert.equal((await read()).capture.length, 3)
+})
+
+test('forbidden command followed by an IGW reset cannot pass as an empty journal', { timeout: 10000 }, async t => {
+  const { publish, read, seed } = await journalFixture(t)
+  const originalEpoch = await seed()
+  await verifyFinalCommandJournal(read, [], originalEpoch)
+  await publish('/api/services/switch/toggle', { entity_id: 'switch.unconfigured' })
+  assert.equal((await read()).capture.length, 1)
+  const resetEpoch = await seed()
+  assert(resetEpoch > originalEpoch)
+  assert.deepEqual((await read()).capture, [])
+  await assert.rejects(verifyFinalCommandJournal(read, [], originalEpoch), /journal was reset/)
+  await assert.rejects(verifyFinalCommandJournal(read, [], undefined), /positive journal epoch/)
 })
 
 test('expected MQTT and HA publications use explicit sent inputs and fixed routes', () => {
@@ -112,9 +139,11 @@ test('failure projections cannot persist credentials or arbitrary state strings'
     batteries: [{ name: secret, soc: 73, token: secret }, { soc: secret }], controller_controls_available: secret })
   assert.deepEqual(state, { mqtt_connected: true, battery_soc: 78, battery_voltage: 51.2,
     data_source: 'mqtt', batterySoc: [73, null] })
-  const fixture = failureFixture({ mqtt: { generation: 2, activeSessions: 1, readySessions: 1,
+  const fixture = failureFixture({ journalEpoch: 3, mqtt: { generation: 2, activeSessions: 1, readySessions: 1,
     readySession: { token: secret } }, capture: [{ body: { token: secret } }], haReads: 3, token: secret })
   assert.equal(fixture.commandAttempts, 1)
+  assert.equal(fixture.journalEpoch, 3)
+  assert(!Object.hasOwn(failureFixture({ journalEpoch: secret }), 'journalEpoch'))
   assert(!JSON.stringify({ state, fixture }).includes(secret))
 })
 
@@ -163,6 +192,31 @@ async function ownedChild(t) {
 
 const cleanupBudgets = { diagnostics: 25, close: 25, kill: 1000, reap: 250 }
 
+for (const stage of ['mqtt-subscriptions', 'fixture-seed', 'browser-launch']) {
+  test(`${stage} startup failure collects one API-only diagnostic and retains its error`, async () => {
+    const credential = 'ephemeral-startup-credential'
+    const original = new Error(credential)
+    const saved = []
+    await assert.rejects(withStartupDiagnostics(async () => { throw original }, async () => {
+      saved.push({ stage, source: failureState({ battery_soc: 78, token: credential }),
+        peer: failureFixture({ mqtt: { activeSessions: 0 }, token: credential }) })
+    }), error => error === original)
+    assert.equal(saved.length, 1)
+    assert.equal(saved[0].stage, stage)
+    assert(!JSON.stringify(saved).includes(credential))
+  })
+}
+
+test('startup diagnostics are bounded and successful startup does not duplicate failure evidence', { timeout: 2000 }, async () => {
+  const original = new Error('Original startup failure')
+  await assert.rejects(withStartupDiagnostics(async () => { throw original }, () => new Promise(() => {}), 25),
+    error => error === original)
+  const launched = { server: 'owned only after successful launch' }
+  let diagnostics = 0
+  assert.equal(await withStartupDiagnostics(async () => launched, async () => { diagnostics++ }), launched)
+  assert.equal(diagnostics, 0)
+})
+
 test('hung graceful close falls back to actual owned-child kill and observed reap', { timeout: 3000 }, async t => {
   const { child, kill } = await ownedChild(t)
   let kills = 0
@@ -205,10 +259,27 @@ test('a cleanup failure preserves an earlier scenario error and remains a failed
     error => error === original)
   assert.equal(warning.mock.calls.length, 1)
   assert.deepEqual(warning.mock.calls[0].arguments,
-    ['Owned browser cleanup failed; original scenario failure retained'])
+    ['Owned browser cleanup failed; original scenario failure retained',
+      { close: 'available', kill: 'available', reap: 'deadline', observedReap: false }])
   assert.equal(child.exitCode, null)
   assert.equal(child.signalCode, null)
   // The test-owned after hook must reap the deliberately failed-cleanup child.
+})
+
+test('failed close and kill expose fixed statuses without exporting exception credentials', { timeout: 3000 }, async t => {
+  const { child } = await ownedChild(t)
+  const credential = 'ephemeral-cleanup-credential'
+  const original = new Error('Original scenario ' + credential)
+  const warning = t.mock.method(console, 'error', () => {})
+  const server = { process: () => child,
+    close: async () => { throw new Error(credential) },
+    kill: async () => { throw new Error(credential) } }
+  await assert.rejects(withOwnedBrowser(server, async () => { throw original }, async () => {}, cleanupBudgets),
+    error => error === original)
+  assert.equal(warning.mock.calls.length, 1)
+  assert.deepEqual(warning.mock.calls[0].arguments[1],
+    { close: 'unavailable', kill: 'unavailable', reap: 'deadline', observedReap: false })
+  assert(!JSON.stringify(warning.mock.calls[0].arguments).includes(credential))
 })
 
 test('failed kill or missing reap cannot produce a successful qualification', { timeout: 3000 }, async t => {

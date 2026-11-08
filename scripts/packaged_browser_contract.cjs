@@ -21,8 +21,10 @@ function expectedCommandJournal(transport, controller, home) {
     body: { entity_id: home.entity } }]
 }
 
-async function verifyFinalCommandJournal(readFixture, expectedCaptures) {
+async function verifyFinalCommandJournal(readFixture, expectedCaptures, journalEpoch) {
+  assert(Number.isSafeInteger(journalEpoch) && journalEpoch > 0, 'Seed must bind a positive journal epoch')
   const final = await readFixture()
+  assert.equal(final.journalEpoch, journalEpoch, 'Fixture command journal was reset during the scenario')
   assert.deepEqual(final.capture, expectedCaptures,
     'Unexpected late, duplicate or unconfigured command in the final fixture journal')
 }
@@ -54,6 +56,7 @@ function failureState(value) {
 
 function failureFixture(value) {
   const result = { commandAttempts: Array.isArray(value?.capture) ? value.capture.length : null }
+  if (Number.isSafeInteger(value?.journalEpoch)) result.journalEpoch = value.journalEpoch
   for (const key of ['generation', 'activeSessions', 'readySessions']) {
     if (Number.isSafeInteger(value?.mqtt?.[key])) result[key] = value.mqtt[key]
   }
@@ -132,20 +135,37 @@ function observeOwnedBrowser(server) {
   }
 }
 
-async function stopOwnedBrowser(server, owned, budgets) {
+async function stopOwnedBrowser(server, owned, budgets, status) {
   const graceful = await boundedDiagnostic(() => server.close(), budgets.close)
-  if (graceful.status === 'available' && owned.reaped()) return 'closed'
+  status.close = graceful.status
+  status.observedReap = owned.reaped()
+  if (graceful.status === 'available' && status.observedReap) {
+    status.reap = 'available'
+    return 'closed'
+  }
   // BrowserServer.kill is public and, in pinned Playwright, kills the owned
   // browser process group and waits for close/temp cleanup. A race alone is
   // never proof: also require the observed ChildProcess close and exit status.
   const killed = await boundedDiagnostic(() => server.kill(), budgets.kill)
+  status.kill = killed.status
   const closed = await boundedDiagnostic(() => owned.closed, budgets.reap)
-  assert(killed.status === 'available' && closed.status === 'available' && owned.reaped(),
+  status.reap = closed.status
+  status.observedReap = owned.reaped()
+  assert(killed.status === 'available' && closed.status === 'available' && status.observedReap,
     'Owned browser process did not terminate after bounded close and kill')
   return 'killed'
 }
 
 const BROWSER_CLEANUP_BUDGETS = Object.freeze({ diagnostics: 5000, close: 2000, kill: 3000, reap: 1000 })
+
+async function withStartupDiagnostics(work, diagnostics, milliseconds = BROWSER_CLEANUP_BUDGETS.diagnostics) {
+  try {
+    return await work()
+  } catch (error) {
+    await boundedDiagnostic(diagnostics, milliseconds)
+    throw error
+  }
+}
 
 async function withOwnedBrowser(server, work, diagnostics,
   budgets = BROWSER_CLEANUP_BUDGETS, deadline = Date.now() + 270000) {
@@ -162,8 +182,10 @@ async function withOwnedBrowser(server, work, diagnostics,
   }
   let cleanupFailure
   let cleanupFailed = false
+  // Fixed status codes only: never copy errors, process args, URLs or credentials.
+  const cleanupStatus = { close: 'not-attempted', kill: 'not-attempted', reap: 'not-observed', observedReap: false }
   try {
-    await stopOwnedBrowser(server, owned, budgets)
+    await stopOwnedBrowser(server, owned, budgets, cleanupStatus)
   } catch (error) {
     cleanupFailed = true
     cleanupFailure = error
@@ -171,7 +193,7 @@ async function withOwnedBrowser(server, work, diagnostics,
     owned.dispose()
   }
   if (failed) {
-    if (cleanupFailed) console.error('Owned browser cleanup failed; original scenario failure retained')
+    if (cleanupFailed) console.error('Owned browser cleanup failed; original scenario failure retained', cleanupStatus)
     throw failure
   }
   if (cleanupFailed) throw cleanupFailure
@@ -180,5 +202,6 @@ async function withOwnedBrowser(server, work, diagnostics,
 
 module.exports = {
   expectedCommandJournal, verifyFinalCommandJournal, PACKAGED_BANK_SOC, assertPackagedTelemetry,
-  failureState, failureFixture, boundedDiagnostic, visibleFailureDom, failureMessage, withOwnedBrowser, remainingWork, withinWorkDeadline,
+  failureState, failureFixture, boundedDiagnostic, visibleFailureDom, failureMessage, withStartupDiagnostics,
+  withOwnedBrowser, remainingWork, withinWorkDeadline,
 }
