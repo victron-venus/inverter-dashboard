@@ -7,16 +7,21 @@ Not an installed-PWA, software-keyboard, physical-device or OS notification test
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import platform
+import re
+import signal
 
 # Subprocess is limited to the literal read-only /usr/bin/sw_vers call below.
 import subprocess  # nosec B404
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -62,7 +67,152 @@ def loopback_url(value, scheme):
     return value.rstrip("/")
 
 
+WEBDRIVER_CALL_TIMEOUT = 45
 MAX_WEBDRIVER_RESPONSE = 8 * 1024 * 1024
+MAX_WEBDRIVER_ERROR_RESPONSE = 16 * 1024
+JSON_CONTENT_TYPE = "application/json"
+# JSON error-code column, W3C WebDriver Working Draft 2 July 2026, section 6.6.
+# https://www.w3.org/TR/2026/WD-webdriver2-20260702/#errors
+W3C_ERROR_CODES = frozenset(
+    {
+        "detached shadow root",
+        "element click intercepted",
+        "element not interactable",
+        "insecure certificate",
+        "invalid argument",
+        "invalid cookie domain",
+        "invalid element state",
+        "invalid selector",
+        "invalid session id",
+        "javascript error",
+        "move target out of bounds",
+        "no such alert",
+        "no such cookie",
+        "no such element",
+        "no such frame",
+        "no such shadow root",
+        "no such window",
+        "script timeout",
+        "session not created",
+        "stale element reference",
+        "timeout",
+        "unable to capture screen",
+        "unable to set cookie",
+        "unexpected alert open",
+        "unknown command",
+        "unknown error",
+        "unknown method",
+        "unsupported operation",
+    }
+)
+
+
+def diagnostic_message(value):
+    """Bound a controlled hosted-driver message; omit common credential/path values."""
+    value = " ".join("".join(char if char.isprintable() else " " for char in value).split())
+    value = re.sub(r"(?i)\b(?:bearer|basic)\s+\S+", "[credential]", value)
+    # An assignment may contain escaped quotes or an unterminated value. Do not
+    # attempt to parse credentials: omit this controlled diagnostic message whole.
+    if re.search(
+        r"(?i)\b(?:authorization|(?:access|refresh|id)[_-]?token|token|password|"
+        r"(?:client[_-]?)?secret|(?:api|client)[_-]?key|cookie|session[_-]?id)"
+        r"[\"']?\s*[:=]",
+        value,
+    ):
+        return "[credential-bearing message omitted]"
+    value = re.sub(r"(?i)\b[a-z][a-z0-9+.-]*://\S+", "[url]", value)
+    value = re.sub(r"(?:[A-Za-z]:[\\/]|/)[^\s\"']+", "[path]", value)
+    value = re.sub(r"[A-Za-z0-9_+/=-]{24,}", "[opaque]", value)
+    return value
+
+
+class DiagnosticReadDeadline(TimeoutError):
+    """The original WebDriver call budget has expired during diagnostics."""
+
+
+class DiagnosticTimerUnavailable(RuntimeError):
+    """This process context cannot safely own a temporary diagnostic timer."""
+
+
+def diagnostic_timer_expired(_signum, _frame):
+    raise DiagnosticReadDeadline("WebDriver diagnostic read deadline exceeded")
+
+
+def remaining_diagnostic_time(deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise DiagnosticReadDeadline("WebDriver diagnostic read deadline exceeded")
+    return remaining
+
+
+@contextmanager
+def diagnostic_read_deadline(deadline):
+    """Bound blocking error reads in the standalone POSIX main thread only."""
+    remaining_diagnostic_time(deadline)
+    if (
+        not hasattr(signal, "setitimer")
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        raise DiagnosticTimerUnavailable("Diagnostic timer context is unavailable")
+    if signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
+        raise DiagnosticTimerUnavailable("Another owner has an active alarm")
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    if previous_handler is None:
+        raise DiagnosticTimerUnavailable("Existing alarm handler cannot be restored")
+    try:
+        signal.signal(signal.SIGALRM, diagnostic_timer_expired)
+        signal.setitimer(signal.ITIMER_REAL, remaining_diagnostic_time(deadline))
+        yield
+    finally:
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        finally:
+            signal.signal(signal.SIGALRM, previous_handler)
+
+
+def driver_error_details(response, deadline):
+    """Read a small W3C error only; arbitrary response bodies are never retained."""
+    details = {"responseKind": "unavailable"}
+    length = response.headers.get("Content-Length")
+    if length is not None and (
+        not length.isdecimal() or len(length) > 6 or int(length) > MAX_WEBDRIVER_ERROR_RESPONSE
+    ):
+        return {"responseKind": "invalid-or-oversized-length"}
+    if response.headers.get_content_type() != JSON_CONTENT_TYPE:
+        return {"responseKind": "non-json"}
+    try:
+        with diagnostic_read_deadline(deadline):
+            body = response.read(MAX_WEBDRIVER_ERROR_RESPONSE + 1)
+        if len(body) > MAX_WEBDRIVER_ERROR_RESPONSE:
+            return {"responseKind": "oversized-body"}
+        document = json.loads(body)
+    except DiagnosticReadDeadline:
+        return {"responseKind": "deadline-exceeded"}
+    except DiagnosticTimerUnavailable:
+        return {"responseKind": "deadline-unavailable"}
+    except (OSError, ValueError, RecursionError, http.client.HTTPException):
+        return details
+    if not isinstance(document, dict) or set(document) != {"value"}:
+        return {"responseKind": "invalid-schema"}
+    value = document["value"]
+    if not isinstance(value, dict) or not isinstance(value.get("error"), str):
+        return {"responseKind": "invalid-schema"}
+    details = {
+        "responseKind": "w3c-error",
+        "errorCode": value["error"] if value["error"] in W3C_ERROR_CODES else "unrecognized",
+    }
+    message = value.get("message")
+    if isinstance(message, str):
+        redacted = diagnostic_message(message)
+        details["message"] = redacted[:768]
+        details["messageTruncated"] = len(redacted) > 768
+    return details
+
+
+class WebDriverHTTPError(ValueError):
+    def __init__(self, status, details):
+        self.diagnostic = {"httpStatus": status, **details}
+        super().__init__(f"WebDriver rejected HTTP status {status}: " + json.dumps(details))
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -78,7 +228,7 @@ def decode_driver_response(response):
             "WebDriver response exceeds limit",
         )
     require(
-        response.headers.get_content_type() == "application/json", "WebDriver response is not JSON"
+        response.headers.get_content_type() == JSON_CONTENT_TYPE, "WebDriver response is not JSON"
     )
     data = response.read(MAX_WEBDRIVER_RESPONSE + 1)
     require(len(data) <= MAX_WEBDRIVER_RESPONSE, "WebDriver response exceeds limit")
@@ -102,6 +252,7 @@ class WebDriver:
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def call(self, method, route, payload=None):
+        deadline = time.monotonic() + WEBDRIVER_CALL_TIMEOUT
         require(method in {"GET", "POST", "DELETE"}, "Unsupported WebDriver method")
         require(
             isinstance(route, str)
@@ -113,15 +264,18 @@ class WebDriver:
         )
         encoded = None if payload is None else json.dumps(payload).encode()
         request = urllib.request.Request(
-            self.origin + route, encoded, {"Content-Type": "application/json"}, method=method
+            self.origin + route, encoded, {"Content-Type": JSON_CONTENT_TYPE}, method=method
         )
         try:
-            with self.opener.open(request, timeout=45) as response:
+            with self.opener.open(request, timeout=WEBDRIVER_CALL_TIMEOUT) as response:
                 return decode_driver_response(response)
         except urllib.error.HTTPError as error:
             status = error.code
-            error.close()
-            raise ValueError(f"WebDriver rejected HTTP status {status}") from None
+            try:
+                details = driver_error_details(error, deadline)
+            finally:
+                error.close()
+            raise WebDriverHTTPError(status, details) from None
 
     def command(self, method, route, payload=None):
         return self.call(method, "/session/" + self.session + route, payload)
@@ -145,9 +299,11 @@ def finalize_observation(driver, record, evidence_path):
         try:
             driver.command("DELETE", "")
             record["sessionCleanupSucceeded"] = True
-        except (ValueError, OSError):
+        except (ValueError, OSError) as error:
             cleanup_failed = True
             record["sessionCleanupFailed"] = True
+            if isinstance(error, WebDriverHTTPError):
+                record["cleanupDriverFailure"] = error.diagnostic
     observed_success = record["status"] == "pending-parent-validation"
     if cleanup_failed:
         record["status"] = "failed"
@@ -322,6 +478,8 @@ fetch(origin+'/__native-csp-probe__').then(()=>finish(false)).catch(()=>{});""",
         subprocess.SubprocessError,
     ) as exc:
         record["error"] = str(exc)[:1000]
+        if isinstance(exc, WebDriverHTTPError):
+            record["driverFailure"] = exc.diagnostic
         raise
     finally:
         finalize_observation(driver, record, evidence_path)

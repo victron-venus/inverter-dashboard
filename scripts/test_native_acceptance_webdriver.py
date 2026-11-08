@@ -2,14 +2,19 @@
 
 import base64
 import copy
+import http.client
 import io
 import json
+import signal
 import tempfile
 import threading
+import time
 import unittest
+import urllib.error
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import native_acceptance as gate
@@ -72,7 +77,7 @@ class NativeToolTests(unittest.TestCase):
         ):
             driver.macos_host_identity()
 
-    def protocol_server(self):
+    def protocol_server(self, status=200, body=b'{"value":{"ready":true}}'):
         paths = []
 
         class Handler(BaseHTTPRequestHandler):
@@ -83,10 +88,14 @@ class NativeToolTests(unittest.TestCase):
                     self.send_header("Location", "/must-not-be-followed")
                     self.end_headers()
                     return
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"value":{"ready":true}}')
+                self.wfile.write(body)
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                self.do_GET()
 
             def log_message(self, *_args):
                 # Keep fixture HTTP logs quiet; each request is asserted through paths above.
@@ -158,6 +167,465 @@ class NativeToolTests(unittest.TestCase):
         with patch.object(transport.opener, "open", return_value=response) as opened:
             self.assertTrue(transport.call("GET", "/status"))
         self.assertEqual(opened.call_args.kwargs["timeout"], 45)
+
+    def test_real_session_rejection_preserves_bounded_w3c_reason(self):
+        marker = "NOT_RETAINED"
+        body = json.dumps(
+            {
+                "value": {
+                    "error": "session not created",
+                    "message": "Safari could not create an automation session.",
+                    "stacktrace": marker,
+                    "data": {"token": marker},
+                }
+            }
+        ).encode()
+        origin, paths = self.protocol_server(status=500, body=body)
+        transport = driver.WebDriver(origin)
+        with self.assertRaises(driver.WebDriverHTTPError) as caught:
+            transport.call("POST", "/session", {"capabilities": {}})
+        self.assertEqual(paths, ["/session"])
+        self.assertEqual(
+            caught.exception.diagnostic,
+            {
+                "httpStatus": 500,
+                "responseKind": "w3c-error",
+                "errorCode": "session not created",
+                "message": "Safari could not create an automation session.",
+                "messageTruncated": False,
+            },
+        )
+        self.assertNotIn(marker, str(caught.exception))
+
+    def rejected_response(self, response, status=500):
+        error = urllib.error.HTTPError(
+            "http://127.0.0.1:4444/session",
+            status,
+            "untrusted server text",
+            response.headers,
+            response,
+        )
+        transport = driver.WebDriver("http://127.0.0.1:4444")
+        with (
+            patch.object(transport.opener, "open", side_effect=error),
+            self.assertRaises(driver.WebDriverHTTPError) as caught,
+        ):
+            transport.call("POST", "/session", {})
+        self.assertTrue(response.closed)
+        self.assertEqual(caught.exception.diagnostic["httpStatus"], status)
+        self.assertNotIn("untrusted server text", str(caught.exception))
+        return caught.exception
+
+    def test_documented_w3c_error_table_preserves_code_and_http_rejection(self):
+        # Independent JSON-code/status table from the dated W3C section 6.6.
+        documented = {
+            "element click intercepted": 400,
+            "element not interactable": 400,
+            "insecure certificate": 400,
+            "invalid argument": 400,
+            "invalid cookie domain": 400,
+            "invalid element state": 400,
+            "invalid selector": 400,
+            "invalid session id": 404,
+            "javascript error": 500,
+            "move target out of bounds": 500,
+            "no such alert": 404,
+            "no such cookie": 404,
+            "no such element": 404,
+            "no such frame": 404,
+            "no such window": 404,
+            "no such shadow root": 404,
+            "script timeout": 500,
+            "session not created": 500,
+            "stale element reference": 404,
+            "detached shadow root": 404,
+            "timeout": 500,
+            "unable to set cookie": 500,
+            "unable to capture screen": 500,
+            "unexpected alert open": 500,
+            "unknown command": 404,
+            "unknown error": 500,
+            "unknown method": 405,
+            "unsupported operation": 500,
+        }
+        self.assertEqual(driver.W3C_ERROR_CODES, frozenset(documented))
+        for code, status in documented.items():
+            with self.subTest(code=code, status=status):
+                response = self.response(
+                    json.dumps(
+                        {
+                            "value": {
+                                "error": code,
+                                "message": "Synthetic documented driver failure",
+                            }
+                        }
+                    ).encode()
+                )
+                error = self.rejected_response(response, status)
+                self.assertEqual(error.diagnostic["errorCode"], code)
+                self.assertEqual(error.diagnostic["responseKind"], "w3c-error")
+
+    def test_nonstandard_error_codes_remain_unrecognized_and_rejected(self):
+        for code in ("no such driver", "NO SUCH ELEMENT", "no such element ", "PRIVATE_extension"):
+            with self.subTest(code=code):
+                response = self.response(json.dumps({"value": {"error": code}}).encode())
+                error = self.rejected_response(response, 404)
+                self.assertEqual(error.diagnostic["errorCode"], "unrecognized")
+                self.assertNotIn(code, str(error))
+
+    def test_real_missing_element_response_preserves_standard_code(self):
+        body = json.dumps(
+            {
+                "value": {
+                    "error": "no such element",
+                    "message": "Synthetic settings locator was not found",
+                }
+            }
+        ).encode()
+        origin, paths = self.protocol_server(status=404, body=body)
+        transport = driver.WebDriver(origin)
+        with self.assertRaises(driver.WebDriverHTTPError) as caught:
+            transport.call(
+                "POST", "/session/fixture/element", {"using": "css selector", "value": "#settings"}
+            )
+        self.assertEqual(paths, ["/session/fixture/element"])
+        self.assertEqual(caught.exception.diagnostic["httpStatus"], 404)
+        self.assertEqual(caught.exception.diagnostic["errorCode"], "no such element")
+
+    def test_http_failure_fallbacks_keep_status_and_close_body(self):
+        cases = [
+            (b"PRIVATE", "text/html", None, "non-json"),
+            (b"not json PRIVATE", "application/json", None, "unavailable"),
+            (b"{}", "application/json", None, "invalid-schema"),
+            (b'{"value":[]}', "application/json", None, "invalid-schema"),
+            (b'{"value":{"error":12}}', "application/json", None, "invalid-schema"),
+            (b"PRIVATE", "application/json", "invalid", "invalid-or-oversized-length"),
+            (b"PRIVATE", "application/json", "9" * 5000, "invalid-or-oversized-length"),
+            (
+                b"PRIVATE",
+                "application/json",
+                driver.MAX_WEBDRIVER_ERROR_RESPONSE + 1,
+                "invalid-or-oversized-length",
+            ),
+            (
+                b"x" * (driver.MAX_WEBDRIVER_ERROR_RESPONSE + 1),
+                "application/json",
+                None,
+                "oversized-body",
+            ),
+        ]
+        for body, content_type, length, kind in cases:
+            with self.subTest(kind=kind, length=length):
+                response = self.response(body, content_type, length)
+                error = self.rejected_response(response)
+                self.assertEqual(error.diagnostic, {"httpStatus": 500, "responseKind": kind})
+                self.assertNotIn("PRIVATE", str(error))
+
+    def test_http_failure_body_read_error_does_not_mask_status(self):
+        for failure in (OSError("PRIVATE"), http.client.IncompleteRead(b"PRIVATE", 10)):
+            with self.subTest(failure=type(failure).__name__):
+                response = self.response(b"")
+                with patch.object(response, "read", side_effect=failure):
+                    error = self.rejected_response(response)
+                self.assertEqual(error.diagnostic["responseKind"], "unavailable")
+
+    def test_http_error_redacts_quoted_credential_assignments(self):
+        for message in (
+            '{"token":"SENSITIVE_MARKER"}',
+            '{"password":"SENSITIVE_MARKER"}',
+            "{'secret': 'SENSITIVE_MARKER'}",
+        ):
+            with self.subTest(message=message):
+                response = self.response(
+                    json.dumps(
+                        {
+                            "value": {
+                                "error": "session not created",
+                                "message": message,
+                            }
+                        }
+                    ).encode()
+                )
+                self.assertNotIn("SENSITIVE_MARKER", str(self.rejected_response(response)))
+
+    def test_http_failure_json_recursion_error_does_not_mask_status(self):
+        response = self.response(b"[]")
+        with patch.object(driver.json, "loads", side_effect=RecursionError):
+            error = self.rejected_response(response)
+        self.assertEqual(error.diagnostic["responseKind"], "unavailable")
+
+    def test_http_error_omits_credentials_paths_controls_and_unrecognized_code(self):
+        marker = "DATA_PRIVATE"
+        message = (
+            "Failure at https://user:pass@example.com/path?token=URL_PRIVATE "
+            'password="PASSWORD_PRIVATE" token=TOKEN_PRIVATE '
+            "Bearer BEARER_PRIVATE Basic BASIC_PRIVATE "
+            "/Users/private/FILE_PRIVATE C:\\private\\WIN_PRIVATE "
+            "\x1b\n" + "Z" * 40 + " useful reason " + "more words " * 200
+        )
+        response = self.response(
+            json.dumps(
+                {
+                    "value": {
+                        "error": "UNKNOWN_PRIVATE",
+                        "message": message,
+                        "stacktrace": "STACK_PRIVATE",
+                        "data": {"token": marker},
+                    }
+                }
+            ).encode()
+        )
+        error = self.rejected_response(response)
+        self.assertEqual(error.diagnostic["errorCode"], "unrecognized")
+        self.assertLessEqual(len(error.diagnostic["message"]), 768)
+        self.assertFalse(error.diagnostic["messageTruncated"])
+        self.assertEqual(error.diagnostic["message"], "[credential-bearing message omitted]")
+        self.assertNotIn("PRIVATE", str(error))
+        self.assertNotIn("Z" * 40, str(error))
+        self.assertTrue(all(c.isprintable() for c in error.diagnostic["message"]))
+
+    def test_escaped_and_compound_credentials_omit_the_complete_message(self):
+        marker = "SENSITIVE_TAIL"
+        for key in (
+            "password",
+            "access_token",
+            "refresh-token",
+            "accessToken",
+            "client_secret",
+            "client-key",
+            "api_key",
+            "session_id",
+        ):
+            for value in ('prefix\\" ' + marker, "prefix\\' " + marker):
+                message = "Before " + json.dumps({key: value}) + " after " + marker
+                with self.subTest(key=key, value=value):
+                    self.assertEqual(
+                        driver.diagnostic_message(message), "[credential-bearing message omitted]"
+                    )
+        credential_field = "password"
+        malformed_value = '"unterminated ' + marker
+        self.assertEqual(
+            driver.diagnostic_message(credential_field + "=" + malformed_value),
+            "[credential-bearing message omitted]",
+        )
+
+    def test_uncredentialed_driver_reason_remains_useful_and_bounded(self):
+        message = "Safari did not become available. " + "more words " * 200
+        response = self.response(
+            json.dumps(
+                {
+                    "value": {
+                        "error": "session not created",
+                        "message": message,
+                    }
+                }
+            ).encode()
+        )
+        error = self.rejected_response(response)
+        self.assertTrue(error.diagnostic["message"].startswith("Safari did not become available."))
+        self.assertEqual(len(error.diagnostic["message"]), 768)
+        self.assertTrue(error.diagnostic["messageTruncated"])
+
+    def test_error_read_uses_remaining_call_budget_and_restores_timer(self):
+        response = self.response(b'{"value":{"error":"unknown error"}}')
+        previous_handler = signal.getsignal(signal.SIGALRM)
+        with patch.object(driver.time, "monotonic", side_effect=[10.0, 55.01]):
+            error = self.rejected_response(response)
+        self.assertEqual(error.diagnostic["responseKind"], "deadline-exceeded")
+        self.assertEqual(signal.getsignal(signal.SIGALRM), previous_handler)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+
+    def test_timer_setup_cannot_start_a_fresh_budget_after_original_deadline(self):
+        previous = signal.getsignal(signal.SIGALRM)
+        response = self.response(b"{}")
+        with (
+            patch.object(driver.time, "monotonic", side_effect=[10.0, 10.1, 55.01]),
+            patch.object(driver.signal, "setitimer") as arm,
+            patch.object(response, "read") as read,
+        ):
+            error = self.rejected_response(response)
+        self.assertEqual(error.diagnostic["responseKind"], "deadline-exceeded")
+        arm.assert_called_once_with(signal.ITIMER_REAL, 0)
+        read.assert_not_called()
+        self.assertEqual(signal.getsignal(signal.SIGALRM), previous)
+
+    def test_diagnostic_timer_refuses_existing_owner_and_unsupported_context(self):
+        for timer in ((10.0, 0.0), (0.0, 10.0)):
+            response = self.response(b"{}")
+            with (
+                self.subTest(timer=timer),
+                patch.object(driver.signal, "getitimer", return_value=timer),
+                patch.object(driver.signal, "setitimer") as arm,
+                patch.object(response, "read") as read,
+            ):
+                error = self.rejected_response(response)
+            self.assertEqual(error.diagnostic["responseKind"], "deadline-unavailable")
+            arm.assert_not_called()
+            read.assert_not_called()
+        for patch_target in ("getsignal", "current_thread"):
+            response = self.response(b"{}")
+            owner = driver.signal if patch_target == "getsignal" else driver.threading
+            with (
+                patch.object(owner, patch_target, return_value=None),
+                patch.object(driver.signal, "setitimer") as arm,
+                patch.object(response, "read") as read,
+            ):
+                error = self.rejected_response(response)
+            self.assertEqual(error.diagnostic["responseKind"], "deadline-unavailable")
+            arm.assert_not_called()
+            read.assert_not_called()
+        response = self.response(b"{}")
+        with (
+            patch.object(driver, "signal", SimpleNamespace()),
+            patch.object(response, "read") as read,
+        ):
+            error = self.rejected_response(response)
+        self.assertEqual(error.diagnostic["responseKind"], "deadline-unavailable")
+        read.assert_not_called()
+
+    def test_timer_arming_failure_restores_handler_and_never_reads_body(self):
+        previous = signal.getsignal(signal.SIGALRM)
+        response = self.response(b"{}")
+        with (
+            patch.object(driver.signal, "setitimer", side_effect=[OSError("fixture"), None]) as arm,
+            patch.object(response, "read") as read,
+        ):
+            error = self.rejected_response(response)
+        self.assertEqual(error.diagnostic["responseKind"], "unavailable")
+        self.assertEqual(arm.call_args_list[-1].args, (signal.ITIMER_REAL, 0))
+        read.assert_not_called()
+        self.assertEqual(signal.getsignal(signal.SIGALRM), previous)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+
+    def test_handler_restore_is_attempted_even_when_timer_disarm_raises(self):
+        previous = signal.getsignal(signal.SIGALRM)
+        response = self.response(b'{"value":{"error":"unknown error"}}')
+        # Both calls are mocked: no real timer is left armed by this failure control.
+        with patch.object(driver.signal, "setitimer", side_effect=[None, OSError("fixture")]):
+            error = self.rejected_response(response)
+        self.assertEqual(error.diagnostic["responseKind"], "unavailable")
+        self.assertEqual(signal.getsignal(signal.SIGALRM), previous)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+
+    def test_diagnostic_timer_restores_exact_handler_after_read_failure(self):
+        prior = signal.getsignal(signal.SIGALRM)
+        sentinel = Mock()
+        signal.signal(signal.SIGALRM, sentinel)
+        try:
+            response = self.response(b"{}")
+            with patch.object(response, "read", side_effect=OSError("fixture")):
+                error = self.rejected_response(response)
+            self.assertEqual(error.diagnostic["responseKind"], "unavailable")
+            self.assertIs(signal.getsignal(signal.SIGALRM), sentinel)
+            self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+            sentinel.assert_not_called()
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, prior)
+
+    def test_actual_trickled_error_is_bounded_and_closes_owned_resources(self):
+        done = threading.Event()
+        stop = threading.Event()
+        paths = []
+
+        class TrickleHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                paths.append(self.path)
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", "1000")
+                self.end_headers()
+                try:
+                    deadline = time.monotonic() + 2
+                    while not stop.is_set() and time.monotonic() < deadline:
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                        stop.wait(0.02)
+                except (BrokenPipeError, ConnectionResetError):
+                    # Client deadline closes its connection; this is the expected peer outcome.
+                    pass
+                finally:
+                    done.set()
+
+            def log_message(self, *_args):
+                # The request path and transport outcome are asserted directly.
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), TrickleHandler)
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+        thread.start()
+        transport = driver.WebDriver(f"http://127.0.0.1:{server.server_port}")
+        handler_before = signal.getsignal(signal.SIGALRM)
+        started = time.monotonic()
+        try:
+            with (
+                patch.object(driver, "WEBDRIVER_CALL_TIMEOUT", 0.15),
+                self.assertRaises(driver.WebDriverHTTPError) as caught,
+            ):
+                transport.call("POST", "/session", {})
+            self.assertEqual(
+                caught.exception.diagnostic,
+                {
+                    "httpStatus": 500,
+                    "responseKind": "deadline-exceeded",
+                },
+            )
+            self.assertLess(time.monotonic() - started, 1.5)
+            self.assertTrue(
+                done.wait(timeout=1), "Client response was not closed after its deadline"
+            )
+            self.assertEqual(paths, ["/session"])
+        finally:
+            stop.set()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(signal.getsignal(signal.SIGALRM), handler_before)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+
+    def test_session_rejection_is_recorded_without_positive_scenarios(self):
+        transport = Mock(session=None)
+        failure = driver.WebDriverHTTPError(
+            500,
+            {
+                "responseKind": "w3c-error",
+                "errorCode": "session not created",
+                "message": "Safari could not start",
+                "messageTruncated": False,
+            },
+        )
+        transport.call.side_effect = failure
+        candidate = {
+            "repository": "victron-venus/test",
+            "sourceSha": "a" * 40,
+            "runId": 1,
+            "runAttempt": 1,
+            "candidateArtifactId": 2,
+            "candidateSha256": "b" * 64,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            with (
+                patch.dict("os.environ", {"GITHUB_ACTIONS": "true"}),
+                patch.object(driver, "WebDriver", return_value=transport),
+                patch.object(driver, "macos_host_identity", return_value={"osName": "macOS"}),
+                self.assertRaises(driver.WebDriverHTTPError),
+            ):
+                driver.execute(
+                    candidate,
+                    "https://127.0.0.1",
+                    "http://127.0.0.1:4444",
+                    "macOS",
+                    "native-host",
+                    output,
+                )
+            record = gate.read_json(output / "native-smoke.provisional.json")
+            self.assertEqual(record["status"], "failed")
+            self.assertEqual(record["scenarios"], [])
+            self.assertEqual(record["driverFailure"], failure.diagnostic)
+            self.assertFalse((output / "native-smoke.json").exists())
 
     def test_capture_is_pending_and_never_overwrites(self):
         candidate = {
@@ -289,6 +757,43 @@ class NativeToolTests(unittest.TestCase):
             self.assertEqual(result["status"], "failed")
             self.assertIn("Secure context", result["error"])
             self.assertTrue(result["sessionCleanupFailed"])
+
+    def test_cleanup_http_diagnostics_never_replace_primary_failure(self):
+        cleanup = driver.WebDriverHTTPError(
+            500,
+            {
+                "responseKind": "w3c-error",
+                "errorCode": "unknown error",
+                "message": "Synthetic session deletion refused",
+                "messageTruncated": False,
+            },
+        )
+        original = {"httpStatus": 500, "responseKind": "w3c-error", "errorCode": "timeout"}
+        for observed_status in ("failed", "pending-parent-validation"):
+            with self.subTest(status=observed_status), tempfile.TemporaryDirectory() as temporary:
+                record = {"status": observed_status, "sessionCleanupSucceeded": False}
+                if observed_status == "failed":
+                    record.update(
+                        error="Original observation failed", driverFailure=original.copy()
+                    )
+                transport = Mock(session="fixture")
+                transport.command.side_effect = cleanup
+                output = Path(temporary) / "native-smoke.provisional.json"
+                if observed_status == "failed":
+                    driver.finalize_observation(transport, record, output)
+                else:
+                    with self.assertRaisesRegex(ValueError, "session cleanup failed"):
+                        driver.finalize_observation(transport, record, output)
+                saved = gate.read_json(output)
+                self.assertEqual(saved["status"], "failed")
+                self.assertFalse(saved["sessionCleanupSucceeded"])
+                self.assertEqual(saved["cleanupDriverFailure"], cleanup.diagnostic)
+                if observed_status == "failed":
+                    self.assertEqual(saved["driverFailure"], original)
+                    self.assertEqual(saved["error"], "Original observation failed")
+                else:
+                    self.assertNotIn("driverFailure", saved)
+                self.assertFalse((output.parent / "native-smoke.json").exists())
 
 
 if __name__ == "__main__":

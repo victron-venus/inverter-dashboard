@@ -25,6 +25,15 @@ function certificateFingerprint(filename) {
   return fingerprint
 }
 
+function trustCleanupStatus(error) {
+  const status = { code: null, exitStatus: null, signal: null }
+  if (error?.code != null) status.code = 'other'
+  if (error?.code === 'ETIMEDOUT') status.code = 'ETIMEDOUT'
+  if (Number.isInteger(error?.status) && error.status >= 0 && error.status <= 255) status.exitStatus = error.status
+  if (typeof error?.signal === 'string' && Object.hasOwn(os.constants.signals, error.signal)) status.signal = error.signal
+  return status
+}
+
 function removeFixtureTrust(cert, fingerprint, invoke = execFileSync) {
   const failures = []
   const actions = [
@@ -32,8 +41,10 @@ function removeFixtureTrust(cert, fingerprint, invoke = execFileSync) {
     { args: ['delete-certificate', '-Z', fingerprint, '/Library/Keychains/System.keychain'], error: 'Temporary fixture certificate cleanup failed' },
   ]
   for (const action of actions) {
-    try { invoke('/usr/bin/sudo', ['/usr/bin/security', ...action.args], { stdio: 'inherit', timeout: 30000, env: { ...process.env, PATH: TRUSTED_PATH } }) }
-    catch { failures.push(action.error) }
+    // Child output and Error.message can contain command arguments or environment
+    // details. Retain only bounded exit primitives, never raw subprocess text.
+    try { invoke('/usr/bin/sudo', ['/usr/bin/security', ...action.args], { stdio: 'ignore', timeout: 30000, env: { ...process.env, PATH: TRUSTED_PATH } }) }
+    catch (error) { failures.push(`${action.error} ${JSON.stringify(trustCleanupStatus(error))}`) }
   }
   return failures
 }

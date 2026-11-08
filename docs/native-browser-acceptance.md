@@ -110,6 +110,37 @@ The portable WebDriver helper also accepts `--platform iOS --runtime native-simu
 
 Apple supports Safari WebDriver on iOS Simulator as well as an attached device. WebDriver's automation window suppresses system notifications and the software keyboard, so an otherwise successful iOS WebDriver smoke cannot supply those native observations. See [Apple's Safari WebDriver explanation](https://webkit.org/blog/9395/webdriver-is-coming-to-safari-in-ios-13/).
 
+## Failed native runs remain failed
+
+The hosted driver preserves a bounded W3C error diagnostic when an HTTP command
+fails, including session creation. It keeps the HTTP status and a recognized error
+code, reads at most 16 KiB of JSON, and retains at most 768 characters of the
+message after removing common URL, filesystem-path, authorization-scheme and
+opaque-token values. A recognized credential assignment discards the whole
+message, including escaped quoted values and compound token/client keys. Stack
+traces, arbitrary data, headers and raw response bodies are not copied into receipts. This diagnostic is
+for the isolated hosted fixture, which receives no production credentials; text
+redaction is not a general-purpose guarantee for arbitrary secrets. Invalid,
+oversized or unreadable error responses retain a fixed diagnostic classification
+and still fail with the original HTTP status. The response is closed.
+
+Error-body reading uses the remaining portion of a 45-second monotonic budget
+started before opening the command, with an owned POSIX alarm in the standalone
+main thread. Unsupported contexts or an already-owned alarm skip the diagnostic
+body; the original HTTP failure remains. The alarm is disarmed and its previous
+handler restored after reading. This bounds diagnostic body reading, not the
+unchanged urllib header-read behavior or every possible operating-system stall.
+A failed session deletion records a separate `cleanupDriverFailure`, preserving
+any primary `driverFailure`; neither error can produce an accepted receipt.
+
+Trust cleanup reports only timeout code, bounded exit status and recognized
+signal; raw subprocess output is discarded. Both independent 30-second cleanup
+attempts still run, and any failure prevents the final passing receipt. Diagnostic
+improvements neither retry Safari nor lengthen deadlines or waive cleanup. A
+provisional record with four passed scenarios is still unaccepted when parent
+cleanup fails. Session-creation failures and post-scenario cleanup failures must
+be reported separately; neither establishes a defect in candidate UI code.
+
 ## Complete native capture and review
 
 The checked-in `.github/native-acceptance-policy.json` requires three targets:
