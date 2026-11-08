@@ -219,19 +219,20 @@ function componentPassed(report) {
   return removed.targetPresent === false && deleted.targetPresent === false && removed.adminCount === before.adminCount && deleted.adminCount === before.adminCount
 }
 
+async function prepareStep(command, args, env, run, report) {
+  const result = await run(command, args, env, 30000)
+  report.preparation.push(safeStatus(result))
+  assert(result.ok && result.reaped, 'Component preparation failed')
+}
+
 async function prepare(fixture, env, run, report) {
   const config = '[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=v3\n[dn]\nCN=localhost\n[v3]\nsubjectAltName=DNS:localhost\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature,keyEncipherment,keyCertSign\nextendedKeyUsage=serverAuth\n'
   fs.writeFileSync(path.join(fixture.directory, 'openssl.cnf'), config, { flag: 'wx', mode: 0o600 })
-  const steps = [
-    ['/usr/bin/clang', ['-fobjc-arc', '-Wall', '-Wextra', '-Werror', '-framework', 'Foundation', '-framework', 'Security', path.join(__dirname, 'hosted_trust_observer.m'), '-o', path.join(fixture.directory, 'observer')]],
-    ['/usr/bin/openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-config', path.join(fixture.directory, 'openssl.cnf'), '-keyout', path.join(fixture.directory, 'key.pem'), '-out', fixture.cert]],
-    ['/usr/bin/openssl', ['x509', '-in', fixture.cert, '-outform', 'DER', '-out', path.join(fixture.directory, 'fixture.der')]],
-  ]
-  for (const [command, args] of steps) {
-    const result = await run(command, args, env, 30000)
-    report.preparation.push(safeStatus(result))
-    assert(result.ok && result.reaped, 'Component preparation failed')
-  }
+  // Each step must succeed and close before the next one starts. In particular,
+  // DER conversion consumes the certificate produced by the preceding step.
+  await prepareStep('/usr/bin/clang', ['-fobjc-arc', '-Wall', '-Wextra', '-Werror', '-framework', 'Foundation', '-framework', 'Security', path.join(__dirname, 'hosted_trust_observer.m'), '-o', path.join(fixture.directory, 'observer')], env, run, report)
+  await prepareStep('/usr/bin/openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-config', path.join(fixture.directory, 'openssl.cnf'), '-keyout', path.join(fixture.directory, 'key.pem'), '-out', fixture.cert], env, run, report)
+  await prepareStep('/usr/bin/openssl', ['x509', '-in', fixture.cert, '-outform', 'DER', '-out', path.join(fixture.directory, 'fixture.der')], env, run, report)
   const cert = new crypto.X509Certificate(boundedRead(fixture.cert, 65536))
   fixture.fingerprint = cert.fingerprint256.replaceAll(':', '')
   assert.match(fixture.fingerprint, /^[A-F0-9]{64}$/)
@@ -273,4 +274,4 @@ async function execute() {
 }
 
 if (require.main === module) execute().catch(() => { process.stderr.write('Hosted trust component failed\n'); process.exitCode = 1 })
-module.exports = { requireHostedContext, executionContext, invoke, safeStatus, observation, lifecycle, componentPassed, CHECKOUT, HOSTED_TEMP, REPOSITORY, WORKFLOW, WORKFLOW_FILE }
+module.exports = { requireHostedContext, executionContext, invoke, safeStatus, observation, lifecycle, componentPassed, prepareStep, CHECKOUT, HOSTED_TEMP, REPOSITORY, WORKFLOW, WORKFLOW_FILE }

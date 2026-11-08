@@ -4,7 +4,7 @@ const { EventEmitter } = require('node:events')
 const { PassThrough } = require('node:stream')
 const fs = require('node:fs')
 const path = require('node:path')
-const { requireHostedContext, invoke, safeStatus, observation, lifecycle, componentPassed, CHECKOUT, HOSTED_TEMP, REPOSITORY, WORKFLOW, WORKFLOW_FILE } = require('./hosted_trust_component.cjs')
+const { requireHostedContext, invoke, safeStatus, observation, lifecycle, componentPassed, prepareStep, CHECKOUT, HOSTED_TEMP, REPOSITORY, WORKFLOW, WORKFLOW_FILE } = require('./hosted_trust_component.cjs')
 
 const FINGERPRINT = 'A'.repeat(64)
 const SOURCE = 'b'.repeat(40)
@@ -51,6 +51,53 @@ test('local executable guard precedes all process and trust actions', () => {
   assert(!source.includes('process.argv'))
   const { executionContext } = require('./hosted_trust_component.cjs')
   assert.throws(() => executionContext({ GITHUB_ACTIONS: 'false' }))
+})
+
+test('every exact environment guard rejects missing or mismatched admission values', () => {
+  const bad = { GITHUB_ACTIONS: 'false', GITHUB_JOB: 'other', GITHUB_REPOSITORY: 'foreign/fork', GITHUB_WORKFLOW: 'Other workflow', RUNNER_OS: 'Linux', RUNNER_TEMP: path.join(HOSTED_TEMP, 'other'), GITHUB_WORKSPACE: path.join(CHECKOUT, 'other'), GITHUB_RUN_ID: '0', GITHUB_RUN_ATTEMPT: '1.5' }
+  for (const [key, value] of Object.entries(bad)) {
+    assert.throws(() => requireHostedContext({ ...context(), [key]: value }, event(), 'darwin'), key)
+  }
+  for (const key of Object.keys(context())) {
+    const env = context(); delete env[key]
+    assert.throws(() => requireHostedContext(env, event(), 'darwin'), `missing ${key}`)
+  }
+  for (const value of ['0', '-1', ' 1', '1 ', '1x', '1.5', '9'.repeat(20)]) {
+    assert.throws(() => requireHostedContext({ ...context(), GITHUB_RUN_ID: value }, event(), 'darwin'))
+    assert.throws(() => requireHostedContext({ ...context(), GITHUB_RUN_ATTEMPT: value }, event(), 'darwin'))
+  }
+  assert.throws(() => requireHostedContext({ ...context(), TRUST_COMPONENT_SOURCE_SHA: 'not-a-sha' }, event(), 'darwin'))
+})
+
+test('every event identity guard rejects absent, foreign or mismatched PR identity', () => {
+  for (const number of [undefined, null, 0, -1, 1.5, '42', Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => requireHostedContext(context(), { ...event(), number }, 'darwin'))
+  }
+  const foreignBase = event(); foreignBase.pull_request.base.repo.full_name = 'foreign/fork'
+  const foreignEvent = event(); foreignEvent.repository.full_name = 'foreign/fork'
+  const mismatchedHead = event(); mismatchedHead.pull_request.head.sha = 'c'.repeat(40)
+  const missingHead = event(); delete missingHead.pull_request.head
+  const mismatchedNumber = event(); mismatchedNumber.number = 43
+  for (const value of [null, {}, foreignBase, foreignEvent, mismatchedHead, missingHead, mismatchedNumber]) {
+    assert.throws(() => requireHostedContext(context(), value, 'darwin'))
+  }
+})
+
+async function rejectsPreparation(result) {
+  const state = { preparation: [] }, calls = []
+  const run = async (...args) => { calls.push(args); return result }
+  await assert.rejects(prepareStep('/synthetic-command', [], { PATH: 'synthetic' }, run, state))
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][3], 30000)
+  assert.deepEqual(state.preparation, [safeStatus(result)])
+}
+
+test('preparation retains typed failure and rejects failed predecessors', async () => {
+  await rejectsPreparation({ ...good(), ok: false, exitStatus: 7 })
+})
+
+test('preparation rejects an unclosed predecessor despite a success flag', async () => {
+  await rejectsPreparation({ ...good(), reaped: false })
 })
 
 test('one add/remove/delete and independent before/after membership observations qualify only the component', async () => {
