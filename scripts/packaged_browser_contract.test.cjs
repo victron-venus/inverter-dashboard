@@ -282,14 +282,47 @@ test('failed close and kill expose fixed statuses without exporting exception cr
   assert(!JSON.stringify(warning.mock.calls[0].arguments).includes(credential))
 })
 
-test('failed kill or missing reap cannot produce a successful qualification', { timeout: 3000 }, async t => {
+test('cleanup-only failure records one diagnostic and fixed statuses without accepting success', { timeout: 3000 }, async t => {
   const { child } = await ownedChild(t)
   const server = { process: () => child, close: async () => {}, kill: async () => {} }
-  await assert.rejects(withOwnedBrowser(server, async () => {}, async () => {}, cleanupBudgets), /did not terminate/)
+  const warning = t.mock.method(console, 'error', () => {})
+  const saved = []
+  await assert.rejects(withOwnedBrowser(server, async () => 'scenario passed', async () => {
+    saved.push({ source: failureState({ battery_soc: 78 }), peer: failureFixture({ journalEpoch: 3 }) })
+  }, cleanupBudgets), /did not terminate/)
+  assert.equal(saved.length, 1)
+  assert.equal(saved[0].source.battery_soc, 78)
+  assert.equal(saved[0].peer.journalEpoch, 3)
+  assert.equal(warning.mock.calls.length, 1)
+  assert.deepEqual(warning.mock.calls[0].arguments,
+    ['Owned browser cleanup failed after completed scenario',
+      { close: 'available', kill: 'available', reap: 'deadline', observedReap: false }])
   assert.equal(child.exitCode, null)
   assert.equal(child.signalCode, null)
   // Test-owned after hook now terminates the deliberately unreaped negative control.
 })
+
+for (const diagnosticMode of ['throws', 'hangs']) {
+  test(`cleanup-only failure survives a diagnostic collector that ${diagnosticMode}`, { timeout: 3000 }, async t => {
+    const { child } = await ownedChild(t)
+    const credential = 'ephemeral-failed-diagnostic-credential'
+    const warning = t.mock.method(console, 'error', () => {})
+    const server = { process: () => child, close: async () => {}, kill: async () => {} }
+    let diagnosticCalls = 0
+    const diagnostics = () => {
+      diagnosticCalls++
+      if (diagnosticMode === 'throws') throw new Error(credential)
+      return new Promise(() => {})
+    }
+    await assert.rejects(withOwnedBrowser(server, async () => 'scenario passed', diagnostics, cleanupBudgets),
+      error => /Owned browser process did not terminate/.test(error.message) && !error.message.includes(credential))
+    assert.equal(diagnosticCalls, 1)
+    assert.equal(warning.mock.calls.length, 1)
+    assert(!JSON.stringify(warning.mock.calls[0].arguments).includes(credential))
+    assert.equal(child.exitCode, null)
+    assert.equal(child.signalCode, null)
+  })
+}
 
 
 test('one absolute work deadline expires before owned cleanup, without renewing per stage', { timeout: 3000 }, async t => {

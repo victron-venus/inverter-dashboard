@@ -196,7 +196,11 @@ async function withOwnedBrowser(server, work, diagnostics,
     if (cleanupFailed) console.error('Owned browser cleanup failed; original scenario failure retained', cleanupStatus)
     throw failure
   }
-  if (cleanupFailed) throw cleanupFailure
+  if (cleanupFailed) {
+    console.error('Owned browser cleanup failed after completed scenario', cleanupStatus)
+    await boundedDiagnostic(diagnostics, budgets.diagnostics)
+    throw cleanupFailure
+  }
   return result
 }
 
