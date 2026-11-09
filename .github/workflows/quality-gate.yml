@@ -148,7 +148,7 @@ jobs:
       - scope
       - check-0
     if: ${{ needs.scope.outputs.run == 'true' }}
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml@ecb29d724aee35aba541f7a0a379dfef424c088e # main
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml@42c1200e7ec4ce7ed32fa1c9e7492449b1f04b80 # main
     permissions:
       contents: read
       actions: read
