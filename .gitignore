@@ -71,3 +71,4 @@ oom-*
 # Synthetic browser traces and local evidence
 .compatibility/
 node_modules/
+A*S.md
