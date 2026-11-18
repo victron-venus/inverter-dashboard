@@ -9,10 +9,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = json.loads((ROOT / ".release-policy.json").read_text())
 TOOLKIT_SHA = POLICY["versioning"]["toolkit_revision"]
-REUSABLE = (
-    "victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@"
-    + TOOLKIT_SHA
-)
+REUSABLE = "victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@" + TOOLKIT_SHA
 
 
 class TypeScriptWorkflowPinTests(unittest.TestCase):
