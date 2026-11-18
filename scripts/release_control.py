@@ -1823,10 +1823,11 @@ def _require_fresh_job_timing(job: JSONObject, boundary: datetime) -> None:
 
 
 def require_current_attempt_jobs(
-    gh: GitHub, run_id: int, sha: str, attempt: int, jobs: list[JSONObject]
-) -> None:
-    """Keep first-attempt compatibility; reruns need fresh successful executions."""
-    if attempt == 1:
+    gh: GitHub, run_id: int, sha: str, attempt: int, jobs: list[JSONObject], *,
+    require_active: bool = False, publisher_run: JSONObject | None = None,
+) -> JSONObject | None:
+    """Keep historical first-attempt compatibility; live proofs need fresh status."""
+    if attempt == 1 and not require_active:
         return
     raw_detail = gh.api(f"actions/runs/{run_id}/attempts/{attempt}")
     require(isinstance(raw_detail, dict), "Malformed release attempt metadata")
@@ -1834,6 +1835,12 @@ def require_current_attempt_jobs(
     require(detail.get("id") == run_id and detail.get("run_attempt") == attempt
             and detail.get("head_sha") == sha and detail.get("path") == WORKFLOW,
             "Release attempt metadata identity mismatch")
+    if require_active:
+        require(isinstance(publisher_run, dict),
+                "Publisher proof requires a fresh exact-attempt response")
+        detail = require_active_attempt(detail, cast(JSONObject, publisher_run))
+        if attempt == 1:
+            return detail
     boundary = _execution_timestamp(detail.get("run_started_at"), "release attempt start")
     for job in jobs:
         if job.get("status") != "completed" or job.get("conclusion") != "success":
@@ -1841,6 +1848,7 @@ def require_current_attempt_jobs(
         require(job.get("head_sha") == sha and job_attempt_matches(job, attempt),
                 "Successful job differs from the current release attempt")
         _require_fresh_job_timing(job, boundary)
+    return detail
 
 
 def release_gate_ready(
@@ -1870,17 +1878,14 @@ def release_gate_ready(
         gate.get("status") == "completed" and gate.get("conclusion") == "success",
         failure,
     )
-    require_current_attempt_jobs(gh, run_id, sha, attempt, jobs)
+    current_attempt = require_current_attempt_jobs(
+        gh, run_id, sha, attempt, jobs,
+        require_active=publisher_proof is not None,
+        publisher_run=publisher_run,
+    )
     if publisher_proof is not None:
-        require(isinstance(publisher_run, dict),
-                "Publisher proof requires a fresh exact-attempt response")
-        current = cast(JSONObject, publisher_run)
-        require(current.get("id") == run_id and current.get("run_attempt") == attempt
-                and current.get("head_sha") == sha and current.get("path") == WORKFLOW
-                and current.get("conclusion") is None
-                and current.get("status") in {
-                    "queued", "requested", "pending", "waiting", "in_progress",
-                }, "Publisher attempt is no longer active")
+        require(current_attempt is not None, "Publisher attempt metadata was not rechecked")
+        current = current_attempt
         matches = [
             job for job in jobs
             if job.get("check_run_url") is not None
@@ -3400,6 +3405,7 @@ def _promotion_release_notes(
 
 def _begin_promotion_publication(
     gh: GitHub, manifest: JSONObject, current_id: int,
+    confirm_before_write: Callable[[], None] | None = None,
 ) -> None:
     """Recheck allocation ordering and record the protected publication start."""
     if not manifest.get("version_plan"):
@@ -3410,7 +3416,10 @@ def _begin_promotion_publication(
         from .release_state import begin_publication
     else:
         from release_state import begin_publication
-    begin_publication(gh, plan, current_id, promotion=True)
+    begin_publication(
+        gh, plan, current_id, promotion=True,
+        confirm_before_write=confirm_before_write,
+    )
 
 
 # Preserve the ordered security checks and staged bytes within one transaction.
@@ -3427,16 +3436,44 @@ def promote(args: argparse.Namespace) -> JSONObject:
         "Promotion requires a strict vX.Y.Z-rc.N tag",
     )
     current_id = positive(args.run_id, "run ID")
+    publisher_attempt = positive(os.environ.get("GITHUB_RUN_ATTEMPT"), "current run attempt")
     info = repository_info(gh)
-    wait_for_executing_run(
+    execution_proof: list[ExecutionJobProof] = []
+    initial_publisher_run = wait_for_executing_run(
         gh,
         current_id,
         "stable",
         info,
         checked_out_sha(),
-        positive(os.environ.get("GITHUB_RUN_ATTEMPT"), "current run attempt"),
+        publisher_attempt,
         gate=False,
+        execution_proof=execution_proof,
     )
+
+    def confirm_active_publisher() -> None:
+        """Recheck the exact publisher attempt before ledger and public flip."""
+        raw_current = gh.api(
+            f"actions/runs/{current_id}/attempts/{publisher_attempt}"
+        )
+        current = require_active_attempt(raw_current, initial_publisher_run)
+        check_run_id = execution_check_run_id()
+        if check_run_id is None:
+            latest = cast(JSONObject, gh.api(f"actions/runs/{current_id}"))
+            check_execution(gh, current_id, "stable", info, latest)
+            validate_run_provenance(
+                gh, latest, info, checked_out_sha(), publisher_attempt
+            )
+            require(latest.get("status") == "in_progress"
+                    and latest.get("conclusion") is None,
+                    "Publisher aggregate is no longer in progress")
+            return
+        require(len(execution_proof) == 1
+                and execution_proof[0].check_run_id == check_run_id,
+                "Current publisher execution proof is missing")
+        observed = current_execution_job(gh, current, check_run_id)
+        require(observed == execution_proof[0],
+                "Current publisher execution proof is stale or changed")
+
     require_reviewers(gh)
     initial, ref, candidate_release, release_assets, raw, manifest = (
         _read_promotion_candidate(gh, args.rc)
@@ -3478,7 +3515,9 @@ def promote(args: argparse.Namespace) -> JSONObject:
         body = _promotion_release_notes(
             gh, tag, manifest, args.rc, candidate_release, current_id, compact,
         )
-        _begin_promotion_publication(gh, manifest, current_id)
+        _begin_promotion_publication(
+            gh, manifest, current_id, confirm_active_publisher
+        )
         release = _publish_prepared(
             gh,
             tag,
@@ -3486,6 +3525,7 @@ def promote(args: argparse.Namespace) -> JSONObject:
             publish_stage,
             False,
             body,
+            confirm_publish=confirm_active_publisher,
         )
     return {"tag": tag, "release_url": release["html_url"]}
 
