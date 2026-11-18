@@ -1,4 +1,4 @@
-# Shared release-contract regression; keep consumers synchronized.
+# Vendored release toolkit; change the toolkit source, then render again.
 # ruff: noqa
 # mypy: ignore-errors
 # pylint: skip-file
@@ -31,6 +31,17 @@ SPEC.loader.exec_module(rc)
 
 def wire(status, body=b"{}"):
     return f"HTTP/2.0 {status} Test\nContent-Type: application/json\r\n\r\n".encode() + body
+
+
+def paged_wire(status, body, *, next_page):
+    response = wire(status, body)
+    if next_page:
+        response = response.replace(
+            b"\r\n\r\n",
+            b'\r\nLink: <https://api.github.com/next>; rel="next"\r\n\r\n',
+            1,
+        )
+    return response
 
 
 class HTTPTransportTests(unittest.TestCase):
@@ -115,9 +126,9 @@ class HTTPTransportTests(unittest.TestCase):
         self.assertEqual(rc.github_http_response(wire(204, b"")), (204, b""))
 
     def test_pagination_has_exact_json_boundaries_and_discards_partial_result(self):
-        first = wire(200, b'[{"discarded":true}]') + b"\n" + wire(403, b"arbitrary \xff HTTP 404")
+        first = paged_wire(200, b'[{"discarded":true}]', next_page=True) + b"\n" + wire(403, b"arbitrary \xff HTTP 404")
         page = json.dumps([{"name": "caf\u00e9\U0001f600", "text": "HTTP/2.0 404 fake\r\n\r\n"}], ensure_ascii=False).encode()
-        second = wire(200, page) + b"\n" + wire(200, b'[{"final":true}]')
+        second = paged_wire(200, page, next_page=True) + b"\n" + paged_wire(200, b'[{"final":true}]', next_page=False)
         with patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, first, b"gh: HTTP 404")) as failed:
             with self.assertRaises(rc.GitHubError) as error:
                 self.github.pages("releases")
@@ -167,6 +178,8 @@ class RealGitHubCLITests(unittest.TestCase):
         worker.start()
         try:
             with tempfile.TemporaryDirectory() as config:
+                # Keep this real-CLI fixture local, including sampled gh telemetry.
+                Path(config, "config.yml").write_text("telemetry: disabled\n", encoding="utf-8")
                 environment = {
                     "PATH": os.environ.get("PATH", ""),
                     "GH_CONFIG_DIR": config,
@@ -231,6 +244,8 @@ class RealGitHubCLITests(unittest.TestCase):
         real_run = subprocess.run
         try:
             with tempfile.TemporaryDirectory() as config:
+                # Keep this real-CLI fixture local, including sampled gh telemetry.
+                Path(config, "config.yml").write_text("telemetry: disabled\n", encoding="utf-8")
                 environment = {
                     "PATH": os.environ.get("PATH", ""),
                     "GH_CONFIG_DIR": config,

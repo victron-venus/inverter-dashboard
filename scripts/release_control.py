@@ -18,24 +18,28 @@ import hashlib
 import io
 import json
 import os
+import queue
 import random
 import re
+import shutil
 import stat
 
 # Subprocess calls below use argument vectors with shell=False.
 import subprocess  # nosec B404
 import sys
 import tempfile
+import threading
 import time
 import zipfile
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO, TypedDict, cast
+from typing import BinaryIO, NamedTuple, TypedDict, cast
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 WORKFLOW = ".github/workflows/release-pipeline.yml"
 GITHUB_HOSTNAME = "github.com"
+POSITIVE_INTEGER_PATTERN = r"[1-9]\d*"
 MANIFEST = "release-manifest.json"
 POLICY = ".release-policy.json"
 EVIDENCE = Path(".release-evidence") / MANIFEST
@@ -89,6 +93,7 @@ API_PATHS = {
         r"actions/runs/[1-9]\d*(?:/artifacts|/attempts/[1-9]\d*/jobs)?",
         r"actions/runs/[1-9]\d*/attempts/[1-9]\d*",
         r"actions/artifacts/[1-9]\d*/zip",
+        r"actions/jobs/[1-9]\d*",
         r"contents/\.release-policy\.json\?ref=[0-9a-f]{40}",
         r"contents/CHANGELOG\.md\?ref=[0-9a-f]{40}",
         r"contents/\.github\?ref=[0-9a-f]{40}",
@@ -212,7 +217,10 @@ class CreateReadback:
                                 and parse_qs(target.query, strict_parsing=True, keep_blank_values=True)
                                 == {"per_page": ["100"], "page": [str(page + 1)]},
                                 "Unexpected create pagination target")
-                        if target.path != f"/repos/{self.repo}/{path}":
+                        named = re.fullmatch(r"/repos/([^/]+/[^/]+)/" + re.escape(path), target.path)
+                        named_matches = (named is not None and REPO_RE.fullmatch(named[1])
+                                         and named[1].casefold() == self.repo.casefold())
+                        if not named_matches:
                             numeric = re.fullmatch(
                                 r"/repositories/([1-9][0-9]*)/" + re.escape(path), target.path
                             )
@@ -260,7 +268,7 @@ def positive(value: object, name: str) -> int:
     require(
         isinstance(value, (str, int)) and not isinstance(value, bool), f"Invalid {name}"
     )
-    require(bool(re.fullmatch(r"[1-9]\d*", str(value), re.ASCII)), f"Invalid {name}")
+    require(bool(re.fullmatch(POSITIVE_INTEGER_PATTERN, str(value), re.ASCII)), f"Invalid {name}")
     return int(cast(str | int, value))
 
 
@@ -312,19 +320,202 @@ def stream_identity(
     return {"size": size, "sha256": checksum.hexdigest()}
 
 
-def download_asset(gh: GitHub, asset_id: object, destination: Path) -> AssetIdentity:
-    """Stage one asset exclusively and discard incomplete or failed downloads."""
+class DownloadBudget:
+    """Count cumulative transfer bytes separately from the live free-space floor.
+
+    Reuse one budget across a sequential release inventory, even when each verified file is
+    deleted before the next. Hashing or reading a completed file does not debit
+    it again. ``reserve_bytes`` is an operator-selected filesystem floor; it is
+    not a new release-size policy or a reservation against other processes.
+    """
+
+    def __init__(self, max_bytes: int, *, reserve_bytes: int = 0):
+        require(type(max_bytes) is int and max_bytes >= 0, "Invalid download byte budget")
+        require(type(reserve_bytes) is int and reserve_bytes >= 0, "Invalid download disk reserve")
+        self.max_bytes = max_bytes
+        self.reserve_bytes = reserve_bytes
+        self.written = 0
+
+    def check(self, directory: Path, size: int) -> None:
+        """Refuse a transfer/write before it consumes either remaining bound."""
+        require(type(size) is int and size >= 0, "Invalid download write size")
+        require(size <= self.max_bytes - self.written, "Release download byte budget exceeded")
+        require(shutil.disk_usage(directory).free >= self.reserve_bytes + size,
+                "Release download disk reserve would be exceeded")
+
+
+# Retain the original descriptor identity as well as the transfer accounting.
+# pylint: disable-next=too-many-instance-attributes
+class _AssetWriter:
+    """A write-only sink: the subprocess never receives the destination fd."""
+
+    def __init__(self, output: BinaryIO, destination: Path, expected: AssetIdentity,
+                 budget: DownloadBudget):
+        self.output = output
+        self.name = str(destination)
+        self.directory = destination.parent
+        self._owned = os.fstat(output.fileno())
+        self.expected = expected
+        self.budget = budget
+        self.size = 0
+        self.checksum = hashlib.sha256()
+
+    def check(self, size: int = 0) -> None:
+        require(size <= self.expected["size"] - self.size, "Release asset exceeds expected size")
+        self.budget.check(self.directory, size)
+
+    def write(self, chunk: bytes) -> int:
+        """Check before writing; hash and debit only bytes actually written."""
+        self.check(len(chunk))
+        written = self.output.write(chunk)
+        require(isinstance(written, int) and 0 <= written <= len(chunk), "Invalid asset write result")
+        self.size += written
+        self.budget.written += written
+        self.checksum.update(chunk[:written])
+        require(written == len(chunk), "Incomplete asset write")
+        return written
+
+    def identity(self) -> AssetIdentity:
+        """Exact EOF and digest are both required before accepting the file."""
+        actual: AssetIdentity = {"size": self.size, "sha256": self.checksum.hexdigest()}
+        require(actual == self.expected, "Release asset size or checksum mismatch")
+        return actual
+
+    def reset_for_retry(self) -> None:
+        """Discard only our staged bytes; failed transfers still debit the budget."""
+        current = Path(self.name).lstat()
+        opened = os.fstat(self.output.fileno())
+        identity = (self._owned.st_dev, self._owned.st_ino)
+        require(stat.S_ISREG(current.st_mode)
+                and (current.st_dev, current.st_ino) == identity
+                and (opened.st_dev, opened.st_ino) == identity,
+                "Asset destination changed during transfer")
+        # A retry needs room for the whole asset, not just its missing suffix.
+        self.budget.check(self.directory, self.expected["size"])
+        self.output.seek(0)
+        self.output.truncate(0)
+        self.size = 0
+        self.checksum = hashlib.sha256()
+
+
+def download_asset(gh: GitHub, asset_id: object, destination: Path, *,
+                   expected: AssetIdentity, budget: DownloadBudget) -> AssetIdentity:
+    """Stage one bounded asset exclusively; remove only its own failed output."""
     path = f"releases/assets/{positive(asset_id, 'asset ID')}"
-    output = destination.open("xb+")
+    require(isinstance(expected, dict) and set(expected) == {"size", "sha256"}
+            and type(expected.get("size")) is int and expected["size"] >= 0
+            and isinstance(expected.get("sha256"), str)
+            and re.fullmatch(SHA256_PATTERN, expected["sha256"]), "Invalid expected asset identity")
+    require(isinstance(budget, DownloadBudget), "A release download budget is required")
+    budget.check(destination.parent, expected["size"])
+    output = destination.open("xb", buffering=0)
+    owned = os.fstat(output.fileno())
     try:
         with output:
-            gh.download_asset(path, output)
-            output.seek(0)
-            return stream_identity(output)
+            writer = _AssetWriter(output, destination, cast(AssetIdentity, dict(expected)), budget)
+            gh.download_asset(path, writer)
+            writer.check()
+            current = destination.lstat()
+            require((current.st_dev, current.st_ino) == (owned.st_dev, owned.st_ino),
+                    "Asset destination changed during transfer")
+            return writer.identity()
     except BaseException:
-        destination.unlink()
+        try:
+            current = destination.lstat()
+            if (current.st_dev, current.st_ino) == (owned.st_dev, owned.st_ino):
+                destination.unlink()
+        except FileNotFoundError:
+            pass
         raise
 
+
+def _stream_asset(command: list[str], output: _AssetWriter, *,
+                  deadline: float | None = None) -> subprocess.CompletedProcess[bytes]:
+    """Pump bounded chunks portably, including silent/stderr-heavy transfers."""
+    if deadline is None:
+        deadline = time.monotonic() + ASSET_DOWNLOAD_TIMEOUT
+    output.check()
+    if time.monotonic() >= deadline:
+        raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # nosec B603
+    require(process.stdout is not None and process.stderr is not None, "Missing transfer pipes")
+    events: queue.Queue[tuple[str, bytes | BaseException | None]] = queue.Queue(maxsize=2)
+    stopped = threading.Event()
+
+    def send(kind: str, value: bytes | BaseException | None) -> None:
+        while not stopped.is_set():
+            try:
+                events.put((kind, value), timeout=0.1)
+                return
+            except queue.Full:
+                continue
+
+    def read(pipe: BinaryIO, kind: str) -> None:
+        try:
+            while not stopped.is_set():
+                chunk = os.read(pipe.fileno(), ASSET_CHUNK_SIZE)
+                if not chunk:
+                    send(kind, None)
+                    return
+                send(kind, chunk)
+        except (OSError, ValueError) as error:
+            send(kind, error)
+
+    threads = [threading.Thread(target=read, args=(pipe, kind), daemon=True)
+               for pipe, kind in [(process.stdout, "stdout"), (process.stderr, "stderr")]]
+    stderr = bytearray()
+    try:
+        for thread in threads:
+            thread.start()
+        ended = set()
+        while len(ended) != 2:
+            output.check()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+            try:
+                kind, value = events.get(timeout=min(0.2, remaining))
+            except queue.Empty:
+                continue
+            if value is None:
+                ended.add(kind)
+            elif isinstance(value, BaseException):
+                raise value
+            elif kind == "stdout":
+                output.write(value)
+            else:
+                # Diagnostics never spill into another unbounded disk file.
+                stderr.extend(value[:max(0, 65536 - len(stderr))])
+        while True:
+            # A child may close both pipes before exiting. Keep checking the
+            # same deadline and disk floor while waiting for its exit status.
+            output.check()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+            try:
+                returncode = process.wait(timeout=min(0.2, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if time.monotonic() > deadline:
+            raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+        return subprocess.CompletedProcess(command, returncode, b"", bytes(stderr))
+    finally:
+        stopped.set()
+        try:
+            if process.poll() is None:
+                process.kill()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired as error:
+                raise GitHubError("Asset transfer process could not be reaped within five seconds") from error
+        finally:
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join(timeout=1)
+            process.stdout.close()
+            process.stderr.close()
 
 def json_bytes(value: object) -> bytes:
     """Encode deterministic UTF-8 JSON for manifests and request bodies."""
@@ -364,6 +555,31 @@ def _github_http_head(data: bytes) -> tuple[int, bytes]:
     return int(status.group(1)), data[separator.end():]
 
 
+def _github_page_has_next(header: bytes) -> bool:
+    """Read GitHub's Link relation so truncated --paginate output cannot prove absence."""
+    lines = header.splitlines()
+    links = [line.partition(b":")[2].strip() for line in lines[1:]
+             if line.partition(b":")[0].lower() == b"link"]
+    if len(links) > 1:
+        raise GitHubError("GitHub response has duplicate pagination headers")
+    if not links:
+        return False
+    try:
+        value = links[0].decode("ascii")
+    except UnicodeDecodeError as error:
+        raise GitHubError("GitHub pagination header is not ASCII") from error
+    has_next = False
+    for item in value.split(","):
+        match = re.fullmatch(
+            r'\s*<([^<>]+)>\s*;\s*rel\s*=\s*(?:"(next|prev|first|last)"|(next|prev|first|last))\s*',
+            item,
+        )
+        if match is None:
+            raise GitHubError("GitHub pagination link is malformed")
+        has_next = has_next or cast(str, match[2] or match[3]) == "next"
+    return has_next
+
+
 def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, bytes]:
     """Decode protocol headers emitted by gh --include, never its error prose.
 
@@ -371,9 +587,14 @@ def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, b
     gh normalizes those server-generated objects (including duplicate keys);
     nonpaginated bodies retain their exact bytes and strict JSON validation.
     """
+    first_separator = re.search(rb"\r?\n\r?\n", stdout)
+    if first_separator is None:
+        raise GitHubError("GitHub response headers are missing or truncated")
+    first_header = stdout[:first_separator.start()]
     status, body = _github_http_head(stdout)
     if not paginated:
         return status, body
+    expected_next = _github_page_has_next(first_header) if 200 <= status < 300 else False
     pages: list[object] = []
     # Decode once: page boundaries are character offsets, including non-ASCII
     # JSON. Surrogate escapes preserve a later arbitrary error body unchanged.
@@ -393,10 +614,19 @@ def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, b
         while position < len(text) and text[position] in " \t\r\n":
             position += 1
         if position == len(text):
+            if expected_next:
+                raise GitHubError(
+                    "GitHub pagination ended before the advertised terminal page"
+                )
             return status, json_bytes(pages)
         separator = re.compile(r"\r?\n\r?\n").search(text, position)
         if separator is None:
             raise GitHubError("GitHub response headers are missing or truncated")
+        if not expected_next:
+            raise GitHubError("GitHub pagination included an unadvertised response page")
+        header_start = text.rfind("\n", 0, position) + 1
+        header = text[header_start:separator.end()].encode("utf-8", errors="surrogateescape")
+        expected_next = _github_page_has_next(header)
         header = text[position:separator.end()].encode("utf-8", errors="surrogateescape")
         status, _ = _github_http_head(header)
         position = separator.end()
@@ -588,8 +818,8 @@ class GitHub:
             *(["--input", "-"] if body is not None else []),
             "--", endpoint,
         ]
-        # Retry whole GET responses only. Existing download APIs remain unchanged;
-        # publication writes are never replayed.
+        # Retry whole GET responses only. Streamed payloads retain their separate
+        # cumulative byte/disk budget; publication writes are never replayed.
         if method == "GET":
             if mode == "asset" or path.endswith("/zip"):
                 return self._read_get(command, endpoint, timeout=API_BINARY_READ_TIMEOUT)
@@ -620,6 +850,22 @@ class GitHub:
                       rb"tls handshake timeout|context deadline exceeded|client\.timeout exceeded|"
                       rb"server closed idle connection|use of closed network connection", stderr.lower())
         )
+
+    @classmethod
+    def _transient_asset_failure(cls, result: subprocess.CompletedProcess[bytes]) -> bool:
+        """Allow only complete, non-denial diagnostics from a failed asset GET."""
+        stderr = result.stderr or b""
+        # At the capture limit, a later denial may have been discarded.
+        # Asset timeouts are terminal, including ones reported by gh itself.
+        if (result.returncode != 1 or len(stderr) >= 65536
+                or cls._denied_read_diagnostic(stderr)
+                or re.search(rb"i/o timeout|tls handshake timeout|context deadline exceeded|"
+                             rb"client\.timeout exceeded", stderr.lower())
+                or re.search(rb"\bhttp(?:/[0-9.]+)?[ /:]+4\d\d(?:\D|$)", stderr.lower())):
+            return False
+        return cls._transient_read_failure(result) or bool(re.fullmatch(
+            rb"(?:gh: )?unexpected end of JSON input", stderr.strip()
+        ))
 
     @classmethod
     def _denied_partial_read(cls, stdout: bytes, stderr: bytes,
@@ -732,41 +978,126 @@ class GitHub:
         )
         return self.request(path, mode="asset")
 
-    def download_asset(self, path: str, output: BinaryIO) -> None:
-        """Stream an allowlisted asset to disk without capturing installer bytes."""
+    def download_asset(self, path: str, output: _AssetWriter) -> None:
+        """Retry whole asset GETs within one deadline and cumulative byte budget."""
         require(
             re.fullmatch(r"releases/assets/[1-9]\d*", path, re.ASCII),
             "Unsupported binary download endpoint",
         )
+        require(isinstance(output, _AssetWriter), "Asset downloads require a bounded sink")
         endpoint = f"{self.base}/{path}"
+        # Developer/CI toolchain selected by the invoking operator via PATH.
+        command = [
+            "gh", "api", "--hostname", GITHUB_HOSTNAME, "--method", "GET",
+            "-H", "Accept: application/octet-stream", "--", endpoint,
+        ]
+        deadline = time.monotonic() + ASSET_DOWNLOAD_TIMEOUT
         try:
-            # Developer/CI toolchain selected by the invoking operator via PATH.
-            result = subprocess.run(  # nosec B603, B607
-                [
-                    "gh",
-                    "api",
-                    "--hostname",
-                    GITHUB_HOSTNAME,
-                    "--method",
-                    "GET",
-                    "-H",
-                    "Accept: application/octet-stream",
-                    "--",
-                    endpoint,
-                ],
-                stdout=output,
-                stderr=subprocess.PIPE,
-                check=False,
-                timeout=ASSET_DOWNLOAD_TIMEOUT,
-            )
+            for attempt in range(API_READ_ATTEMPTS):
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+                result = _stream_asset(command, output, deadline=deadline)
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+                if (attempt == API_READ_ATTEMPTS - 1
+                        or not self._transient_asset_failure(result)):
+                    self.response(result, f"GET {endpoint}")
+                    return
+                delay = random.uniform(1, 2 ** (attempt + 1))  # nosec B311
+                if delay >= deadline - time.monotonic():
+                    raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+                time.sleep(delay)
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+                # The previous child has been reaped before touching its staging.
+                output.reset_for_retry()
         except subprocess.TimeoutExpired as error:
             raise GitHubError(
                 f"GET {endpoint}: asset download exceeded {ASSET_DOWNLOAD_TIMEOUT} seconds"
             ) from error
-        self.response(result, f"GET {endpoint}")
+        raise AssertionError("Asset GET retry loop must return or raise")
+
+    @staticmethod
+    def _upload_asset_identity(path: Path) -> AssetIdentity:
+        """Hash one staged asset without loading it into memory."""
+        with path.open("rb") as stream:
+            return stream_identity(stream)
+
+    def _readback_uploaded_asset(
+        self, tag: str, path: Path, release_id: int, expected: AssetIdentity,
+    ) -> bool:
+        """Reconcile one upload against the exact draft asset inventory."""
+        try:
+            assets = self.pages(f"releases/{release_id}/assets")
+        except (GitHubError, ValueError, KeyError, TypeError) as error:
+            raise GitHubError(
+                f"upload {tag} {path.name}: asset reconciliation read failed"
+            ) from error
+        ids: set[int] = set()
+        folded_names: set[str] = set()
+        matches: list[JSONObject] = []
+        for asset in assets:
+            require(isinstance(asset, dict), "Invalid release asset inventory entry")
+            asset = cast(JSONObject, asset)
+            identity = positive(asset.get("id"), "release asset ID")
+            name = asset.get("name")
+            require(isinstance(name, str) and bool(NAME_RE.fullmatch(name)),
+                    "Invalid release asset name")
+            require(asset.get("state") in {"uploaded", "starter"},
+                    "Invalid release asset inventory state")
+            size = asset.get("size")
+            require(type(size) is int and size >= 0,
+                    "Invalid release asset inventory size")
+            digest = asset.get("digest")
+            require(digest is None or isinstance(digest, str)
+                    and re.fullmatch(r"sha256:" + SHA256_PATTERN, digest, re.ASCII),
+                    "Invalid release asset inventory digest")
+            folded = name.casefold()
+            require(identity not in ids and folded not in folded_names,
+                    "Release asset inventory contains duplicate identities")
+            ids.add(identity)
+            folded_names.add(folded)
+            if name == path.name:
+                matches.append(asset)
+            elif folded == path.name.casefold():
+                raise GitHubError(
+                    f"upload {tag} {path.name}: conflicting asset name already exists"
+                )
+        require(len(matches) <= 1, "Release asset inventory contains duplicate names")
+        if not matches:
+            require(self._upload_asset_identity(path) == expected,
+                    "Staged asset changed during upload reconciliation")
+            return False
+
+        asset = matches[0]
+        require(asset.get("state") == "uploaded"
+                and type(asset.get("size")) is int
+                and asset["size"] == expected["size"],
+                f"upload {tag} {path.name}: existing asset size or state conflicts")
+        digest = asset.get("digest")
+        if digest is not None:
+            require(isinstance(digest, str)
+                    and re.fullmatch(r"sha256:" + SHA256_PATTERN, digest, re.ASCII)
+                    and digest.removeprefix("sha256:") == expected["sha256"],
+                    f"upload {tag} {path.name}: existing asset digest conflicts")
+        else:
+            # Older API responses may omit the digest. Re-download this exact
+            # asset ID through the existing bounded verifier before accepting it.
+            require(self._upload_asset_identity(path) == expected,
+                    "Staged asset changed during upload reconciliation")
+            budget = DownloadBudget(expected["size"] * API_READ_ATTEMPTS)
+            try:
+                verify_uploaded_asset(self, asset, path, budget=budget, expected=expected)
+            except (GitHubError, ValueError, KeyError, TypeError) as error:
+                raise GitHubError(
+                    f"upload {tag} {path.name}: existing asset bytes could not be confirmed"
+                ) from error
+        require(self._upload_asset_identity(path) == expected,
+                "Staged asset changed during upload reconciliation")
+        return True
 
     def upload(self, tag: str, path: Path, *, release_id: int) -> None:
-        """Upload once to the transaction's known draft, without tag lookup."""
+        """Upload once, reconciling ambiguous outcomes before one safe retry."""
         require(TAG_RE.fullmatch(tag), "Unsupported release upload tag")
         release_id = positive(release_id, "release ID")
         require(
@@ -792,53 +1123,82 @@ class GitHub:
             f"?name={quote(path.name, safe='')}"
         )
         context = f"upload {tag} {path.name}"
-        try:
-            # Developer/CI toolchain selected by the invoking operator via PATH.
-            result = subprocess.run(  # nosec B603, B607
-                [
-                    "gh",
-                    "api",
-                    "--hostname",
-                    GITHUB_HOSTNAME,
-                    "--include",
-                    "--method",
-                    "POST",
-                    "-H",
-                    "Content-Type: application/octet-stream",
-                    "--input",
-                    str(parent / path.name),
-                    "--",
-                    endpoint,
-                ],
-                capture_output=True,
-                check=False,
-                timeout=ASSET_UPLOAD_TIMEOUT,
-            )
-        except subprocess.TimeoutExpired as error:
-            # The server may have received the bytes. Leave the draft intact;
-            # replaying this write could replace or duplicate an existing asset.
-            raise GitHubError(
-                f"{context}: asset upload exceeded {ASSET_UPLOAD_TIMEOUT} seconds"
-            ) from error
-        try:
-            http = github_http_response(result.stdout or b"")
-        except GitHubError as error:
-            # A transport/CLI failure may precede any HTTP response. Preserve
-            # its error context, but never retry a possibly committed write.
-            self.response(result, context)
-            raise GitHubError(f"{context}: {error}") from error
-        response = self.response(result, context, http)
-        require(http[0] == 201, f"{context}: upload was not confirmed as created")
-        asset = parse_json(response, context)
-        require(isinstance(asset, dict), f"{context}: invalid asset response")
-        positive(asset.get("id"), "uploaded asset ID")
-        require(
-            asset.get("name") == path.name
-            and asset.get("state") == "uploaded"
-            and type(asset.get("size")) is int
-            and asset.get("size") == path.stat().st_size,
-            f"{context}: upload response did not confirm the staged asset",
-        )
+        expected = self._upload_asset_identity(path)
+        command = [
+            "gh", "api", "--hostname", GITHUB_HOSTNAME, "--include",
+            "--method", "POST", "-H", "Content-Type: application/octet-stream",
+            "--input", str(parent / path.name), "--", endpoint,
+        ]
+
+        def post_once() -> tuple[bool, bool, str]:
+            """Return confirmation, retry eligibility and a safe outcome label."""
+            require(self._upload_asset_identity(path) == expected,
+                    f"{context}: staged asset changed before upload")
+            try:
+                result = subprocess.run(  # nosec B603, B607
+                    command, capture_output=True, check=False,
+                    timeout=ASSET_UPLOAD_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                # A delayed server commit can race a later absence read. Reconcile
+                # the exact asset, but never replay without an explicit 5xx.
+                return False, False, "timeout"
+            try:
+                status, response = github_http_response(result.stdout or b"")
+            except GitHubError:
+                # Even an unusable response can follow a committed upload.
+                # Reconcile it, but it does not authorize a second POST.
+                return False, False, "invalid-http-response"
+            if status != 201:
+                # A response can accompany committed bytes. Always reconcile
+                # the exact release ID before deciding whether another POST is safe.
+                return False, status in {500, 502, 503, 504}, f"http-{status}"
+            if result.returncode != 0:
+                return False, False, "http-201-cli-error"
+            try:
+                asset = parse_json(response, context)
+                require(isinstance(asset, dict), f"{context}: invalid asset response")
+                asset = cast(JSONObject, asset)
+                positive(asset.get("id"), "uploaded asset ID")
+                require(asset.get("name") == path.name
+                        and asset.get("state") == "uploaded"
+                        and type(asset.get("size")) is int
+                        and asset["size"] == expected["size"],
+                        f"{context}: upload response did not confirm the staged asset")
+                response_digest = asset.get("digest")
+                require(response_digest is None
+                        or isinstance(response_digest, str)
+                        and re.fullmatch(r"sha256:" + SHA256_PATTERN,
+                                         response_digest, re.ASCII)
+                        and response_digest.removeprefix("sha256:") == expected["sha256"],
+                        f"{context}: upload response digest conflicts with staged asset")
+                require(self._upload_asset_identity(path) == expected,
+                        f"{context}: staged asset changed during upload")
+            except (ReleaseError, ValueError, KeyError, TypeError):
+                return False, False, "http-201-invalid-response"
+            return True, False, "http-201-confirmed"
+
+        for attempt in range(2):
+            confirmed, retryable, outcome = post_once()
+            if confirmed:
+                return
+            try:
+                if self._readback_uploaded_asset(tag, path, release_id, expected):
+                    return
+            except (ReleaseError, OSError) as error:
+                # Never echo API bodies, headers, asset URLs, or subprocess output.
+                raise GitHubError(
+                    f"{context}: attempt {attempt + 1} outcome={outcome}; "
+                    "reconciliation=failed; draft remains unpublished"
+                ) from error
+            if not retryable or attempt != 0:
+                raise GitHubError(
+                    f"{context}: attempt {attempt + 1} outcome={outcome}; "
+                    "reconciliation=absent; draft remains unpublished"
+                )
+            # The completed inventory GET proved that the exact asset was absent.
+            # Permit a single bounded retry; the next outcome can only reconcile.
+        raise AssertionError("Upload reconciliation loop must return or raise")
 
 
 def repository_info(gh: GitHub) -> JSONObject:
@@ -868,6 +1228,20 @@ def require_fuzzing_policy(policy: JSONObject) -> None:
         raise ReleaseError(str(error)) from error
 
 
+def compact_stable_distribution(policy: JSONObject) -> bool:
+    """Enable only the reviewed unsigned promote-bytes distribution mode."""
+    if "stable_distribution" not in policy:
+        return False
+    require(policy["stable_distribution"] == "rc-payloads-v1",
+            "Unsupported stable_distribution; expected rc-payloads-v1")
+    require(not RELEASE_SIGNATURES_REQUIRED and not policy.get("sign_releases"),
+            "Compact distribution does not support full-inventory release signing")
+    require(isinstance(policy.get("versioning"), dict)
+            and cast(JSONObject, policy["versioning"]).get("promotion") == "promote-bytes",
+            "Compact distribution requires promote-bytes versioning")
+    return True
+
+
 def require_release_policy(policy: object, repo: str, qualified: bool) -> None:
     """Check policy identity, release mode, and required eligibility blockers."""
     require(isinstance(policy, dict), "Source release policy must be an object")
@@ -878,6 +1252,7 @@ def require_release_policy(policy: object, repo: str, qualified: bool) -> None:
         "Source policy repository mismatch",
     )
     require(policy.get("mode") == "release", "Source policy mode must be release")
+    compact_stable_distribution(policy)
     require_fuzzing_policy(policy)
     if "channel_validation_workflows" in policy:
         if __package__:
@@ -1285,7 +1660,7 @@ def check_execution(
 
 
 def validate_run_provenance(
-    gh: GitHub, run: JSONObject, info: JSONObject, sha: str, attempt: int
+    gh: GitHub | CreateReadback, run: JSONObject, info: JSONObject, sha: str, attempt: int
 ) -> None:
     """Check immutable run identity before considering its changing status."""
     require(
@@ -1353,7 +1728,13 @@ def _require_fresh_job_timing(job: JSONObject, boundary: datetime) -> None:
         require(step.get("status") == "completed", "Successful job has incomplete execution steps")
         step_start = _execution_timestamp(step.get("started_at"), "step start")
         step_end = _execution_timestamp(step.get("completed_at"), "step completion")
-        require(start <= step_start <= step_end <= end,
+        # GitHub can timestamp its initial runner setup one second before the
+        # enclosing job. It must still cross the job start in this same attempt.
+        setup_boundary = (step is steps[0] and type(step.get("number")) is int
+                          and step["number"] == 1 and step.get("name") == "Set up job"
+                          and 0 < (start - step_start).total_seconds() <= 1
+                          and boundary <= step_start and start <= step_end <= end)
+        require(start <= step_start <= step_end <= end or setup_boundary,
                 "Executed step lies outside the current job interval")
 
 
@@ -1433,6 +1814,204 @@ def validate_run(
         release_gate_ready(gh, positive(run.get("id"), "run ID"), sha, attempt)
 
 
+class ExecutionJobProof(NamedTuple):
+    """Ephemeral local identity; never copied from or serialized into API metadata."""
+
+    job_id: int
+    check_run_id: int
+    runner_id: int
+    runner_name: str
+
+
+def execution_check_run_id() -> int | None:
+    """Only a workflow step's official job context enables the alternate proof."""
+    value = os.environ.get("RELEASE_EXECUTION_CHECK_RUN_ID", "")
+    if not value:
+        return None
+    require(re.fullmatch(POSITIVE_INTEGER_PATTERN, value, re.ASCII) is not None,
+            "Invalid execution check-run ID")
+    return int(value)
+
+
+def require_active_attempt(current: object, run: JSONObject) -> JSONObject:
+    """Do not let an attempt response replace a conflicting or terminal identity."""
+    require(isinstance(current, dict), "Malformed execution attempt")
+    current = cast(JSONObject, current)
+    for key in ("id", "run_attempt", "head_sha", "path", "event"):
+        require(type(current.get(key)) is type(run[key]) and current[key] == run[key],
+                "Execution attempt identity changed")
+    require(current.get("conclusion") is None and current.get("status") in
+            {"queued", "requested", "pending", "waiting", "in_progress"},
+            "Execution attempt is not active")
+    return current
+
+
+def require_pending_execution_steps(steps: list[JSONObject], start: datetime, now: datetime) -> None:
+    """Only consistent queued steps may wait; completed-only or invalid data fails."""
+    pending = False
+    for step in steps:
+        if step.get("status") == "queued":
+            require(all(step.get(key) is None for key in
+                        ("conclusion", "started_at", "completed_at")),
+                    "Queued execution step already started or concluded")
+            pending = True
+        else:
+            require(step.get("status") == "completed"
+                    and step.get("conclusion") in {"success", "skipped"},
+                    "Invalid pending execution step state")
+            if step.get("conclusion") == "skipped" and all(
+                step.get(key) is None for key in ("started_at", "completed_at")
+            ):
+                continue
+            step_start = _execution_timestamp(step.get("started_at"), "completed step start")
+            step_end = _execution_timestamp(step.get("completed_at"), "completed step end")
+            require(start <= step_start <= step_end <= now,
+                    "Completed step lies outside its current job")
+    require(pending, "Executing job has only terminal steps")
+
+
+def require_executing_job_timing(
+    job: JSONObject, run: JSONObject, *, allow_pending_steps: bool = False,
+) -> bool:
+    """Require a current-attempt job and one presently executing, dated step."""
+    boundary = _execution_timestamp(run.get("run_started_at"), "execution attempt start")
+    start = _execution_timestamp(job.get("started_at"), "executing job start")
+    now = datetime.now(timezone.utc)
+    require(boundary <= start <= now, "Executing job predates its attempt or is future-dated")
+    steps = job.get("steps")
+    require(isinstance(steps, list) and bool(steps), "Executing job lacks steps")
+    numbers: set[int] = set()
+    active: list[JSONObject] = []
+    for step in cast(list[object], steps):
+        require(isinstance(step, dict), "Malformed executing job step")
+        step = cast(JSONObject, step)
+        number = step.get("number")
+        require(type(number) is int and number > 0 and number not in numbers,
+                "Invalid or duplicate executing step number")
+        numbers.add(cast(int, number))
+        if step.get("status") == "in_progress":
+            active.append(step)
+    if not active and allow_pending_steps:
+        require_pending_execution_steps(cast(list[JSONObject], steps), start, now)
+        return False
+    require(len(active) == 1, "Exactly one executing step is required")
+    step = active[0]
+    require(step.get("conclusion") is None and step.get("completed_at") is None,
+            "Executing step already completed")
+    step_start = _execution_timestamp(step.get("started_at"), "executing step start")
+    require(start <= step_start <= now, "Executing step lies outside its current job")
+    return True
+
+
+def execution_check_url_id(value: object, repository: str) -> int:
+    """Accept only GitHub's exact check route; repository casing is not identity."""
+    require(isinstance(value, str), "Invalid execution check-run URL")
+    match = re.fullmatch(
+        r"https://api\.github\.com/repos/([^/]+/[^/]+)/check-runs/([1-9]\d*)",
+        cast(str, value), re.ASCII,
+    )
+    require(match is not None, "Invalid execution check-run URL")
+    assert match is not None
+    require(REPO_RE.fullmatch(match[1]) and match[1].casefold() == repository.casefold(),
+            "Execution check-run repository mismatch")
+    return int(match[2])
+
+
+def require_executing_job(
+    job: object, run: JSONObject, repository: str, check_run_id: int,
+    *, allow_pending_steps: bool = False,
+) -> ExecutionJobProof | None:
+    """Bind a REST job to official check-run context, not display or matrix names."""
+    require(type(check_run_id) is int and check_run_id > 0, "Invalid execution check-run ID")
+    require(isinstance(job, dict), "Malformed executing job")
+    job = cast(JSONObject, job)
+    for field, value in (("run_id", run["id"]), ("run_attempt", run["run_attempt"]),
+                         ("head_sha", run["head_sha"])):
+        require(type(job.get(field)) is type(value) and job[field] == value,
+                "Executing job identity changed")
+    require(execution_check_url_id(job.get("check_run_url"), repository) == check_run_id,
+            "Executing check-run URL changed")
+    require(job.get("status") == "in_progress" and job.get("conclusion") is None
+            and job.get("completed_at") is None, "Current job is not executing")
+    identity, runner = job.get("id"), job.get("runner_id")
+    require(type(identity) is int and identity > 0 and type(runner) is int and runner > 0,
+            "Executing job lacks positive job/runner IDs")
+    runner_name = os.environ.get("RUNNER_NAME", "")
+    require(bool(runner_name) and job.get("runner_name") == runner_name,
+            "Executing job runner mismatch")
+    if not require_executing_job_timing(job, run, allow_pending_steps=allow_pending_steps):
+        return None
+    return ExecutionJobProof(cast(int, identity), check_run_id, cast(int, runner), runner_name)
+
+
+def current_execution_job(
+    gh: GitHub, run: JSONObject, check_run_id: int,
+) -> ExecutionJobProof | None:
+    """Select exactly one current job from every page of the exact attempt."""
+    jobs = gh.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs")
+    ids: set[int] = set()
+    matches: list[JSONObject] = []
+    for job in jobs:
+        require(isinstance(job, dict), "Malformed execution job inventory")
+        identity = job.get("id")
+        require(type(identity) is int and identity > 0 and identity not in ids,
+                "Invalid or duplicate execution job ID")
+        ids.add(cast(int, identity))
+        if execution_check_url_id(job.get("check_run_url"), gh.repo) == check_run_id:
+            matches.append(job)
+    require(len(matches) <= 1, "Duplicate current check-run jobs")
+    if not matches:
+        return None
+    job = matches[0]
+    for field, value in (("run_id", run["id"]), ("run_attempt", run["run_attempt"]),
+                         ("head_sha", run["head_sha"])):
+        require(type(job.get(field)) is type(value) and job[field] == value,
+                "Executing job identity changed")
+    if job.get("status") in {"queued", "requested", "pending", "waiting"}:
+        require(job.get("conclusion") is None and job.get("completed_at") is None,
+                "Pending execution job has a conclusion")
+        return None
+    return require_executing_job(job, run, gh.repo, check_run_id, allow_pending_steps=True)
+
+
+def execution_deadline(deadline: float) -> None:
+    """Do not start another metadata operation or accept results after expiry."""
+    require(time.monotonic() < deadline,
+            f"Publication metadata was not ready within {EXECUTING_RUN_WAIT_SECONDS} seconds")
+
+
+def resolve_execution_run(
+    gh: GitHub, run: JSONObject, check_run_id: int | None, deadline: float, need_proof: bool,
+    channel: str, info: JSONObject,
+) -> tuple[JSONObject, ExecutionJobProof | None, bool]:
+    """Use actual attempt/job observations without changing their returned status."""
+    if check_run_id is None or (run.get("status") == "in_progress" and not need_proof):
+        return run, None, run.get("status") == "in_progress"
+    execution_deadline(deadline)
+    current = gh.api(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}")
+    current = require_active_attempt(current, run)
+    check_execution(gh, cast(int, run["id"]), channel, info, current)
+    validate_run_provenance(gh, current, info,
+                            cast(str, run["head_sha"]), cast(int, run["run_attempt"]))
+    execution_deadline(deadline)
+    if current.get("status") == "in_progress" and not need_proof:
+        return current, None, True
+    proof = current_execution_job(gh, current, check_run_id)
+    execution_deadline(deadline)
+    return current, proof, proof is not None
+
+
+def accepted_execution_run(
+    run: JSONObject, proof: ExecutionJobProof | None,
+    target: list[ExecutionJobProof] | None, deadline: float,
+) -> JSONObject:
+    """Expose local proof only after both execution and prerequisite checks pass."""
+    execution_deadline(deadline)
+    if target is not None and proof is not None:
+        target.append(proof)
+    return run
+
+
 # Execution identity is deliberately checked again on every fresh response.
 # pylint: disable-next=too-many-arguments
 def wait_for_executing_run(
@@ -1443,17 +2022,21 @@ def wait_for_executing_run(
     sha: str,
     attempt: int,
     gate: bool = True,
+    execution_proof: list[ExecutionJobProof] | None = None,
 ) -> JSONObject:
     """Allow five shared minutes for Actions' run and gate metadata to catch up.
 
-    A running job may still be reported as queued or waiting after environment
-    approval. Those states never authorize publication: only a fresh, fully
-    bound in_progress run and successful prerequisite gate can pass. Missing or
-    unfinished gate metadata shares the same deadline; terminal non-success,
-    conflicting identity and duplicate gates fail immediately. Completed RC
-    validation does not wait.
+    A workflow carrying official check-run context may establish execution from
+    a fresh exact-attempt response or its unique currently executing job. Raw API
+    status is never rewritten. Older consumers without this context retain the
+    strict aggregate-status path. All paths require the same prerequisite gate;
+    terminal/conflicting evidence fails immediately, and historical completed-RC
+    validation is unchanged.
     """
     deadline = time.monotonic() + EXECUTING_RUN_WAIT_SECONDS
+    check_run_id = execution_check_run_id()
+    if execution_proof is not None:
+        execution_proof.clear()
     reported_status = None
     while True:
         run = cast(JSONObject, gh.api(f"actions/runs/{run_id}"))
@@ -1464,27 +2047,24 @@ def wait_for_executing_run(
         require(
             run.get("conclusion") is None, "Publication run already has a conclusion"
         )
-        if status == "in_progress" and (
+        require(status in {"queued", "requested", "pending", "waiting", "in_progress"},
+                f"Publication run is not active: {status!r}")
+        run, proof, executing = resolve_execution_run(
+            gh, run, check_run_id, deadline, execution_proof is not None, channel, info
+        )
+        status = run.get("status")
+        if executing and (
             not gate or release_gate_ready(gh, run_id, sha, attempt, allow_pending=True)
         ):
-            require(
-                time.monotonic() < deadline,
-                f"Publication metadata was not ready within {EXECUTING_RUN_WAIT_SECONDS} seconds; "
-                f"run: {run_id}, attempt: {attempt}",
-            )
-            return run
-        require(
-            status in {"queued", "requested", "pending", "waiting", "in_progress"},
-            f"Publication run is not active: {status!r}",
-        )
+            return accepted_execution_run(run, proof, execution_proof, deadline)
         waiting_for = (
             "Release gate metadata"
-            if status == "in_progress"
+            if executing
             else f"aggregate status {status!r}"
         )
         timeout_target = (
             "Release gate did not become successful"
-            if status == "in_progress"
+            if executing
             else "Publication run did not become in_progress"
         )
         remaining = deadline - time.monotonic()
@@ -1564,7 +2144,7 @@ def next_sequence(gh: GitHub, base_version: str, channel: str) -> int:
     tags += [cast(str, item.get("tag_name", "")) for item in gh.pages("releases")]
     for tag in tags:
         if tag.startswith(prefix) and re.fullmatch(
-            r"[1-9]\d*", tag[len(prefix) :], re.ASCII
+            POSITIVE_INTEGER_PATTERN, tag[len(prefix) :], re.ASCII
         ):
             numbers.append(int(tag[len(prefix) :]))
     return max(numbers, default=0) + 1
@@ -1639,21 +2219,27 @@ def stage_assets(source: Path, destination: Path) -> list[JSONObject]:
     return assets
 
 
-def verify_uploaded_asset(gh: GitHub, item: JSONObject, path: Path) -> None:
+def verify_uploaded_asset(gh: GitHub, item: JSONObject, path: Path, *,
+                          budget: DownloadBudget,
+                          expected: AssetIdentity | None = None) -> None:
     """Re-download every uploaded byte before making the draft public."""
     with path.open("rb") as source:
         local = stream_identity(source)
+    expected = local if expected is None else expected
+    require(local == expected, "Staged asset changed before upload readback")
     require(
-        item.get("state") == "uploaded" and item.get("size") == local["size"],
+        item.get("state") == "uploaded" and item.get("size") == expected["size"],
         "Incomplete asset upload; draft left unpublished",
     )
-    with tempfile.TemporaryFile() as downloaded:
-        gh.download_asset(
-            f"releases/assets/{positive(item.get('id'), 'asset ID')}", downloaded
+    with tempfile.TemporaryDirectory(prefix="release-readback-") as temporary:
+        remote = download_asset(
+            gh, item.get("id"), Path(temporary) / "payload", expected=expected,
+            budget=budget,
         )
-        downloaded.seek(0)
-        remote = stream_identity(downloaded)
-    require(remote == local, "Uploaded bytes differ; draft left unpublished")
+    require(remote == expected, "Uploaded bytes differ; draft left unpublished")
+    with path.open("rb") as source:
+        require(stream_identity(source) == expected,
+                "Staged asset changed during upload readback")
 
 
 def _release_fence(line: str) -> tuple[str, int, str] | None:
@@ -1917,6 +2503,18 @@ def publish(
     return _publish_prepared(gh, tag, sha, directory, prerelease, body)
 
 
+def _matches_release_api_url(value: object, repository: str, release_id: int) -> bool:
+    """Match a release endpoint, ignoring case only in its repository identity."""
+    if not isinstance(value, str):
+        return False
+    prefix = "https://api.github.com/repos/"
+    suffix = f"/releases/{release_id}"
+    if not value.startswith(prefix) or not value.endswith(suffix):
+        return False
+    actual_repository = value[len(prefix):-len(suffix)]
+    return bool(REPO_RE.fullmatch(actual_repository)) and actual_repository.casefold() == repository.casefold()
+
+
 def _reconcile_created_release(
     gh: GitHub, payload: JSONObject, confirm: Callable[[CreateReadback], None],
 ) -> JSONObject:
@@ -1936,7 +2534,7 @@ def _reconcile_created_release(
         require(isinstance(value, dict), "Invalid create readback release")
         value = cast(JSONObject, value)
         require(type(value.get("id")) is int and value["id"] == release_id
-                and value.get("url") == f"https://api.github.com/repos/{gh.repo}/releases/{release_id}"
+                and _matches_release_api_url(value.get("url"), gh.repo, release_id)
                 and value.get("published_at") is None and "published_at" in value
                 and value.get("assets") == []
                 and isinstance(value.get("author"), dict)
@@ -2012,8 +2610,13 @@ def _publish_prepared(
         and {item.get("name") for item in uploaded} == set(expected),
         "Uploaded asset inventory mismatch; draft left unpublished",
     )
+    # Each asset can consume at most one full payload per bounded GET attempt.
+    # Failed prefixes remain charged; caller-supplied download caps are unchanged.
+    budget = DownloadBudget(sum(path.stat().st_size for path in expected.values()) * API_READ_ATTEMPTS)
     for item in uploaded:
-        verify_uploaded_asset(gh, item, expected[cast(str, item["name"])])
+        verify_uploaded_asset(gh, item, expected[cast(str, item["name"])], budget=budget)
+    if confirm_publish is not None:
+        confirm_publish()
     ref = cast(JSONObject, gh.api(f"git/ref/tags/{quote(tag, safe='')}"))
     require(
         isinstance(ref, dict) and ref.get("ref") == f"refs/tags/{tag}"
@@ -2022,8 +2625,6 @@ def _publish_prepared(
         and cast(JSONObject, ref["object"]).get("sha") == sha,
         "Tag moved before publication; draft left unpublished",
     )
-    if confirm_publish is not None:
-        confirm_publish()
     result = cast(
         JSONObject,
         gh.api(
@@ -2431,6 +3032,51 @@ def require_reviewers(gh: GitHub) -> None:
     )
 
 
+def prepare_stable_distribution(stage: Path, output: Path, manifest: JSONObject, raw: bytes) -> None:
+    """Verify all retained RC evidence before copying the exact shipped subset."""
+    # Optional imports keep legacy consumers compatible without the new helper.
+    # pylint: disable=import-outside-toplevel
+    if __package__:
+        from .release_distribution import stable_distribution
+        from .version_receipt import producer_identity, verify_declared_artifacts, verify_receipts, verify_required_build_receipts
+    else:
+        from release_distribution import stable_distribution
+        from version_receipt import producer_identity, verify_declared_artifacts, verify_receipts, verify_required_build_receipts
+    policy = cast(JSONObject, cast(JSONObject, manifest["source_policy"])["data"])
+    plan = cast(JSONObject, manifest.get("version_plan"))
+    require(isinstance(plan, dict), "Compact distribution requires a frozen version plan")
+    require(not policy.get("sign_releases"),
+            "Compact distribution does not support full-inventory release signing")
+    require(output.is_dir() and not output.is_symlink() and not any(output.iterdir()),
+            "Distribution staging must be an empty owned directory")
+    try:
+        receipts = verify_receipts(stage, plan, cast(list[JSONObject], manifest["assets"]), policy,
+                                  producer_identity(manifest["repository"], manifest["run_id"],
+                                                    manifest["run_attempt"], manifest["source_sha"]))
+        build, validation = receipts, []
+        if "fuzzing" in policy:
+            if __package__:
+                from .release_fuzz import split_receipts
+            else:
+                from release_fuzz import split_receipts
+            build, validation = split_receipts(receipts)
+        verify_required_build_receipts(build, policy)
+        require(manifest.get("build_receipts") == [
+            {"name": item["name"], "sha256": item["sha256"]} for item in build
+        ], "RC build receipt evidence differs")
+        require(manifest.get("validation_receipts", []) == [
+            {"name": item["name"], "sha256": item["sha256"]} for item in validation
+        ], "RC validation receipt evidence differs")
+        require(verify_declared_artifacts(stage, policy, plan) == manifest.get("package_versions"),
+                "RC package metadata differs")
+        compact = stable_distribution(manifest, raw)
+    except (ValueError, KeyError, TypeError) as error:
+        raise ReleaseError(str(error)) from error
+    for asset in compact["assets"]:
+        shutil.copyfile(stage / asset["name"], output / asset["name"])
+    (output / MANIFEST).write_bytes(json_bytes(compact))
+
+
 # Preserve the ordered security checks and staged bytes within one transaction.
 # pylint: disable-next=too-many-locals,too-many-statements
 def promote(args: argparse.Namespace) -> JSONObject:
@@ -2470,6 +3116,13 @@ def promote(args: argparse.Namespace) -> JSONObject:
     require_release_policy(
         cast(JSONObject, policy_snapshot["data"]), gh.repo, qualified=True
     )
+    driver_sha = checked_out_sha()
+    driver_policy = (policy_snapshot if driver_sha == manifest["source_sha"] else
+                     source_policy_snapshot(gh, driver_sha))
+    require_release_policy(driver_policy["data"], gh.repo, qualified=True)
+    compact = compact_stable_distribution(cast(JSONObject, driver_policy["data"]))
+    require(not compact or not cast(JSONObject, policy_snapshot["data"]).get("sign_releases"),
+            "Compact distribution does not support full-inventory release signing")
     require_current_fuzzing(gh, cast(JSONObject, policy_snapshot["data"]), checked_out_sha())
     require(
         cast(
@@ -2527,15 +3180,26 @@ def promote(args: argparse.Namespace) -> JSONObject:
         "Candidate assets differ from manifest inventory",
     )
     check_workflow_publication(gh, cast(str, manifest["source_sha"]))
-    with tempfile.TemporaryDirectory(prefix="release-promote-") as temp:
+    with (tempfile.TemporaryDirectory(prefix="release-promote-") as temp,
+          tempfile.TemporaryDirectory(prefix="release-promote-distribution-") as distribution_temp):
         stage = Path(temp)
+        # Promotion uses the same bounded whole-asset retry allowance as readback.
+        # Failed prefixes remain charged to this shared inventory budget.
+        budget = DownloadBudget(sum(cast(int, item["size"]) for item in expected.values()) * API_READ_ATTEMPTS)
         for asset in release_assets:
             name = cast(str, asset["name"])
             if name == MANIFEST:
-                (stage / name).write_bytes(raw)
+                # Package metadata selectors see precisely the RC payload inventory.
+                # The generated root manifest was absent from the original build.
+                if not compact:
+                    (stage / name).write_bytes(raw)
                 identity: AssetIdentity = {"size": len(raw), "sha256": digest(raw)}
             else:
-                identity = download_asset(gh, asset.get("id"), stage / name)
+                identity = download_asset(
+                    gh, asset.get("id"), stage / name,
+                    expected=cast(AssetIdentity, {key: expected[name][key] for key in ("size", "sha256")}),
+                    budget=budget,
+                )
             require(
                 asset.get("size") == identity["size"],
                 f"Release asset size mismatch: {name}",
@@ -2552,6 +3216,12 @@ def promote(args: argparse.Namespace) -> JSONObject:
             "Candidate changed during verification",
         )
         verify_required_signatures(stage, gh.repo, cast(str, manifest["source_sha"]))
+        publish_stage = stage
+        if compact:
+            publish_stage = Path(distribution_temp)
+            prepare_stable_distribution(stage, publish_stage, manifest, raw)
+            require(snapshot_identity(release_snapshot(gh, args.rc)) == snapshot_identity(initial),
+                    "Candidate changed during distribution verification")
         # Recheck mutable authorization/provenance just before the first write.
         latest_run = cast(JSONObject, gh.api(f"actions/runs/{manifest['run_id']}"))
         validate_validation_run(gh, latest_run, cast(JSONObject, policy_snapshot["data"]), "rc")
@@ -2573,7 +3243,11 @@ def promote(args: argparse.Namespace) -> JSONObject:
             f"Source: `{manifest['source_sha']}`\n\n"
             f"Validation: https://github.com/{gh.repo}/actions/runs/{manifest['run_id']}\n\n"
             f"Promotion: https://github.com/{gh.repo}/actions/runs/{current_id}\n\n"
-            f"Assets and `{MANIFEST}` are byte-for-byte copies of the verified release candidate.",
+            + ("Shipped payloads are byte-for-byte copies of the verified release candidate. "
+             f"Build and validation evidence remains in [{args.rc}]({candidate_release['html_url']}); "
+             f"`{MANIFEST}` records its exact manifest hash and the shipped payload inventory."
+             if compact else
+             f"Assets and `{MANIFEST}` are byte-for-byte copies of the verified release candidate."),
         )
         if manifest.get("version_plan"):
             verify_promotion_order(gh, cast(JSONObject, manifest["version_plan"]))
@@ -2593,7 +3267,7 @@ def promote(args: argparse.Namespace) -> JSONObject:
             gh,
             tag,
             cast(str, manifest["source_sha"]),
-            stage,
+            publish_stage,
             False,
             body,
         )

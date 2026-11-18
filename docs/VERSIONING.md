@@ -95,6 +95,19 @@ from `main`, rebase it, or delete it after a release. The release workflow reads
 and writes the ledger on this exact branch; copying its file into `main` does
 not replace that state. Exclude it from stale-branch deletion automation.
 
+When `release_notes` selects `CHANGELOG.md`, preparation validates the exact
+source commit's base-version section before reserving a plan or starting builds.
+The section must include substantive `### Upgrade` and `### Security` guidance.
+The publisher repeats the same content and Git-identity checks before mutation.
+Generated consumer CI also validates the current checkout through the real parser:
+`python3 -m unittest discover -s .github/release-tests -p test_checkout_release_notes.py`.
+That checkout-only test explicitly skips policies without a committed `version`
+or `version_file`: manual input and tag-derived versions are validated by
+preparation after the actual base is selected, without relying on review-checkout tags.
+Fix rejected notes in a new commit; do not reset prior reservations. Closed push
+cycles still return `version-required`, and byte promotion still validates the
+accepted RC rather than allocating a new build from the current checkout.
+
 A reservation is keyed by Actions run ID and bound to the source, policy, channel,
 base, and accepted RC when applicable. Rerunning that run reuses the plan; a new
 run consumes a new number. Failed runs may leave gaps. Preserve the state branch
@@ -183,6 +196,15 @@ already contain the final base for RC. The embedded RC origin cannot change
 offline; external stable assignment and build origin are distinct. Full beta
 versions may be embedded because beta is not directly promoted.
 
+The current driver can separately opt into compact stable metadata with the
+top-level `stable_distribution: "rc-payloads-v1"` policy field. Its schema-2 stable
+manifest links the authenticated full RC proof and lists unchanged shipped
+payloads; declared receipts and the exact declared fuzz report remain at the RC.
+Absent means legacy full-manifest copying. This does not alter the RC's frozen
+plan, source or build number, and older schema-1 stable manifests remain readable.
+See [compact stable distribution](release-distribution.md) for validation,
+retention and the targeted migration that preserves existing workflows.
+
 `final-build` builds final-version packages from the accepted RC's exact source
 commit, including the dependency locks and recipe. The RC must match the current
 default-branch HEAD; create a new RC after code, policy or workflow changes.
@@ -224,3 +246,44 @@ list, for example `{"suffixes": [".apk", ".aab"], "reason": "Android publication
 The renderer embeds these reviewed restrictions in the release engine. It rejects
 matching suffixes case-insensitively before staging any bytes and before any
 publication API call, including promotion of an older RC.
+
+## Package identity across reruns
+
+Each Actions package receipt records its producer repository, workflow run ID,
+run attempt and exact source SHA. The live publisher compares these fields with
+its independently verified GitHub run before it signs or publishes packages.
+Missing identity and earlier-attempt packages fail closed even when their version
+plan and payload hashes match. Offline local packaging remains available, but an
+offline receipt cannot qualify a live Actions publication.
+
+The generated build adapters, signer and publisher also scope Actions artifact
+names to `-run-<run ID>-attempt-<attempt>`. Payload filenames inside the archive
+stay unchanged. Browser-candidate artifact IDs, frozen plan selection and retained
+historical RC verification retain their separate existing contracts.
+
+Downloads selected by artifact ID require an independent consumer check: the
+name-scoping helper does not authenticate their provenance. Before using an ID
+selected candidate, its adapter must verify the receipt's repository, run,
+attempt, source and payload digest against the expected execution. A nonempty
+artifact ID alone is not proof. Name-based downloads must use one explicit
+selector; unknown run or repository overrides require the verified ID path.
+
+Before publication starts, use **Re-run all jobs** only if the allocator and
+release policy permit reuse of that run's reservation. Recreate every required
+input in the same attempt; failed-only or individual retries can leave inputs
+missing, and older artifacts must not fill those gaps.
+
+For a fresh candidate or final build, once publication has started
+(`begin_publication`), or its external publication result is partial or uncertain,
+inspect the existing release, tags and assets before retrying. A consumed build
+number requires a new workflow run and reservation authorized by the release
+policy; an existing immutable tag may also require a new base version. Never
+reset the release ledger, overwrite assets or retag to force a retry. Historical
+byte promotion of an accepted RC keeps its reserved number and follows the
+existing promotion policy.
+Duplicate package names remain errors.
+
+Update producers and collectors together with the release installer. Projects
+using shared RC fuzzing must also pin a toolkit revision whose fuzz workflow emits
+the attempt-scoped artifact name. Updating only the publisher is deliberately
+insufficient. Previously published releases keep their original immutable evidence.
