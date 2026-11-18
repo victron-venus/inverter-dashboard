@@ -60,7 +60,7 @@
         "value": "package"
       }
     ],
-    "toolkit_revision": "644806e26446879b677f69a2f9eff58850e8c11a",
+    "toolkit_revision": "e21f1a4d18bb07102ab4ab4d1a19967b607210d7",
     "required_build_receipts": [
       "release-inputs-container.json",
       "release-inputs-linux-x86_64.json",
