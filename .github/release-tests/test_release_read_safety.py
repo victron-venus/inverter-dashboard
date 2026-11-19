@@ -82,7 +82,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 patch.object(rc.time, "sleep") as sleep,
             ):
                 with self.assertRaisesRegex(
-                    rc.GitHubError, "response exceeds capture limit"
+                    rc.GitHubError, "response exceeded output limit"
                 ) as error:
                     operation(path)
                 self.assertFalse(error.exception.not_found)
@@ -100,7 +100,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
         ):
             result = rc.main(["next", "--repo", REPO, "--channel", "beta", "--version", "1.2.3"])
         self.assertEqual(result, 1)
-        self.assertIn("response exceeds capture limit", stderr.getvalue())
+        self.assertIn("response exceeded output limit", stderr.getvalue())
         self.assertNotIn("untrusted-capture-marker", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
         run.assert_called_once()

@@ -214,8 +214,11 @@ Both the generated caller and reusable workflow check public repository metadata
 `workflow_dispatch`, `channel=rc` and the repository default branch before
 allocating a fuzz runner. The Python runner repeats the event checks and binds
 the checkout to the run's source SHA. A missing/unknown visibility fails closed.
-The workflow uses an ephemeral standard Ubuntu hosted runner, read-only repository
-permission, no inherited secrets and no persisted checkout credentials.
+The reusable workflow defaults to a standard Ubuntu hosted runner. On an eligible
+default-branch dispatch, `CI_RUNNER_MODE=self-hosted` or `k3s` selects
+`CI_RUNNER_LABELS` instead. That configured runner must provide the required Linux
+isolation and toolchain; it is not necessarily ephemeral. Repository permission
+remains read-only, with no inherited secrets or persisted checkout credentials.
 
 Dependency builds may access the network. Each target executes with the runner's
 unprivileged UID/GID in a new Linux network namespace, with no access to a real
