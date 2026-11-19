@@ -3,25 +3,47 @@
 import importlib.util
 import json
 import os
-
-# Only constructs completed-process and timeout fixtures; execution is mocked.
-import subprocess  # nosec B404
+import sys
 import unittest
 from itertools import product
 from pathlib import Path
 from unittest.mock import patch
 
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
 SPEC = importlib.util.spec_from_file_location(
-    "release_control_response_framing",
-    Path(__file__).resolve().parents[2] / "scripts/release_control.py",
+    "release_control_response_framing", ROOT / "scripts/release_control.py"
 )
 rc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(rc)
 
 
+def setUpModule():
+    """Keep process fixtures offline while satisfying the absolute-argv API."""
+    global _resolver_patch
+    _resolver_patch = patch.object(
+        rc, "resolve_executable", side_effect=lambda name: f"/tools/{name}"
+    )
+    _resolver_patch.start()
+
+
+def tearDownModule():
+    _resolver_patch.stop()
+
+
+def process_result(argv, returncode, stdout, stderr):
+    """Return the bounded runner's result without starting a child process."""
+    return rc.ProcessResult(tuple(argv), int(returncode), stdout, stderr)
+
+
+def process_timeout(timeout, output=b"", stderr=b""):
+    """Build the bounded runner's timeout with captured partial output."""
+    return rc.ProcessTimeout(timeout, output, stderr)
+
+
 def http_response(status=0, stdout=b"{}"):
     """Create a complete gh --include response with deterministic header bytes."""
-    return subprocess.CompletedProcess(
+    return process_result(
         [],
         bool(status),
         f"HTTP/2.0 {status or 200} Test\nContent-Type: application/json\r\n\r\n".encode() + stdout,
@@ -38,7 +60,7 @@ class ResponseFramingTests(unittest.TestCase):
 
     @staticmethod
     def failed(stderr=b"unexpected EOF", stdout=b"", code=1):
-        return subprocess.CompletedProcess([], code, stdout, stderr)
+        return process_result([], code, stdout, stderr)
 
     def test_partial_binary_body_status_lines_do_not_veto_whole_retry(self):
         for path, newline, status, failure in product(
@@ -52,14 +74,14 @@ class ResponseFramingTests(unittest.TestCase):
                 partial = header + newline + b"partial binary" + newline
                 partial += f"HTTP/2.0 {status} body data".encode() + newline
                 result = (
-                    subprocess.TimeoutExpired(["gh"], 120, output=partial)
+                    process_timeout(120, output=partial)
                     if failure == "timeout"
                     else self.failed(stdout=partial)
                 )
                 with (
                     patch.object(
-                        rc.subprocess,
-                        "run",
+                        rc,
+                        "run_process",
                         side_effect=[result, http_response(stdout=b"COMPLETE")],
                     ) as run,
                     patch.object(rc.time, "sleep") as sleep,
@@ -84,9 +106,9 @@ class ResponseFramingTests(unittest.TestCase):
                 partial = f"HTTP/2.0 {status} Denied".encode() + newline
                 if complete_header:
                     partial += newline + b"partial response body"
-                result = subprocess.TimeoutExpired(["gh"], 30, output=partial)
+                result = process_timeout(30, output=partial)
                 with (
-                    patch.object(rc.subprocess, "run", side_effect=[result]) as run,
+                    patch.object(rc, "run_process", side_effect=[result]) as run,
                     patch.object(rc.time, "sleep") as sleep,
                 ):
                     with self.assertRaises(rc.GitHubError) as error:
@@ -101,12 +123,12 @@ class ResponseFramingTests(unittest.TestCase):
                 partial = http_response(stdout=b'[{"id":1}]\n').stdout
                 partial += f"HTTP/2.0 {status} Denied\r\n".encode()
                 result = (
-                    subprocess.TimeoutExpired(["gh"], 30, output=partial)
+                    process_timeout(30, output=partial)
                     if failure == "timeout"
                     else self.failed(stdout=partial)
                 )
                 with (
-                    patch.object(rc.subprocess, "run", side_effect=[result]) as run,
+                    patch.object(rc, "run_process", side_effect=[result]) as run,
                     patch.object(rc.time, "sleep") as sleep,
                 ):
                     with self.assertRaises(rc.GitHubError) as error:
@@ -119,13 +141,11 @@ class ResponseFramingTests(unittest.TestCase):
         for status in (401, 403, 404, 429):
             with self.subTest(status=status):
                 body = json.dumps([{"text": f"body\nHTTP/2.0 {status} data"}]).encode()
-                result = subprocess.TimeoutExpired(
-                    ["gh"], 30, output=http_response(stdout=body).stdout
-                )
+                result = process_timeout(30, output=http_response(stdout=body).stdout)
                 with (
                     patch.object(
-                        rc.subprocess,
-                        "run",
+                        rc,
+                        "run_process",
                         side_effect=[result, http_response(stdout=b'[{"id":2}]')],
                     ) as run,
                     patch.object(rc.time, "sleep"),
@@ -135,11 +155,11 @@ class ResponseFramingTests(unittest.TestCase):
 
     def test_timed_out_body_status_cannot_establish_optional_absence(self):
         partial = http_response(stdout=b"partial\nHTTP/2.0 404 body data").stdout
-        result = subprocess.TimeoutExpired(["gh"], 30, output=partial)
+        result = process_timeout(30, output=partial)
         with (
             patch.object(
-                rc.subprocess,
-                "run",
+                rc,
+                "run_process",
                 side_effect=[result, http_response(stdout=b'{"id":7}')],
             ) as run,
             patch.object(rc.time, "sleep"),
@@ -156,12 +176,12 @@ class ResponseFramingTests(unittest.TestCase):
             for failure in ("timeout", "eof"):
                 with self.subTest(partial=partial, failure=failure):
                     result = (
-                        subprocess.TimeoutExpired(["gh"], 120, output=partial)
+                        process_timeout(120, output=partial)
                         if failure == "timeout"
                         else self.failed(stdout=partial)
                     )
                     with (
-                        patch.object(rc.subprocess, "run", side_effect=[result]) as run,
+                        patch.object(rc, "run_process", side_effect=[result]) as run,
                         patch.object(rc.time, "sleep") as sleep,
                     ):
                         with self.assertRaises(rc.GitHubError) as error:

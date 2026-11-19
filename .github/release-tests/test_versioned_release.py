@@ -453,19 +453,27 @@ class AllocationTests(unittest.TestCase):
 
     def test_branch_creation_and_cas_requests_use_real_narrow_client(self):
         client = state.StateGitHub(REPO)
-        responses = [
-            legacy_tests.http_response(stdout=b'{"ref":"refs/heads/release-version-state"}'),
-            legacy_tests.http_response(stdout=b'{"content":{"sha":"' + SHA.encode() + b'"}}'),
-        ]
-        with patch.object(state.subprocess, "run", side_effect=responses) as run:
+        responses = [legacy_tests.http_response(stdout=b'{"ref":"refs/heads/release-version-state"}')]
+        ledger_response = legacy_tests.http_response(
+            stdout=b'{"content":{"sha":"' + SHA.encode() + b'"}}'
+        )
+        with (
+            patch.object(sys.modules["release_control"], "run_process", side_effect=responses) as run,
+            patch.object(state.subprocess, "run", return_value=ledger_response) as ledger_run,
+        ):
             client.api(
                 "git/refs", "POST", {"ref": "refs/heads/" + state.BRANCH, "sha": SHA}
             )
             state.write_state(client, {"schema": 1, "counter": 0, "plans": {}}, None)
         self.assertEqual(run.call_args_list[0].args[0][-1], f"repos/{REPO}/git/refs")
-        self.assertEqual(
-            json.loads(run.call_args_list[1].kwargs["input"])["branch"], state.BRANCH
-        )
+        self.assertEqual(ledger_run.call_count, 1)
+        expected_ledger = {"schema": 1, "counter": 0, "plans": {}}
+        expected_body = {
+            "branch": state.BRANCH,
+            "message": "Reserve release version plan",
+            "content": base64.b64encode(rc.json_bytes(expected_ledger)).decode(),
+        }
+        self.assertEqual(ledger_run.call_args.kwargs["input"], rc.json_bytes(expected_body))
         with (
             patch.object(state.subprocess, "run") as run,
             self.assertRaisesRegex(rc.ReleaseError, "branch mismatch"),
@@ -683,6 +691,45 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         (self.root / "version").write_text("1.2.3\n")
         self.args.assets = str(self.root / f"assets-{run_id}")
 
+    def test_create_readback_rechecks_local_job_even_when_run_is_in_progress(self):
+        publisher_run = legacy_tests.run(99, completed=False)
+        publisher_run["run_started_at"] = "2026-11-01T00:00:00Z"
+        proof = rc.ExecutionJobProof(700, 800, 900, "runner-example")
+        terminal_job = {
+            "id": 700, "run_id": 99, "run_attempt": 1, "head_sha": SHA,
+            "check_run_url": f"https://api.github.com/repos/{REPO}/check-runs/800",
+            "runner_id": 900, "runner_name": "runner-example",
+            "status": "completed", "conclusion": "cancelled",
+            "completed_at": "2026-11-01T00:05:00Z",
+        }
+        consumed = b"ledger"
+        source_path = "git/ref/heads/main"
+        source_ref = (source_path, {"ref": "refs/heads/main", "object": {"sha": SHA}})
+        encoded = base64.b64encode(consumed).decode()
+
+        class Readback:
+            repo = REPO
+
+            def json(self, path):
+                if path == "actions/runs/99/attempts/1":
+                    return publisher_run
+                if path == "actions/jobs/700":
+                    return terminal_job
+                if path == "":
+                    return {"default_branch": "main"}
+                if path == source_path:
+                    return source_ref[1]
+                if path == "contents/release-version-state.json?ref=release-version-state":
+                    return {"type": "file", "encoding": "base64", "content": encoded}
+                raise AssertionError(f"Unexpected create readback path: {path}")
+
+        confirm = lifecycle.create_confirmation(
+            publisher_run, source_ref, consumed, execution_proof=proof,
+        )
+        readback = Readback()
+        with self.assertRaisesRegex(rc.ReleaseError, "not executing"):
+            confirm(readback)
+
     def build_current(self):
         plan = json.loads(lifecycle.PLAN.read_text(encoding="utf-8"))
         evidence = versions.sync_versions(self.root, self.policy, plan)
@@ -732,6 +779,34 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
                            "started_at": "2026-09-12T02:01:30Z", "completed_at": "2026-09-12T02:02:30Z",
                        }])
 
+    def test_partial_rerun_rejects_prior_attempt_package_before_publication(self):
+        lifecycle.prepare(self.args)
+        self.build_current()
+        self.fresh_attempt()
+        ledger = copy.deepcopy(self.gh.ledger)
+        with self.assertRaisesRegex(ValueError, "different package producer attempt"):
+            lifecycle.publish_versioned(self.args)
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger, ledger)
+        self.assertFalse(rc.EVIDENCE.exists())
+
+    def test_complete_current_attempt_packages_publish_normally(self):
+        """A full retry rebuilds packages without allocating another version."""
+        lifecycle.prepare(self.args)
+        original_plan = self.build_current()
+        ledger_writes = copy.deepcopy(self.gh.ledger_writes)
+
+        self.fresh_attempt()
+        # Model a fresh checkout and an empty output directory for attempt 2.
+        (self.root / "version").write_text("1.2.3\n")
+        self.args.assets = str(self.root / "attempt-2-assets")
+        lifecycle.prepare(self.args)
+        self.assertEqual(json.loads(lifecycle.PLAN.read_bytes()), original_plan)
+        self.assertEqual(self.gh.ledger_writes, ledger_writes)
+        self.build_current()
+        result = lifecycle.publish_versioned(self.args)
+        self.assertEqual(result["status"], "published")
+        self.assertEqual(json.loads(rc.EVIDENCE.read_bytes())["run_attempt"], 2)
 
     def test_fresh_packages_reject_cloned_validation_success(self):
         """New IDs and attempt numbers cannot refresh old validation executions."""
@@ -747,27 +822,141 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
             lifecycle.publish_versioned(self.args)
         self.assertEqual(self.gh.writes, [])
 
+    def require_build_receipts(self, names):
+        self.policy["versioning"]["required_build_receipts"] = names
+        self.gh.source_policies[SHA] = copy.deepcopy(self.policy)
+        (self.root / ".release-policy.json").write_bytes(rc.json_bytes(self.policy))
 
-    def test_partial_rerun_rejects_prior_attempt_package_before_publication(self):
+    def add_windows_package(self):
+        assets = Path(self.args.assets)
+        package_bytes = b"synthetic Windows package"
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            package = Path(directory)
+            (package / "windows.bin").write_bytes(package_bytes)
+            receipt_value = receipt.create_receipt(
+                lifecycle.PLAN,
+                self.root / ".release-inputs.json",
+                package,
+                package / "release-inputs-windows.json",
+            )
+            receipt_bytes = receipt.canonical(receipt_value)
+        (assets / "windows.bin").write_bytes(package_bytes)
+        (assets / "release-inputs-windows.json").write_bytes(receipt_bytes)
+        return {
+            "windows.bin": package_bytes,
+            "release-inputs-windows.json": receipt_bytes,
+        }
+
+    def test_partial_current_attempt_missing_platform_fails_before_publication(self):
+        self.require_build_receipts(["release-inputs-linux.json", "release-inputs-windows.json"])
         lifecycle.prepare(self.args)
         self.build_current()
+        self.add_windows_package()
         self.fresh_attempt()
+        (self.root / "version").write_text("1.2.3\n")
+        self.args.assets = str(self.root / "attempt-2")
+        lifecycle.prepare(self.args)
+        self.build_current()
         ledger = copy.deepcopy(self.gh.ledger)
+        with patch.object(rc, "verify_required_signatures") as signatures:
+            with self.assertRaisesRegex(ValueError, "missing=.*release-inputs-windows"):
+                lifecycle.publish_versioned(self.args)
+        signatures.assert_not_called()
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger, ledger)
+        self.assertFalse(rc.EVIDENCE.exists())
+
+    def test_mixed_attempt_receipts_fail_before_publication(self):
+        self.require_build_receipts(["release-inputs-linux.json", "release-inputs-windows.json"])
+        lifecycle.prepare(self.args)
+        self.build_current()
+        previous_assets = self.add_windows_package()
+        self.fresh_attempt()
+        (self.root / "version").write_text("1.2.3\n")
+        self.args.assets = str(self.root / "attempt-2")
+        lifecycle.prepare(self.args)
+        self.build_current()
+        attempt_two = Path(self.args.assets)
+        (attempt_two / "windows.bin").write_bytes(previous_assets["windows.bin"])
+        (attempt_two / "release-inputs-windows.json").write_bytes(
+            previous_assets["release-inputs-windows.json"]
+        )
+        writes = copy.deepcopy(self.gh.writes)
+        ledger = copy.deepcopy(self.gh.ledger)
+        allocations = copy.deepcopy(self.gh.ledger_writes)
         with self.assertRaisesRegex(ValueError, "different package producer attempt"):
+            lifecycle.publish_versioned(self.args)
+        self.assertEqual(self.gh.writes, writes)
+        self.assertEqual(self.gh.ledger, ledger)
+        self.assertEqual(self.gh.ledger_writes, allocations)
+        self.assertFalse(rc.EVIDENCE.exists())
+
+
+    def test_complete_declared_attempt_two_rebuild_publishes(self):
+        self.require_build_receipts(["release-inputs-linux.json", "release-inputs-windows.json"])
+        lifecycle.prepare(self.args)
+        first_plan = self.build_current()
+        self.add_windows_package()
+        writes = copy.deepcopy(self.gh.ledger_writes)
+        self.fresh_attempt()
+        (self.root / "version").write_text("1.2.3\n")
+        self.args.assets = str(self.root / "attempt-2")
+        lifecycle.prepare(self.args)
+        self.assertEqual(self.gh.ledger_writes, writes)
+        self.assertEqual(self.build_current(), first_plan)
+        self.add_windows_package()
+        result = lifecycle.publish_versioned(self.args)
+        self.assertEqual(result["status"], "published")
+        manifest = json.loads(rc.EVIDENCE.read_bytes())
+        self.assertEqual(manifest["run_attempt"], 2)
+        self.assertEqual({r["name"] for r in manifest["build_receipts"]},
+                         {"release-inputs-linux.json", "release-inputs-windows.json"})
+
+    def test_unexpected_authenticated_package_receipt_blocks_publication(self):
+        self.require_build_receipts(["release-inputs-linux.json"])
+        lifecycle.prepare(self.args)
+        self.build_current()
+        self.add_windows_package()
+        ledger = copy.deepcopy(self.gh.ledger)
+        with self.assertRaisesRegex(ValueError, "unexpected=.*release-inputs-windows"):
             lifecycle.publish_versioned(self.args)
         self.assertEqual(self.gh.writes, [])
         self.assertEqual(self.gh.ledger, ledger)
         self.assertFalse(rc.EVIDENCE.exists())
 
+    def test_complete_receipt_names_do_not_authorize_a_previous_attempt(self):
+        self.require_build_receipts(["release-inputs-linux.json"])
+        self.test_partial_rerun_rejects_prior_attempt_package_before_publication()
 
-    def test_complete_current_attempt_packages_publish_normally(self):
-        self.fresh_attempt()
-        lifecycle.prepare(self.args)
-        self.build_current()
-        result = lifecycle.publish_versioned(self.args)
-        self.assertEqual(result["status"], "published")
-        self.assertEqual(json.loads(rc.EVIDENCE.read_bytes())["run_attempt"], 2)
+    def test_validation_receipt_cannot_satisfy_required_build_inventory(self):
+        policy = {"versioning": {"required_build_receipts": ["release-inputs-linux.json"]}}
+        packages = [{"name": "release-inputs-linux.json"}]
+        validation = [{"name": "release-inputs-fuzz.json"}]
+        receipt.verify_required_build_receipts(packages, policy)
+        with self.assertRaisesRegex(ValueError, "unexpected=.*release-inputs-fuzz"):
+            receipt.verify_required_build_receipts(packages + validation, policy)
+        with self.assertRaisesRegex(ValueError, "missing=.*release-inputs-linux"):
+            receipt.verify_required_build_receipts(validation, policy)
 
+    def test_historical_promotion_keeps_the_accepted_source_policy(self):
+        self.policy["versioning"]["promotion"] = "promote-bytes"
+        self.require_build_receipts(["release-inputs-linux.json"])
+        candidate, _, manifest = self.release_run("rc", 100)
+        raw = rc.EVIDENCE.read_bytes()
+        self.gh.jobs_by_run[100] = copy.deepcopy(self.gh.jobs)
+        self.start_run("stable", 101, candidate["tag"])
+        self.assertEqual(lifecycle.prepare(self.args)["build"], "false")
+        args = argparse.Namespace(repo=REPO, rc=candidate["tag"], run_id="101")
+        with patch.object(rc, "GitHub", return_value=self.gh), patch.object(
+            lifecycle, "verify_required_build_receipts",
+            side_effect=AssertionError("Historical promotion must not run the fresh publisher"),
+        ):
+            result = rc.promote(args)
+        release_id = next(k for k, v in self.gh.releases.items() if v["tag_name"] == result["tag"])
+        published = {x["name"]: self.gh.files[x["id"]] for x in self.gh.assets[release_id]}
+        self.assertEqual(published[rc.MANIFEST], raw)
+        self.assertEqual(manifest["source_policy"]["data"]["versioning"]["required_build_receipts"],
+                         ["release-inputs-linux.json"])
 
     def declare_json_artifact(self):
         self.policy["versioning"]["artifacts"] = [
@@ -830,7 +1019,16 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertEqual(self.gh.writes, release_writes)
         state.verify_promotion_order(self.gh, accepted)
         self.assertFalse(rc.EVIDENCE.exists())
-        download.assert_not_called()
+        release_id = next(
+            key for key, value in self.gh.releases.items()
+            if value["tag_name"] == published["tag"]
+        )
+        manifest_id = next(
+            item["id"] for item in self.gh.assets[release_id]
+            if item["name"] == rc.MANIFEST
+        )
+        download.assert_called_once()
+        self.assertEqual(download.call_args.args[0], f"releases/assets/{manifest_id}")
 
     def test_scheduled_beta_reuses_retained_qualified_package(self):
         published, _ = self.qualify_schedule_fixture("beta")
@@ -883,13 +1081,14 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
             for value in self.gh.releases.values()
             if value["tag_name"] == published["tag"]
         )
-        original = self.gh.binary
+        original = self.gh.download_asset
 
-        def changed(path):
+        def changed(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
             release["updated_at"] = "2026-10-02T11:59:00Z"
-            return original(path)
+            return result
 
-        with patch.object(self.gh, "binary", side_effect=changed):
+        with patch.object(self.gh, "download_asset", side_effect=changed):
             result = lifecycle.publish_versioned(self.args)
         self.assertEqual(result["status"], "published")
 
@@ -1207,8 +1406,7 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         first = lifecycle.prepare(self.args)
         plan = lifecycle.PLAN.read_bytes()
         ledger = copy.deepcopy(self.gh.ledger)
-        os.environ["GITHUB_RUN_ATTEMPT"] = "2"
-        self.gh.runs[99]["run_attempt"] = 2
+        self.fresh_attempt()
         second = lifecycle.prepare(self.args)
         self.assertEqual(first["build"], "true")
         self.assertEqual(second["build"], "true")
@@ -1502,9 +1700,7 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
             self.assertEqual(self.gh.ledger_writes, writes)
             self.assertEqual(self.gh.writes, [])
 
-    def _reject_automatic_source_move_after_upload(self, scheduled, recover, rename=False):
-        plan = self.build_schedule() if scheduled else self.automatic_build()
-        upload = self.gh.upload
+    def _release_creation_fixture(self, recover, api_repo=REPO):
         reader = Mock()
         reader.json.side_effect = lambda path: (
             copy.deepcopy(self.gh.releases[int(path.split('/')[1])])
@@ -1516,10 +1712,17 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
             if recover:
                 self.gh.releases[result['id']].update(
                     published_at=None, author={'id': 41898282}, assets=[],
-                    url=f"https://api.github.com/repos/{REPO}/releases/{result['id']}",
+                    url=f"https://api.github.com/repos/{api_repo}/releases/{result['id']}",
                 )
                 raise rc.AmbiguousCreate('response lost')
             return result
+
+        return reader, create
+
+    def _reject_automatic_source_move_after_upload(self, scheduled, recover, rename=False, api_repo=REPO):
+        plan = self.build_schedule() if scheduled else self.automatic_build()
+        upload = self.gh.upload
+        reader, create = self._release_creation_fixture(recover, api_repo)
 
         def move_source(*args, **kwargs):
             result = upload(*args, **kwargs)
@@ -1630,6 +1833,58 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertEqual(self.gh.ledger["publication_floor"], plan["build_number"])
         self.assertEqual(len(self.gh.ledger_writes), 2)
         self.assertNotIn(plan["tag"], self.gh.refs)
+
+    def test_publisher_termination_during_upload_stops_before_public_release(self):
+        plan = self.automatic_build()
+        verify = rc.verify_uploaded_asset
+        changed = []
+
+        def terminate_during_readback(*args, **kwargs):
+            result = verify(*args, **kwargs)
+            if not changed:
+                changed.append(True)
+                self.gh.runs[99].update(status="completed", conclusion="cancelled")
+            return result
+
+        with patch.object(rc, "verify_uploaded_asset", side_effect=terminate_during_readback):
+            with self.assertRaisesRegex(rc.ReleaseError, "not active"):
+                lifecycle.publish_versioned(self.args)
+        draft = next(release for release in self.gh.releases.values()
+                     if release["tag_name"] == plan["tag"])
+        self.assertTrue(draft["draft"])
+        self.assertTrue(self.gh.assets[draft["id"]])
+        self.assertFalse(any(method == "PATCH" for _, method, _ in self.gh.writes))
+
+    def test_publisher_termination_during_final_tag_read_stops_before_public_release(self):
+        """The exact-attempt callback catches termination after the final tag read."""
+        plan = self.automatic_build()
+        api = self.gh.api
+        final_tag_reads = 0
+        tag_path = f"git/ref/tags/{plan['tag']}"
+
+        def terminate_during_final_tag_read(path, method="GET", body=None):
+            nonlocal final_tag_reads
+            result = api(path, method, body)
+            draft = next((release for release in self.gh.releases.values()
+                          if release["tag_name"] == plan["tag"]), None)
+            if path == tag_path and draft and self.gh.assets[draft["id"]]:
+                final_tag_reads += 1
+                if final_tag_reads == 1:
+                    # The tag GET succeeds, but the publisher ends before the
+                    # exact-attempt GET which immediately precedes the PATCH.
+                    self.gh.runs[99].update(status="completed", conclusion="cancelled")
+            return result
+
+        with patch.object(self.gh, "api", side_effect=terminate_during_final_tag_read):
+            with self.assertRaisesRegex(rc.ReleaseError, "not active"):
+                lifecycle.publish_versioned(self.args)
+
+        self.assertEqual(final_tag_reads, 1)
+        draft = next(release for release in self.gh.releases.values()
+                     if release["tag_name"] == plan["tag"])
+        self.assertTrue(draft["draft"])
+        self.assertTrue(self.gh.assets[draft["id"]])
+        self.assertFalse(any(method == "PATCH" for _, method, _ in self.gh.writes))
 
     def reject_workflow_drift_without_publication(self, publish):
         """Keep an allocated plan reusable when a known permission failure is found."""
@@ -1803,6 +2058,17 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         encoded = rc.json_bytes(final_manifest)
         with self.assertRaisesRegex(rc.ReleaseError, "Only release candidates"):
             rc.validate_manifest(encoded, REPO, "v1.2.3")
+
+    def test_final_build_preparation_accepts_authenticated_preproducer_receipt(self):
+        candidate, _, manifest = self.release_run("rc", 100)
+        raw = rewrite_retained_receipt(self, manifest, lambda value: value.pop("producer"))
+        self.start_run("stable", 101, candidate["tag"])
+        prepared = lifecycle.prepare(self.args)
+        self.assertEqual(prepared["build"], "true")
+        entry = self.gh.ledger["plans"]["101"]
+        self.assertEqual(entry["parent"], {
+            "tag": candidate["tag"], "manifest_sha256": rc.digest(raw),
+            "source_sha": SHA, "run_id": 100})
 
     def test_final_build_rejects_legacy_rc_before_allocating(self):
         self.start_run("stable", 100, legacy_tests.RC_TAG)
@@ -2002,118 +2268,27 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
             path = Path(temp).resolve() / "app.bin"
             path.write_bytes(b"package")
-            with patch.object(
-                rc.subprocess,
-                "run",
-                return_value=subprocess.CompletedProcess(
+            gh = rc.GitHub(REPO)
+            resolved_gh = "/reviewed/bin/gh"
+            with (
+                patch.object(rc, "resolve_executable", return_value=resolved_gh),
+                patch.object(
+                    rc,
+                    "run_process",
+                    return_value=subprocess.CompletedProcess(
                     [],
                     0,
                     b'HTTP/2.0 201 Created\r\n\r\n{"id": 10, "name": "app.bin", "state": "uploaded", "size": 7}',
                     b"",
-                ),
-            ) as run:
-                rc.GitHub(REPO).upload("v1.2.3-beta.1", path, release_id=11)
+                    ),
+                ) as run,
+                patch.object(gh, "pages", return_value=[
+                    {"id": 10, "name": "app.bin", "state": "uploaded", "size": 7}
+                ]),
+            ):
+                gh.upload("v1.2.3-beta.1", path, release_id=11)
+            self.assertEqual(run.call_args.args[0][0], resolved_gh)
             self.assertEqual(run.call_args.args[0][1:3], ["api", "--hostname"])
-
-    def require_build_receipts(self, names):
-        self.policy["versioning"]["required_build_receipts"] = names
-        self.gh.source_policies[SHA] = copy.deepcopy(self.policy)
-        (self.root / ".release-policy.json").write_bytes(rc.json_bytes(self.policy))
-
-    def add_windows_package(self):
-        assets = Path(self.args.assets)
-        with tempfile.TemporaryDirectory(dir=self.root) as directory:
-            package = Path(directory)
-            (package / "windows.bin").write_bytes(b"synthetic Windows package")
-            receipt.create_receipt(lifecycle.PLAN, self.root / ".release-inputs.json",
-                                   package, package / "release-inputs-windows.json")
-            for path in package.iterdir():
-                (assets / path.name).write_bytes(path.read_bytes())
-
-    def test_partial_current_attempt_missing_platform_fails_before_publication(self):
-        self.require_build_receipts(["release-inputs-linux.json", "release-inputs-windows.json"])
-        lifecycle.prepare(self.args)
-        self.build_current()
-        self.add_windows_package()
-        self.fresh_attempt()
-        (self.root / "version").write_text("1.2.3\n")
-        self.args.assets = str(self.root / "attempt-2")
-        lifecycle.prepare(self.args)
-        self.build_current()
-        ledger = copy.deepcopy(self.gh.ledger)
-        with patch.object(rc, "verify_required_signatures") as signatures:
-            with self.assertRaisesRegex(ValueError, "missing=.*release-inputs-windows"):
-                lifecycle.publish_versioned(self.args)
-        signatures.assert_not_called()
-        self.assertEqual(self.gh.writes, [])
-        self.assertEqual(self.gh.ledger, ledger)
-        self.assertFalse(rc.EVIDENCE.exists())
-
-    def test_complete_declared_attempt_two_rebuild_publishes(self):
-        self.require_build_receipts(["release-inputs-linux.json", "release-inputs-windows.json"])
-        lifecycle.prepare(self.args)
-        first_plan = self.build_current()
-        self.add_windows_package()
-        writes = copy.deepcopy(self.gh.ledger_writes)
-        self.fresh_attempt()
-        (self.root / "version").write_text("1.2.3\n")
-        self.args.assets = str(self.root / "attempt-2")
-        lifecycle.prepare(self.args)
-        self.assertEqual(self.gh.ledger_writes, writes)
-        self.assertEqual(self.build_current(), first_plan)
-        self.add_windows_package()
-        result = lifecycle.publish_versioned(self.args)
-        self.assertEqual(result["status"], "published")
-        manifest = json.loads(rc.EVIDENCE.read_bytes())
-        self.assertEqual(manifest["run_attempt"], 2)
-        self.assertEqual({r["name"] for r in manifest["build_receipts"]},
-                         {"release-inputs-linux.json", "release-inputs-windows.json"})
-
-    def test_unexpected_authenticated_package_receipt_blocks_publication(self):
-        self.require_build_receipts(["release-inputs-linux.json"])
-        lifecycle.prepare(self.args)
-        self.build_current()
-        self.add_windows_package()
-        ledger = copy.deepcopy(self.gh.ledger)
-        with self.assertRaisesRegex(ValueError, "unexpected=.*release-inputs-windows"):
-            lifecycle.publish_versioned(self.args)
-        self.assertEqual(self.gh.writes, [])
-        self.assertEqual(self.gh.ledger, ledger)
-        self.assertFalse(rc.EVIDENCE.exists())
-
-    def test_complete_receipt_names_do_not_authorize_a_previous_attempt(self):
-        self.require_build_receipts(["release-inputs-linux.json"])
-        self.test_partial_rerun_rejects_prior_attempt_package_before_publication()
-
-    def test_validation_receipt_cannot_satisfy_required_build_inventory(self):
-        policy = {"versioning": {"required_build_receipts": ["release-inputs-linux.json"]}}
-        packages = [{"name": "release-inputs-linux.json"}]
-        validation = [{"name": "release-inputs-fuzz.json"}]
-        receipt.verify_required_build_receipts(packages, policy)
-        with self.assertRaisesRegex(ValueError, "unexpected=.*release-inputs-fuzz"):
-            receipt.verify_required_build_receipts(packages + validation, policy)
-        with self.assertRaisesRegex(ValueError, "missing=.*release-inputs-linux"):
-            receipt.verify_required_build_receipts(validation, policy)
-
-    def test_historical_promotion_keeps_the_accepted_source_policy(self):
-        self.policy["versioning"]["promotion"] = "promote-bytes"
-        self.require_build_receipts(["release-inputs-linux.json"])
-        candidate, _, manifest = self.release_run("rc", 100)
-        raw = rc.EVIDENCE.read_bytes()
-        self.gh.jobs_by_run[100] = copy.deepcopy(self.gh.jobs)
-        self.start_run("stable", 101, candidate["tag"])
-        self.assertEqual(lifecycle.prepare(self.args)["build"], "false")
-        args = argparse.Namespace(repo=REPO, rc=candidate["tag"], run_id="101")
-        with patch.object(rc, "GitHub", return_value=self.gh), patch.object(
-            lifecycle, "verify_required_build_receipts",
-            side_effect=AssertionError("Historical promotion must not run the fresh publisher"),
-        ):
-            result = rc.promote(args)
-        release_id = next(k for k, v in self.gh.releases.items() if v["tag_name"] == result["tag"])
-        published = {x["name"]: self.gh.files[x["id"]] for x in self.gh.assets[release_id]}
-        self.assertEqual(published[rc.MANIFEST], raw)
-        self.assertEqual(manifest["source_policy"]["data"]["versioning"]["required_build_receipts"],
-                         ["release-inputs-linux.json"])
 
 
     def test_create_response_loss_keeps_original_manifest_and_one_post(self):
@@ -2176,7 +2351,7 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
 
         with (patch.object(self.gh, 'create_release_once', side_effect=lose_response) as create,
               patch.object(rc, 'CreateReadback', return_value=reader),
-              self.assertRaisesRegex(rc.ReleaseError, "^Uploaded bytes differ; draft left unpublished$")):
+              self.assertRaisesRegex(rc.ReleaseError, "^Release asset size or checksum mismatch$")):
             lifecycle.publish_versioned(self.args)
         create.assert_called_once()
         self.assertFalse(any(method == "PATCH" for _, method, _ in self.gh.writes))
@@ -2186,21 +2361,7 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         lifecycle.prepare(self.args)
         plan = self.build_current()
         upload = self.gh.upload
-        reader = Mock()
-        reader.json.side_effect = lambda path: (
-            copy.deepcopy(self.gh.releases[int(path.split('/')[1])])
-            if path.startswith('releases/') else self.gh.api(path))
-        reader.pages.side_effect = self.gh.pages
-
-        def create(body):
-            result = self.gh.api('releases', 'POST', body)
-            if recover:
-                self.gh.releases[result['id']].update(
-                    published_at=None, author={'id': 41898282}, assets=[],
-                    url=f"https://api.github.com/repos/{REPO}/releases/{result['id']}",
-                )
-                raise rc.AmbiguousCreate('response lost')
-            return result
+        reader, create = self._release_creation_fixture(recover)
 
         def move_tag(*args, **kwargs):
             result = upload(*args, **kwargs)
@@ -2250,6 +2411,78 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertFalse(self.gh.assets.get(draft['id']))
         self.assertFalse(any(method == 'PATCH' for _, method, _ in self.gh.writes))
 
+    def _reject_tag_move_during_final_source_confirmation(self, recover, api_repo=REPO):
+        plan = self.automatic_build()
+        reader, create = self._release_creation_fixture(recover, api_repo)
+        api = self.gh.api
+        callback_reads = []
+
+        def move_tag(path, *args, **kwargs):
+            result = api(path, *args, **kwargs)
+            draft = next((r for r in self.gh.releases.values() if r['tag_name'] == plan['tag']), None)
+            if path == 'git/ref/heads/main' and draft and self.gh.assets[draft['id']] and not callback_reads:
+                callback_reads.append(path)
+                self.gh.refs[plan['tag']]['object']['sha'] = 'b' * 40
+            return result
+
+        with (patch.object(self.gh, 'create_release_once', side_effect=create) as called,
+              patch.object(self.gh, 'api', side_effect=move_tag),
+              patch.object(rc, 'CreateReadback', return_value=reader),
+              self.assertRaisesRegex(rc.ReleaseError, 'Tag moved before publication')):
+            lifecycle.publish_versioned(self.args)
+        called.assert_called_once()
+        self.assertEqual(callback_reads, ['git/ref/heads/main'])
+        draft = next(r for r in self.gh.releases.values() if r['tag_name'] == plan['tag'])
+        self.assertTrue(draft['draft'])
+        self.assertTrue(self.gh.assets[draft['id']])
+        self.assertEqual(self.gh.refs[plan['tag']]['object']['sha'], 'b' * 40)
+        self.assertEqual(self.gh.ledger['publication_floor'], plan['build_number'])
+        self.assertEqual(len(self.gh.ledger_writes), 2)
+        self.assertFalse(any(method == 'PATCH' for _, method, _ in self.gh.writes))
+
+    def test_ordinary_publish_refuses_tag_moved_during_final_source_confirmation(self):
+        self._reject_tag_move_during_final_source_confirmation(False)
+
+    def test_reconciled_publish_refuses_tag_moved_during_final_source_confirmation(self):
+        self._reject_tag_move_during_final_source_confirmation(True)
+
+
+    def test_mixed_case_reconciliation_keeps_manifest_and_one_create(self):
+        lifecycle.prepare(self.args)
+        self.build_current()
+        before = copy.deepcopy(self.gh.__dict__)
+        with patch.object(lifecycle, "datetime") as clock:
+            clock.now.return_value = datetime(2026, 9, 12, tzinfo=timezone.utc)
+            normal = lifecycle.publish_versioned(self.args)
+            expected = rc.EVIDENCE.read_bytes()
+            self.gh.__dict__ = copy.deepcopy(before)
+            reader, create = self._release_creation_fixture(True, 'Example/Project')
+            with (patch.object(self.gh, 'create_release_once', side_effect=create) as called,
+                  patch.object(rc, 'CreateReadback', return_value=reader) as readback):
+                recovered = lifecycle.publish_versioned(self.args)
+            called.assert_called_once()
+            readback.assert_called_once_with(REPO)
+        self.assertEqual(self.gh.repo, REPO)
+        self.assertEqual(recovered, normal)
+        self.assertEqual(rc.EVIDENCE.read_bytes(), expected)
+        self.assertEqual(sum(path == 'releases' and method == 'POST' for path, method, _ in self.gh.writes), 1)
+        self.assertEqual(sum(method == 'PATCH' for _, method, _ in self.gh.writes), 1)
+        self.assertTrue(any(self.gh.assets.values()))
+        release_id = next(r['id'] for r in self.gh.releases.values() if r['tag_name'] == recovered['tag'])
+        self.assertEqual(self.gh.releases[release_id]['url'],
+                         f'https://api.github.com/repos/Example/Project/releases/{release_id}')
+        with self.assertRaisesRegex(rc.ReleaseError, 'publication floor'):
+            lifecycle.publish_versioned(self.args)
+
+    def test_mixed_case_reconciliation_still_checks_final_tag(self):
+        self._reject_tag_move_during_final_source_confirmation(True, 'Example/Project')
+        self.assertEqual(self.gh.repo, REPO)
+
+    def test_mixed_case_reconciliation_still_checks_final_source(self):
+        self._reject_automatic_source_move_after_upload(False, True, api_repo='Example/Project')
+        self.assertEqual(self.gh.repo, REPO)
+
+
 class PreparationTests(unittest.TestCase):
     def test_version_order_and_explicit_breaking_intent(self):
         self.assertEqual(
@@ -2264,6 +2497,415 @@ class PreparationTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "already has a stable"):
             prepare_version.choose_version("1.2.3", ["v1.2.3"], requested="1.2.3")
+
+
+
+def rewrite_retained_receipt(fixture, manifest, mutate):
+    """Bind a historical receipt shape into its real synthetic immutable evidence."""
+    gh = fixture.gh
+    assets = gh.assets[next(key for key, value in gh.releases.items()
+                           if value["tag_name"] == manifest["tag"])]
+    asset = next(item for item in assets if item["name"] == "release-inputs-linux.json")
+    receipt_data = json.loads(gh.files[asset["id"]])
+    mutate(receipt_data)
+    raw = rc.json_bytes(receipt_data)
+    gh.files[asset["id"]] = raw
+    asset.update(size=len(raw), digest="sha256:" + rc.digest(raw))
+    for item in manifest["assets"]:
+        if item["name"] == asset["name"]:
+            item.update(size=len(raw), sha256=rc.digest(raw))
+    for item in manifest["build_receipts"]:
+        if item["name"] == asset["name"]:
+            item["sha256"] = rc.digest(raw)
+    manifest_raw = rc.json_bytes(manifest)
+    declaration = next(item for item in assets if item["name"] == rc.MANIFEST)
+    gh.files[declaration["id"]] = manifest_raw
+    declaration.update(size=len(manifest_raw), digest="sha256:" + rc.digest(manifest_raw))
+    gh.save_completed_evidence(manifest_raw)
+    return manifest_raw
+
+
+def compact_published_fixture(fixture, rc_tag=None):
+    """Model GitHub's published projection; consumer tests do not run promotion."""
+    from release_distribution import stable_distribution
+    gh = fixture.gh
+    release_id = (next(key for key, value in gh.releases.items() if value["tag_name"] == rc_tag)
+                  if rc_tag else max(key for key, value in gh.releases.items() if "-rc." in value["tag_name"]))
+    candidate_assets = gh.assets[release_id]
+    candidate_raw = gh.files[next(item["id"] for item in candidate_assets if item["name"] == rc.MANIFEST)]
+    candidate = json.loads(candidate_raw)
+    compact = stable_distribution(candidate, candidate_raw)
+    tag = compact["tag"]
+    stable_id = next((key for key, value in gh.releases.items() if value["tag_name"] == tag), max(gh.releases) + 1)
+    if stable_id not in gh.releases:
+        gh.releases[stable_id] = {**gh.releases[release_id], "id": stable_id, "tag_name": tag, "prerelease": False}
+    gh.refs[tag] = {"ref": "refs/tags/" + tag, "object": {"type": "commit", "sha": candidate["source_sha"]}}
+    names = {item["name"] for item in compact["assets"]}
+    projected = [(item["name"], gh.files[item["id"]]) for item in candidate_assets if item["name"] in names]
+    projected.append((rc.MANIFEST, rc.json_bytes(compact)))
+    gh.assets[stable_id] = []
+    for name, raw in projected:
+        asset_id = max(gh.files) + 1
+        gh.files[asset_id] = raw
+        gh.assets[stable_id].append({"id": asset_id, "name": name, "size": len(raw), "state": "uploaded",
+                                   "digest": "sha256:" + rc.digest(raw)})
+    return candidate, candidate_raw, compact, stable_id
+
+
+class LegacyScheduledReuseTests(unittest.TestCase):
+    """Keep schema-1 full-inventory reuse bound to exact manifest bytes."""
+
+    def setUp(self):
+        self.fixture = LifecycleTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.result, self.plan, self.manifest = self.fixture.release_run("rc", 100)
+        self.gh = self.fixture.gh
+        self.gh.writes.clear()
+        self.gh.ledger_writes.clear()
+        self.gh.jobs_by_run[100] = [
+            copy.deepcopy(self.gh.jobs[0]),
+            {**self.gh.jobs[0], "name": "checks / CI gate"},
+        ]
+        for assets in self.gh.assets.values():
+            for asset in assets:
+                asset["digest"] = "sha256:" + rc.digest(self.gh.files[asset["id"]])
+        self.asset = next(
+            item for item in self.gh.assets[
+                next(key for key, value in self.gh.releases.items()
+                     if value["tag_name"] == self.result["tag"])
+            ]
+            if item["name"] == rc.MANIFEST
+        )
+        self.asset.pop("digest", None)
+
+    def verify(self):
+        lifecycle.verify_scheduled_reuse(
+            self.gh, self.gh.info, self.manifest["source_policy"], self.plan,
+            100, self.result["tag"],
+        )
+
+    def test_digestless_schema_one_manifest_reuse_is_accepted(self):
+        self.verify()
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger_writes, [])
+
+    def test_same_size_manifest_replacement_after_first_read_is_rejected(self):
+        asset_id = self.asset["id"]
+        original = self.gh.files[asset_id]
+        self.assertIn(b'"run_id": 100', original)
+        replacement = original.replace(b'"run_id": 100', b'"run_id": 101', 1)
+        self.assertEqual(len(replacement), len(original))
+        read = self.gh.binary
+        changed = False
+
+        def replace_after_initial_body(path):
+            nonlocal changed
+            data = read(path)
+            if path == f"releases/assets/{asset_id}" and not changed:
+                self.gh.files[asset_id] = replacement
+                changed = True
+            return data
+
+        with patch.object(self.gh, "binary", side_effect=replace_after_initial_body), \
+                self.assertRaisesRegex((ValueError, rc.ReleaseError), "size or checksum mismatch"):
+            self.verify()
+        self.assertTrue(changed)
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger_writes, [])
+
+
+class CompactConsumerTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = LifecycleTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.fixture.policy["versioning"]["promotion"] = "promote-bytes"
+        self.fixture.gh.source_policies[SHA] = copy.deepcopy(self.fixture.policy)
+        (self.fixture.root / ".release-policy.json").write_bytes(rc.json_bytes(self.fixture.policy))
+        self.fixture.qualify_schedule_fixture()
+        self.gh = self.fixture.gh
+        self.manifest, self.raw, self.compact, self.stable_id = compact_published_fixture(self.fixture)
+        self.gh.writes.clear()
+        self.gh.ledger_writes.clear()
+
+    def verify(self, stage=None):
+        return lifecycle.read_verified_distribution(self.gh, self.compact["tag"], rc.json_bytes(self.compact), stage=stage)
+
+    def test_legacy_wrapper_streams_preproducer_receipt_but_strict_paths_reject_it(self):
+        rewrite_retained_receipt(self.fixture, self.manifest, lambda value: value.pop("producer"))
+        self.manifest, self.raw, self.compact, self.stable_id = compact_published_fixture(self.fixture)
+        staged = []
+        def transfer(path, output):
+            destination = Path(output.name)
+            self.assertEqual(list(destination.parent.iterdir()), [destination])
+            output.write(self.gh.files[int(path.rsplit("/", 1)[-1])])
+            staged.append(destination)
+        with patch.object(self.gh, "download_asset", side_effect=transfer):
+            manifest, proof = lifecycle.verified_rc(self.gh, self.manifest["tag"], self.gh.info, self.gh.runs[99])
+        self.assertEqual(manifest, self.manifest)
+        self.assertEqual(proof, {key: value for key, value in self.compact["rc_evidence"].items()
+                                 if key != "run_attempt"})
+        self.assertEqual(len(staged), len(self.manifest["assets"]))
+        self.assertTrue(all(not path.exists() and not path.parent.exists() for path in staged))
+        for strict in (lambda: lifecycle.read_verified_rc(self.gh, self.manifest["tag"]), self.verify):
+            with self.subTest(resolver=strict), self.assertRaisesRegex(ValueError, "current package producer identity"):
+                strict()
+        self.assertEqual(self.gh.writes, [])
+
+    def test_read_only_resolver_has_real_rc_proof_and_full_retained_stage(self):
+        directory = self.fixture.root / "retained"
+        directory.mkdir()
+        manifest, raw, proof = lifecycle.read_verified_rc(self.gh, self.manifest["tag"], stage=directory)
+        self.assertEqual((manifest, raw), (self.manifest, self.raw))
+        self.assertEqual(proof, {"tag": self.manifest["tag"], "manifest_sha256": rc.digest(self.raw),
+                                 "source_sha": SHA, "run_id": 100, "run_attempt": 1})
+        self.assertEqual({path.name for path in directory.iterdir()}, {item["name"] for item in manifest["assets"]})
+        self.assertEqual(self.gh.writes, [])
+
+    def test_empty_payload_is_verified_and_staged_byte_for_byte(self):
+        self.gh.releases.pop(self.stable_id)
+        self.gh.assets.pop(self.stable_id)
+        self.gh.refs.pop(self.compact["tag"])
+        original = self.fixture.build_current
+        def build_with_empty_payload():
+            plan = original()
+            assets = Path(self.fixture.args.assets)
+            (assets / "release-inputs-linux.json").unlink()
+            (assets / "empty.txt").write_bytes(b"")
+            receipt.create_receipt(lifecycle.PLAN, self.fixture.root / ".release-inputs.json",
+                                   assets, assets / "release-inputs-linux.json")
+            return plan
+        with patch.object(self.fixture, "build_current", side_effect=build_with_empty_payload):
+            self.fixture.release_run("rc", 102)
+        self.gh.jobs_by_run[102] = copy.deepcopy(self.gh.jobs_by_run[100])
+        for release_assets in self.gh.assets.values():
+            for item in release_assets:
+                item["digest"] = "sha256:" + rc.digest(self.gh.files[item["id"]])
+        self.manifest, self.raw, self.compact, self.stable_id = compact_published_fixture(self.fixture)
+        stage = self.fixture.root / "empty-payload-stage"
+        stage.mkdir()
+        self.verify(stage)
+        self.assertTrue((stage / "empty.txt").is_file())
+        self.assertEqual((stage / "empty.txt").read_bytes(), b"")
+        self.assertIn({"name": "empty.txt", "size": 0, "sha256": rc.digest(b"")}, self.compact["assets"])
+        self.assertEqual({path.name for path in stage.iterdir()}, {"app.json", "empty.txt"})
+
+    def test_compact_stages_only_shipped_bytes_without_current_run_or_policy_flag(self):
+        directory = self.fixture.root / "shipped"
+        directory.mkdir()
+        manifest, raw, proof = self.verify(directory)
+        self.assertEqual((manifest, raw), (self.manifest, self.raw))
+        self.assertEqual(proof, self.compact["rc_evidence"])
+        self.assertEqual({path.name for path in directory.iterdir()}, {item["name"] for item in self.compact["assets"]})
+        self.assertNotIn("stable_distribution", manifest["source_policy"]["data"])
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger_writes, [])
+
+    def test_digestless_stable_manifest_is_bound_to_snapshot_bytes(self):
+        asset = next(item for item in self.gh.assets[self.stable_id]
+                     if item["name"] == rc.MANIFEST)
+        asset.pop("digest")
+        original = self.gh.files[asset["id"]]
+        self.assertIn(b"v1.2.3", original)
+        replacement = original.replace(b"v1.2.3", b"v9.9.9", 1)
+        self.assertEqual(len(replacement), len(original))
+        snapshot = lifecycle.published_plan_snapshot
+        changed = False
+
+        def mutate_after_caller_read(gh, tag, source, prerelease):
+            nonlocal changed
+            if tag == self.compact["tag"] and not changed:
+                # The caller has already supplied the original manifest bytes.
+                # Simulate a same-size replacement just before the inventory
+                # snapshot; GitHub's asset API omits its digest.
+                gh.files[asset["id"]] = replacement
+                changed = True
+            return snapshot(gh, tag, source, prerelease)
+
+        with patch.object(lifecycle, "published_plan_snapshot",
+                          side_effect=mutate_after_caller_read), \
+                self.assertRaisesRegex(rc.ReleaseError, "size or checksum mismatch"):
+            self.verify()
+        self.assertTrue(changed)
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger_writes, [])
+
+    def test_omitted_receipt_still_downloaded_and_authenticated_before_stable_payload(self):
+        receipt_id = next(item["id"] for assets in self.gh.assets.values() for item in assets
+                          if item["name"] == "release-inputs-linux.json")
+        self.gh.files[receipt_id] = b"corrupt retained receipt"
+        stable_ids = {str(item["id"]) for item in self.gh.assets[self.stable_id]}
+        original = self.gh.download_asset
+        downloads = []
+        def transfer(path, stream):
+            downloads.append(path.rsplit("/", 1)[-1])
+            original(path, stream)
+        with patch.object(self.gh, "download_asset", side_effect=transfer), self.assertRaises((ValueError, rc.ReleaseError)):
+            self.verify()
+        self.assertTrue(set(downloads).isdisjoint(stable_ids))
+
+    def test_retained_receipt_semantics_are_checked_even_when_all_hashes_match(self):
+        assets = self.gh.assets[next(key for key, value in self.gh.releases.items()
+                                    if value["tag_name"] == self.manifest["tag"])]
+        retained = next(item for item in assets if item["name"] == "release-inputs-linux.json")
+        payload = json.loads(self.gh.files[retained["id"]])
+        payload["plan_sha256"] = "0" * 64
+        changed = rc.json_bytes(payload)
+        self.gh.files[retained["id"]] = changed
+        retained.update(size=len(changed), digest="sha256:" + rc.digest(changed))
+        for item in self.manifest["assets"]:
+            if item["name"] == retained["name"]:
+                item.update(size=len(changed), sha256=rc.digest(changed))
+        self.manifest["build_receipts"][0]["sha256"] = rc.digest(changed)
+        raw = rc.json_bytes(self.manifest)
+        manifest_asset = next(item for item in assets if item["name"] == rc.MANIFEST)
+        self.gh.files[manifest_asset["id"]] = raw
+        manifest_asset.update(size=len(raw), digest="sha256:" + rc.digest(raw))
+        self.gh.save_completed_evidence(raw)
+        self.manifest, self.raw, self.compact, self.stable_id = compact_published_fixture(self.fixture)
+        with self.assertRaisesRegex(ValueError, "different release plan"):
+            self.verify()
+
+    def test_non_fuzz_staging_does_not_import_the_optional_adapter(self):
+        import builtins
+        stage, output = self.fixture.root / "source-stage", self.fixture.root / "distribution-stage"
+        stage.mkdir()
+        output.mkdir()
+        manifest, raw, _ = lifecycle.read_verified_rc(self.gh, self.manifest["tag"], stage=stage)
+        original = builtins.__import__
+        def without_fuzz(name, *args, **kwargs):
+            if name.rsplit(".", 1)[-1] == "release_fuzz":
+                raise AssertionError("Non-fuzz compact staging must not import the optional fuzz adapter")
+            return original(name, *args, **kwargs)
+        with patch.object(builtins, "__import__", side_effect=without_fuzz):
+            rc.prepare_stable_distribution(stage, output, manifest, raw)
+        self.assertEqual({path.name for path in output.iterdir()}, {"app.json", rc.MANIFEST})
+        self.assertEqual(json.loads((output / rc.MANIFEST).read_bytes()), self.compact)
+
+    def test_fuzz_receipt_is_authenticated_but_not_shipped(self):
+        import importlib.util
+        if importlib.util.find_spec("release_fuzz") is None:
+            self.skipTest("Optional fuzz adapter is not installed in this generated consumer")
+        import release_fuzz as fuzz
+        self.gh.releases.pop(self.stable_id)
+        self.gh.assets.pop(self.stable_id)
+        self.gh.refs.pop(self.compact["tag"])
+        self.fixture.policy["fuzzing"] = {"toolkit_ref": "a" * 40}
+        self.fixture.require_build_receipts(["release-inputs-linux.json"])
+        self.fixture.start_run("rc", 102)
+        self.gh.jobs.append({"id": 200, "name": fuzz.JOB, "head_sha": SHA,
+                            "status": "completed", "conclusion": "success"})
+        lifecycle.prepare(self.fixture.args)
+        self.fixture.build_current()
+        assets = Path(self.fixture.args.assets)
+        with tempfile.TemporaryDirectory(dir=self.fixture.root) as temporary:
+            package = Path(temporary)
+            (package / fuzz.REPORT).write_text("report already authenticated by the RC publisher")
+            receipt.create_receipt(lifecycle.PLAN, self.fixture.root / ".release-inputs.json",
+                                   package, package / "release-inputs-fuzz.json")
+            for path in package.iterdir():
+                (assets / path.name).write_bytes(path.read_bytes())
+        with patch.object(fuzz, "verify_report"):
+            lifecycle.publish_versioned(self.fixture.args)
+        self.gh.save_completed_evidence(rc.EVIDENCE.read_bytes())
+        self.gh.jobs_by_run[102] = copy.deepcopy(self.gh.jobs) + [
+            {**self.gh.jobs[0], "name": "checks / CI gate"}]
+        for release_assets in self.gh.assets.values():
+            for item in release_assets:
+                item["digest"] = "sha256:" + rc.digest(self.gh.files[item["id"]])
+        self.manifest, self.raw, self.compact, self.stable_id = compact_published_fixture(self.fixture)
+        stage = self.fixture.root / "fuzz-shipped"
+        stage.mkdir()
+        self.verify(stage)
+        self.assertEqual({path.name for path in stage.iterdir()}, {"app.json"})
+        self.gh.jobs_by_run[102][-2]["conclusion"] = "failure"
+        with self.assertRaises((ValueError, rc.ReleaseError)):
+            self.verify()
+
+    def test_projection_and_authenticated_evidence_fail_closed(self):
+        original = copy.deepcopy(self.gh)
+        changes = {
+            "expired": lambda gh: gh.evidence_by_run[100][0].update(expired=True),
+            "rerun": lambda gh: gh.runs[100].update(run_attempt=2),
+            "missing-receipt": lambda gh: gh.assets[next(key for key, value in gh.releases.items()
+                if value["tag_name"] == self.manifest["tag"])].pop(),
+            "stable-digest": lambda gh: gh.assets[self.stable_id][0].update(digest="sha256:" + "0" * 64),
+            "stable-extra": lambda gh: gh.assets[self.stable_id].append({"id": 99999, "name": "extra", "size": 1, "state": "uploaded"}),
+            "stable-tag": lambda gh: gh.refs[self.compact["tag"]]["object"].update(sha="b" * 40),
+        }
+        for name, change in changes.items():
+            self.gh = copy.deepcopy(original)
+            change(self.gh)
+            with self.subTest(name=name), self.assertRaises((ValueError, rc.ReleaseError)):
+                self.verify()
+            self.assertEqual(self.gh.writes, [])
+        self.gh = original
+        for field, value in (("manifest_sha256", "0" * 64), ("run_attempt", 2), ("run_id", 200)):
+            compact = copy.deepcopy(self.compact)
+            compact["rc_evidence"][field] = value
+            with self.subTest(field=field), self.assertRaises((ValueError, rc.ReleaseError)):
+                lifecycle.read_verified_distribution(self.gh, compact["tag"], rc.json_bytes(compact))
+
+    def test_late_rc_rerun_or_stable_mutation_cannot_qualify(self):
+        original = copy.deepcopy(self.gh)
+        for mutation in ("rc", "stable"):
+            self.gh = copy.deepcopy(original)
+            transfer = self.gh.download_asset
+            stable_ids = {str(item["id"]) for item in self.gh.assets[self.stable_id]}
+            def changed(path, stream):
+                transfer(path, stream)
+                if path.rsplit("/", 1)[-1] in stable_ids:
+                    if mutation == "rc":
+                        self.gh.runs[100]["run_attempt"] = 2
+                    else:
+                        self.gh.releases[self.stable_id]["updated_at"] = "changed"
+            with self.subTest(mutation=mutation), patch.object(self.gh, "download_asset", side_effect=changed), \
+                    self.assertRaises((ValueError, rc.ReleaseError)):
+                self.verify()
+
+    def test_signed_consumer_rejects_compact_before_following_retained_reference(self):
+        with patch.object(rc, "RELEASE_SIGNATURES_REQUIRED", True), \
+                patch.object(lifecycle, "read_verified_rc") as retained, \
+                self.assertRaisesRegex(rc.ReleaseError, "full-inventory signature"):
+            self.verify()
+        retained.assert_not_called()
+
+    def test_scheduled_reuse_hashes_compact_payloads_when_api_digests_are_missing(self):
+        candidate_id = next(key for key, value in self.gh.releases.items()
+                            if value["tag_name"] == self.manifest["tag"])
+        candidate_assets = self.gh.assets[candidate_id]
+        stable_assets = self.gh.assets[self.stable_id]
+        payload_name = self.compact["assets"][0]["name"]
+        for collection in (candidate_assets, stable_assets):
+            next(item for item in collection if item["name"] == payload_name).pop("digest")
+        lifecycle.verify_scheduled_reuse(
+            self.gh, self.gh.info, self.manifest["source_policy"],
+            self.manifest["version_plan"], 100, self.compact["tag"],
+        )
+        self.assertEqual(self.gh.writes, [])
+
+    def test_scheduled_reuse_rejects_wrong_bytes_when_digest_metadata_is_missing(self):
+        candidate_id = next(key for key, value in self.gh.releases.items()
+                            if value["tag_name"] == self.manifest["tag"])
+        candidate_assets = self.gh.assets[candidate_id]
+        asset = next(item for item in candidate_assets
+                     if item["name"] == self.compact["assets"][0]["name"])
+        asset.pop("digest")
+        raw = bytearray(self.gh.files[asset["id"]])
+        raw[0] ^= 1
+        self.gh.files[asset["id"]] = bytes(raw)
+        with self.assertRaises((ValueError, rc.ReleaseError)):
+            lifecycle.verify_scheduled_reuse(
+                self.gh, self.gh.info, self.manifest["source_policy"],
+                self.manifest["version_plan"], 100, self.compact["tag"],
+            )
+        self.assertEqual(self.gh.writes, [])
+
+    def test_scheduled_reuse_accepts_compact_and_keeps_original_plan(self):
+        lifecycle.verify_scheduled_reuse(self.gh, self.gh.info, self.manifest["source_policy"],
+                                         self.manifest["version_plan"], 100, self.compact["tag"])
+        self.assertEqual(self.gh.writes, [])
 
 
 if __name__ == "__main__":
