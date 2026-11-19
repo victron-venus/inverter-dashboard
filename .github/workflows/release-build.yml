@@ -231,7 +231,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@fbe2fd52575225f8aeb2096522acdc86c9da198a
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@b869c601756845a7169fa101ab4e4e4428433d95
     with:
       node-version: '22'
       run-node-ci: false

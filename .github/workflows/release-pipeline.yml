@@ -89,6 +89,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: 1.27.4
@@ -205,6 +208,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: 1.27.4
@@ -265,6 +271,9 @@ jobs:
         with:
           egress-policy: audit
       - *id001
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: 1.27.4
@@ -306,6 +315,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: 1.27.4
@@ -355,9 +367,9 @@ jobs:
     if: ${{ needs.prepare.outputs.build == 'true' && github.event.repository.private == false && github.event_name
       == 'workflow_dispatch' && github.event.inputs.channel == 'rc' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
       }}
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/fuzz.yml@fbe2fd52575225f8aeb2096522acdc86c9da198a # main
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/fuzz.yml@b869c601756845a7169fa101ab4e4e4428433d95 # main
     with:
-      toolkit-ref: fbe2fd52575225f8aeb2096522acdc86c9da198a
+      toolkit-ref: b869c601756845a7169fa101ab4e4e4428433d95
       release-plan-artifact: ${{ needs.prepare.outputs.plan_artifact }}
     permissions:
       contents: read

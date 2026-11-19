@@ -60,7 +60,7 @@
         "value": "package"
       }
     ],
-    "toolkit_revision": "fbe2fd52575225f8aeb2096522acdc86c9da198a",
+    "toolkit_revision": "b869c601756845a7169fa101ab4e4e4428433d95",
     "required_build_receipts": [
       "release-inputs-container.json",
       "release-inputs-linux-x86_64.json",
@@ -72,7 +72,7 @@
   },
   "single_entry_ci": true,
   "coverage": {
-    "toolkit_ref": "fbe2fd52575225f8aeb2096522acdc86c9da198a",
+    "toolkit_ref": "b869c601756845a7169fa101ab4e4e4428433d95",
     "reports": [
       {
         "name": "python",
@@ -85,9 +85,9 @@
     ]
   },
   "release_notes": "CHANGELOG.md",
-  "toolkit_revision": "fbe2fd52575225f8aeb2096522acdc86c9da198a",
+  "toolkit_revision": "b869c601756845a7169fa101ab4e4e4428433d95",
   "fuzzing": {
-    "toolkit_ref": "fbe2fd52575225f8aeb2096522acdc86c9da198a"
+    "toolkit_ref": "b869c601756845a7169fa101ab4e4e4428433d95"
   },
   "change_scope": {
     "documentation_paths": [
