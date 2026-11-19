@@ -92,7 +92,7 @@ def validate_target(root: Path, target: object, names: set[str]) -> None:
         or set(target) - {"name", "engine", "command", "seconds", "cwd", "corpus", "instrumentation"}
         or not isinstance(target.get("name"), str)
         or not re.fullmatch(r"[a-z][a-z0-9-]{0,49}", target["name"])
-        or target["name"] in names
+        or target["name"] in names or target["name"] == "preflight"
         or target.get("engine") not in {"go", "libfuzzer", "atheris"}
         or type(target.get("seconds")) is not int or not 1 <= target["seconds"] <= 120
     ):
@@ -176,6 +176,16 @@ def event_contract(event: dict, event_name: str, ref: str, repository: str, sha:
         raise ValueError("Fuzz campaigns require a public default-branch RC dispatch")
 
 
+def evidence_contract(mode: str, plan_artifact: str) -> None:
+    """Keep standalone candidate checks separate from releasable evidence."""
+    if mode not in {"release", "candidate"}:
+        raise ValueError("Unknown fuzz evidence mode")
+    if mode == "release" and not plan_artifact:
+        raise ValueError("Release fuzzing requires its frozen plan artifact")
+    if mode == "candidate" and plan_artifact:
+        raise ValueError("Standalone candidate fuzzing must not supply a release plan")
+
+
 def check_run_jobs(jobs: list[dict], channel: str, sha: str) -> None:
     matches = [j for j in jobs if j.get("name") == JOB]
     if channel == "rc":
@@ -196,6 +206,8 @@ def profile(policy: dict, channel: str) -> dict | None:
 
 def verify_report(directory: Path, root: Path, repository: str, sha: str, run: int, attempt: int) -> None:
     data = json.loads((directory / REPORT).read_bytes())
+    if data.get("evidence_mode", "release") != "release":
+        raise ValueError("Standalone candidate evidence cannot qualify a release")
     config = manifest(root)
     expected = {
         "repository": repository, "source_sha": sha,
@@ -296,11 +308,22 @@ def retain_corpus(source: Path, destination: Path, *, required: bool = False) ->
     """Copy only bounded regular corpus inputs, never symlinks or a build cache."""
     result = {"files": 0, "bytes": 0, "truncated": False}
     destination.mkdir(parents=True, exist_ok=True)
-    if required and (not source.is_dir() or source.is_symlink()):
-        raise ValueError("Declared preflight corpus must be an existing directory without symlinks")
-    if not source.is_dir() or source.is_symlink():
+    if source.is_symlink() or (source.exists() and not source.is_dir()):
+        raise ValueError("Corpus must be an existing directory without symlinks")
+    if not source.is_dir():
+        if required:
+            raise ValueError("Declared preflight corpus must be an existing directory without symlinks")
         return result
-    for path in corpus_files(source, required=required):
+    result = retain_corpus_files(source, destination, corpus_files(source, required=required))
+    if required and not result["files"]:
+        raise ValueError("Declared preflight corpus must contain at least one regular seed file")
+    return result
+
+
+def retain_corpus_files(source: Path, destination: Path, files) -> dict:
+    """Apply one aggregate storage budget to an ordered stream of seed files."""
+    result = {"files": 0, "bytes": 0, "truncated": False}
+    for path in files:
         size = path.stat().st_size
         if result["files"] >= CORPUS_FILES or result["bytes"] + size > CORPUS_BYTES:
             result["truncated"] = True
@@ -310,8 +333,6 @@ def retain_corpus(source: Path, destination: Path, *, required: bool = False) ->
         shutil.copyfile(path, target)
         result["files"] += 1
         result["bytes"] += size
-    if required and not result["files"]:
-        raise ValueError("Declared preflight corpus must contain at least one regular seed file")
     return result
 
 
@@ -351,18 +372,31 @@ def execute(command: list[str], cwd: Path, output: Path, timeout: int, isolated:
     return code, round(time.monotonic() - start, 3)
 
 
+def go_regression_files(cwd: Path, target_dir: Path):
+    """Find owned native regressions without traversing links or saved output."""
+    excluded = target_dir.parent if target_dir.parent != cwd else target_dir
+    for current, directories, _files in os.walk(cwd, followlinks=False, onerror=corpus_walk_error):
+        path = Path(current)
+        directories[:] = sorted(name for name in directories
+                                if name not in {".git", "vendor", "node_modules"}
+                                and not (path / name).is_symlink() and path / name != excluded)
+        if path.name == "fuzz" and path.parent.name == "testdata":
+            directories[:] = []
+            yield from corpus_files(path)
+
+
 def retain_go_diagnostics(root: Path, cwd: Path, target_dir: Path, go_version_file: str | None) -> dict:
     """Save native Go failures and bounded coverage discoveries separately."""
-    for index, path in enumerate(cwd.rglob("testdata/fuzz")):
-        if path.is_dir():
-            shutil.copytree(path, target_dir / f"go-regressions-{index}")
+    regressions = retain_corpus_files(cwd, target_dir / "go-regressions", go_regression_files(cwd, target_dir))
+    (target_dir / "go-regressions.json").write_text(json.dumps(regressions, indent=2) + "\n")
     # Native Go keeps coverage discoveries outside testdata/fuzz. Resolve the
     # selected toolchain's cache; do not include compiled objects or modules.
     # A target may invoke Go through a Python/build adapter. Query the Go
     # selected on PATH in the declared module, never the adapter executable.
     go_cwd = go_module_directory(root, go_version_file) if go_version_file else cwd
     cache = subprocess.check_output(["go", "env", "GOCACHE"], cwd=go_cwd, text=True, timeout=30).strip()  # nosec B603, B607
-    return retain_corpus(Path(cache) / "fuzz", target_dir / "go-generated-corpus")
+    return {"go_regressions": regressions,
+            "generated_corpus": retain_corpus(Path(cache) / "fuzz", target_dir / "go-generated-corpus")}
 
 
 def run_target(root: Path, output: Path, target: dict, *, go_version_file: str | None = None) -> dict:
@@ -388,7 +422,7 @@ def run_target(root: Path, output: Path, target: dict, *, go_version_file: str |
     if code == 0 and not metrics["executions"]:
         code = 125
     if target["engine"] == "go":
-        metrics["generated_corpus"] = retain_go_diagnostics(root, cwd, target_dir, go_version_file)
+        metrics.update(retain_go_diagnostics(root, cwd, target_dir, go_version_file))
     return {"name": name, "seconds": seconds, "exit_code": code, "elapsed_seconds": elapsed, **metrics}
 
 
@@ -510,7 +544,9 @@ def run_preflight(root: Path, output: Path, data: dict, *, setup: bool) -> dict:
     return evidence
 
 
-def campaign(root: Path, output: Path) -> None:
+def campaign(root: Path, output: Path, evidence_mode: str = "release") -> None:
+    if evidence_mode not in {"release", "candidate"}:
+        raise ValueError("Unknown fuzz evidence mode")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     event_contract(event, os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF"],
                    os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_SHA"])
@@ -522,7 +558,11 @@ def campaign(root: Path, output: Path) -> None:
         raise ValueError("Fuzz checkout differs from RC source")
     output.mkdir(parents=True, exist_ok=False)
     report = {
-        "schema": 2, "repository": os.environ["GITHUB_REPOSITORY"], "source_sha": actual,
+        # Schema 3 deliberately makes standalone evidence unacceptable to older
+        # release verifiers, which accept only release report schemas 1 and 2.
+        "schema": 3 if evidence_mode == "candidate" else 2,
+        "evidence_mode": evidence_mode,
+        "repository": os.environ["GITHUB_REPOSITORY"], "source_sha": actual,
         "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
         "channel": "rc", "private": False, "network": "isolated", "status": "failed",
         "manifest_sha256": hashlib.sha256((root / MANIFEST).read_bytes()).hexdigest(),
@@ -550,9 +590,12 @@ def main() -> None:
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--output", type=Path)
     parser.add_argument("--if-changed", action="store_true")
+    parser.add_argument("--evidence-mode", choices=("release", "candidate"), default="release")
+    parser.add_argument("--release-plan-artifact", default="")
     args = parser.parse_args()
     root = args.root.resolve()
     if args.action == "inspect":
+        evidence_contract(args.evidence_mode, args.release_plan_artifact)
         data = manifest(root)
         event_contract(json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()),
                        os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF"],
@@ -571,7 +614,7 @@ def main() -> None:
     else:
         if args.output is None:
             parser.error("run requires --output")
-        campaign(root, args.output.resolve())
+        campaign(root, args.output.resolve(), args.evidence_mode)
 
 
 if __name__ == "__main__":
