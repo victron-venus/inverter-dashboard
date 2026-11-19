@@ -10,6 +10,16 @@ documentation skips. Missing, failed or unexpectedly skipped workflows fail the
 gate. Unknown files, incomplete history, code, workflows and lockfile changes run
 full validation.
 
+The required ordinary **CI gate** uses `always()` so its existing result checks
+still run after cancellation. [GitHub accepts skipped required checks](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks),
+so using `!cancelled()` on this aggregate could allow an unfinished validator to
+be hidden behind a skipped gate. Failed, cancelled, missing or unauthorized
+skipped dependencies must produce a failing aggregate. A cancelled run whose
+validators already all succeeded retains that valid result. Superseded runs can
+therefore retain a short queued aggregate; do not trade this protection for
+faster queue cleanup. Keep the separate release publication and signing guards
+unchanged: cancellation must still stop those operations.
+
 The optional `change_scope` policy provides exact `documentation_paths`, exact
 `required_paths` for documentation used as a build input, and
 `always_validate_workflows` for independently required checks. Documentation paths
@@ -20,6 +30,20 @@ preparation and qualification. A newer automatic run supersedes unfinished
 candidates, so it must remain eligible to replace them and run the required
 security checks. Release-note files parsed by contracts remain required inputs.
 The configured nightly policy is unchanged.
+
+## Live release execution
+
+Release steps pass the official `job.check_run_id` context as
+`RELEASE_EXECUTION_CHECK_RUN_ID`. If aggregate run metadata is delayed, the
+publisher first checks the exact attempt, then may match this identifier to the
+unique attempt job's exact GitHub `check_run_url`. The job must still be executing
+on the current runner with a current-attempt executing step. Display names and
+matrix labels do not identify the job. The shared five-minute deadline and all
+prerequisite gates remain required; terminal or conflicting metadata fails.
+Older workflows and hosts without this context keep the strict aggregate-status
+path. Adopt both the reviewed generated workflow and publisher together.
+Ambiguous-create confirmation uses a fresh bounded job read, never a saved status.
+Completed historical RCs still require successful terminal validation.
 
 ## Local checks
 
@@ -86,6 +110,27 @@ Candidate tags are unique and immutable: `vX.Y.Z-beta.N`, `vX.Y.Z-rc.N`, or
 never update stable/latest. All required platforms must build before publication.
 `release-manifest.json` records source SHA, workflow/run attempt and every payload
 SHA-256. The manifest is also saved in immutable Actions evidence for 90 days.
+Versioned Actions packages also record their producer repository, run ID, attempt
+and source in every receipt; publication requires the current verified run identity.
+The installer scopes build, signing and collection artifact names to that attempt.
+ID-selected candidate downloads require a separate consumer check of receipt
+producer identity and payload digest; the name-scoping helper does not verify them.
+**Re-run failed jobs** can retain successful checks and packages from an older
+attempt, so it is insufficient when publication requires fresh inputs from the
+current attempt. Before publication starts, read back the release ledger and
+existing tags and releases. If the reservation is still eligible, its build
+number is above the publication floor, and the candidate tag is absent, use
+**Re-run all jobs** on the same run only when the allocator and release policy
+permit it. Recreate every required input in the same attempt; older packages
+must not fill missing current builds.
+
+Once the publication floor has consumed the build number, use a policy-authorized
+new workflow run and reservation. If publication started or its external result
+is partial or uncertain, inspect existing tags, releases and assets first; an
+immutable tag may also require a new base version. Never reset the ledger or
+overwrite published assets. See [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
+Update shared fuzz workflow pins with the producer and collector rollout. Local
+offline receipts cannot qualify live publication.
 
 Automatic push betas and scheduled nightlies publish the current default HEAD.
 An older source is explicitly marked `superseded` only after ancestry and one
@@ -93,8 +138,12 @@ newer automatic replacement run at current HEAD are verified. This does not clai
 that the replacement passed or published. No tag, release or promotion evidence
 is created for that skipped publication, and its reserved number is not reused.
 Missing replacement evidence or API failures remain errors. Manual releases keep
-their existing checks. A race after the final check can still fail publication;
-inspect the error and dispatch a fresh run at current HEAD, never reset the ledger.
+their existing checks. Automatic publication validates the captured default-branch
+source before consuming the reservation, then checks the default branch and source
+again after uploads, immediately before publishing the draft. A detected late
+change leaves the draft unpublished and the consumed reservation intact. The last
+check and GitHub PATCH are not atomic; inspect any error and dispatch a fresh run
+at current HEAD, never reset the ledger.
 
 ## Stable promotion
 
@@ -113,6 +162,93 @@ Stable `vX.Y.Z` copies the tested RC bytes without rebuilding. No override or
 force-tag option exists. Expired/missing evidence requires a new RC. A partial
 upload remains an unpublished draft; inspect it before any manual recovery.
 
+Compact stable distribution is opt-in: the current driver's top-level policy
+must explicitly set `stable_distribution` to `rc-payloads-v1`. Absent means the
+existing full-manifest copy behavior; unknown, null and boolean values fail.
+The historical RC policy need not contain this field. Opted-in byte promotions
+ship unchanged payloads with a new schema-2 manifest linking the full RC proof.
+Only declared, verified receipts and the exact declared fuzz report stay solely
+on the RC; runtime JSON, feeds, metadata, checksums and signatures remain shipped.
+Every omitted file is still verified before publication. Keep the referenced RC
+and its immutable Actions evidence available and unexpired. Old schema-1 stable
+and final-build paths remain supported. See [compact distribution](release-distribution.md)
+for the narrow scripts/tests/docs migration and its workflow-preservation limits.
+
+Assets are uploaded to the draft's known release ID. Publication does not
+repeat a tag lookup for each upload: a draft may not appear in the
+published-release-by-tag API. After a non-201 response, timeout or malformed
+response, the publisher reads the complete asset inventory for that exact release
+ID. An exact name, size and digest match confirms the upload; if the API omits its
+digest, the publisher downloads and hashes that exact asset. The final verification
+still downloads and checks every payload before making the release public.
+
+Only an explicit HTTP 500, 502, 503 or 504 followed by a successful complete
+inventory showing the exact asset name absent allows one retry. A timeout, lost
+or malformed HTTP response, or any other status never authorizes a retry, but an
+exact matching inventory may still confirm that upload. Conflicting assets,
+malformed or unavailable inventory, or an asset still absent after the permitted
+retry stop publication. No retry overwrites or deletes an asset. The bounded
+error records the attempt, HTTP outcome when available, and reconciliation state
+without response bodies or credentials. Preserve the draft and its evidence for
+inspection; do not reset the version allocation ledger to reuse the failed build
+number.
+
+Release-asset downloads use the expected size and SHA-256 from the validated
+inventory before opening a new destination. Every chunk is checked before it is
+written; a longer, shorter or different response is rejected. The transfer also
+has one deadline covering stdout, stderr and silent waiting. Failure or
+cancellation stops and reaps the transfer process and removes only its own
+incomplete file. Existing destinations are never overwritten.
+
+The shared `download_asset` helper requires `expected={"size": ..., "sha256": ...}`
+and a `DownloadBudget(max_bytes, reserve_bytes=...)`. Reuse one budget across the
+whole sequential inventory. `max_bytes` counts cumulative downloaded bytes, even
+if a verified staging file is removed before the next download; hashing the same
+bytes does not charge them twice. The separate `reserve_bytes` is the operator's
+minimum free space on the destination filesystem, checked before each file and
+during transfer, including silent waiting. Its default is zero; callers retain
+any additional environment-specific capacity admission and reserve. Neither
+parameter changes a consumer's release-size cap or reserves space against other
+processes. Before each asset, its full expected size must fit the remaining byte
+budget and currently free space above that floor.
+
+The built-in promotion, closed-build resolution, registry publication and
+versioned verification paths
+share a budget derived from their validated manifest. Upload readback uses the
+known local identities and a shared budget for its complete upload inventory.
+Upload readback and promotion source downloads each use an internal allowance
+of three times their total expected inventory size, with at most three GET
+attempts per asset within one shared transfer deadline. Failed prefixes remain
+charged to that allowance; each retry clears only its own staging file and
+resets the per-file hash. Every accepted file must still
+match its expected size and SHA-256. Authentication failures, download timeouts
+and cancellations are not retried. Publication writes other than the bounded
+upload exception above are never replayed.
+Operator-supplied budgets and other download paths keep their existing caps:
+a retry stops if the remaining budget cannot fit the complete expected asset.
+A consumer backport must update `release_control.py`, `release_closed.py`,
+`release_versioned.py` and any installed `publish_verified.py` atomically
+with their generated contract tests; the installer ships this complete bundle.
+Calling the raw transport with an unbounded file object is no longer accepted.
+The final release snapshot, provenance and signature checks still run after the
+transfer. The offline regression suite is `tests/test_release_download.py`.
+
+During publication, the current Actions run and its prerequisite gate can take
+time to appear consistently in the API. The publisher shares one five-minute
+wait across both updates and rechecks execution identity on every read. It
+publishes only after the exact Release gate reports completed success. Failed,
+skipped, duplicate or mismatched gates stop immediately; validating a previously
+completed release never uses this propagation wait.
+
+For a targeted consumer backport, record the reviewed toolkit commit and the
+resulting client/test file hashes in the change review. Preserve that consumer's
+signing requirements, asset restrictions and import adaptations. A partial
+backport does not update every vendored module, so it must not claim a new
+whole-toolkit revision. The installer reads files from its own checkout; a later
+full regeneration from an older checkout can overwrite the backport. Regenerate
+from a reviewed checkout containing these fixes, inspect the complete diff and
+update the general revision only as part of that full migration.
+
 GitHub releases do not deploy production. Existing push/tag/CI deployment hooks
 must be migrated or disabled before enabling automatic prereleases. Container
 and PyPI publication use verified stable assets as a separate explicit operation.
@@ -126,6 +262,10 @@ python3 scripts/publish_verified.py containers --tag v1.2.3 --execute --latest
 
 If publication partially fails, inspect the existing immutable version tags before
 retrying. The tool refuses to overwrite them. Never rebuild an image for stable.
+
+## Qualified GitHub CLI
+
+Release jobs install and check the exact native GitHub CLI before GitHub API operations. For local use, follow [the supported CLI installation and TLS profile](release-github-cli.md).
 
 ## Project limits and rollout requirements
 
@@ -156,21 +296,137 @@ References: [GitHub schedules](https://docs.github.com/en/actions/reference/work
 [protected environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
 [artifact provenance](https://docs.github.com/en/rest/actions/artifacts).
 
+## Migrating artifact selection without upgrading a consumer
+
+For an existing public, hosted, versioned release pipeline, run the following
+from a toolkit Git checkout containing the consumer's pinned shared fuzz commit:
+
+```sh
+python3 scripts/install_release.py /path/to/consumer --release-attempts-only --check
+python3 scripts/install_release.py /path/to/consumer --release-attempts-only
+```
+
+The check reports drift without writing. The migration changes artifact names
+and selectors in the existing generated release pipeline and its exclusive local
+build adapters. It retains workflow pins, commands, gates, permissions, version
+plans, exact-ID downloads and runtime files. Review and merge the producer and
+collector changes together. This mode does not update dependencies, run builds,
+dispatch releases, fetch Git objects, or delete retained Actions artifacts.
+
+Unsupported or ambiguous layouts stop before any files are written. These include
+legacy pipelines, closed-build importers, aliases on changed artifact edges,
+adapters used by ordinary CI, opaque remote build producers and shared fuzz
+revisions that still upload unscoped artifacts. Closed-build scripts can import
+artifacts by exact name; their importers and workflow must be reviewed together.
+Such revisions need a separately reviewed producer upgrade; changing only the
+collector would leave it without a matching input. The pinned producer is checked
+from its exact local Git object, with replacement objects and lazy fetching disabled.
+This requires Git with the global `--no-lazy-fetch` option; an unsupported option
+or missing local object stops before writes, without falling back to a fetch.
+Workflow files and policy text are read and written as UTF-8 on every platform.
+
+Every ordinary release artifact name now ends in
+`-run-<run_id>-attempt-<run_attempt>`. A full same-run retry can retain previous
+attempts without mixing their payloads. Before publication starts, use
+**Re-run all jobs** only if the allocator and release policy permit reuse of that
+reservation, so every required producer creates inputs for the same new attempt.
+Re-running only a failed job can leave no current inputs, or an incomplete set;
+older packages must not fill those gaps. Once publication starts, or its result
+is partial or uncertain, inspect existing tags, releases and assets before a
+policy-authorized new run. Never reset the ledger or overwrite published assets.
+See [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
+Duplicate payload names remain errors, even when their bytes match.
+
+Name selection does not add receipt verification. This mode leaves vendored
+runtimes unchanged. Before qualifying releases, confirm that the consumer's
+publisher verifies source, repository, run and attempt; older receipt/publisher
+code needs a separately reviewed runtime update. Platform completeness requires
+a source-declared set of required producer receipts plus package-specific checks:
+a valid receipt for one platform does not establish that all required platforms
+were built. The regression suite
+uses synthetic packages with the toolkit's actual selector, collector and receipt
+verifiers; it does not certify an older consumer runtime, a live release retry or
+device acceptance.
+
 ## Automatic version preparation
 
 Run `python3 scripts/release.py prepare-version --pr` from the clean default-branch HEAD. The command refreshes tags and opens a PR with synchronized owned version fields. An existing unreleased base is retained; use `--bump minor`, `--bump major`, or `--version X.Y.Z` for explicit intent. See [version plans](VERSIONING.md) for build overlays, the dedicated allocation ledger and recovery.
 
-A local candidate package also needs the saved `.release-plan.json` at its exact source commit. Restore the `version_plan` object from the published `release-manifest.json` into a disposable checkout before `release.py package`; do not invent a tag or native counter locally. Ordinary development builds can use the project's native build command and explicitly local version identity.
+A local candidate package also needs the saved `.release-plan.json` at its exact source commit. Restore the `version_plan` object from the published `release-manifest.json` as `.release-plan.json` in a disposable checkout. Apply the recorded version fields with `python3 scripts/version_plan.py sync --root . --plan .release-plan.json` before `release.py package`; do not invent a tag or native counter locally. Ordinary development builds can use the project's native build command and explicitly local version identity.
 
-### Updating change-scope policy safely
+### Migrate package receipt identity without replacing the release engine
 
-Follow the [shared CI Toolkit regeneration guide](https://github.com/victron-venus/venus-os-ci-toolkit/blob/main/docs/CHANGE_SCOPE.md#regenerate-documentation-scope-safely)
-from this repository's root. It defines the supported pinned generator, required
-clean-checkout checks, and scope-only update and verification commands.
+For an existing public hosted versioned release, the toolkit can migrate reviewed
+receipt, publisher and signing-preparation code without replacing action pins,
+workflow adapters, package policy, or unrelated release APIs:
 
+```sh
+python3 scripts/install_release.py /path/to/consumer --release-receipts-only --check
+python3 scripts/install_release.py /path/to/consumer --release-receipts-only
+```
 
-The policy's historical `toolkit_revision` records provenance; it does not select
-a safe regeneration tool. Do not rerun an older full generator just to update
-change scope. Preserve custom workflow adapters through explicit review if the
-scoped generator rejects their graph. Keep release qualification full and run
-the local workflow-contract tests after every regeneration.
+`--check` reports pending changes without writing. The migration recognizes
+reviewed complete source shapes only. Unknown customizations, partly updated
+functions or mixed old/new receipt, publisher and signer files require explicit
+review; the renderer refuses the complete update before writing anything.
+The generated header and detached-provenance requirement are preserved.
+
+After migration, run a fresh, complete build of all required package producers in
+one workflow attempt. The publisher verifies the independently supplied repository,
+run ID, attempt and source SHA against every package receipt. Pre-migration receipts
+without producer identity cannot qualify fresh package publication through this
+migrated publisher. Existing historical promotion and retained-evidence validation
+remain separate and unchanged. A failed-job-only retry cannot
+fill missing current-attempt packages from an earlier attempt; regenerate the full
+coherent package set instead. Existing release approval and acceptance policies
+still apply.
+
+Offline creation and inspection remain supported without an Actions identity, but
+an offline receipt cannot qualify fresh publication through the migrated publisher.
+Receipt coverage proves that
+the staged files have matching receipts; package-set completeness is a separate
+check for targets explicitly listed in `versioning.artifacts`. It does not infer
+all intended platforms from workflow names. To require every intended producer,
+declare `versioning.required_build_receipts` and apply `--release-inventory-only`
+as described below. No release is dispatched by this mode.
+
+### Require the complete set of package producers
+
+Declare `versioning.required_build_receipts` as a nonempty list of exact receipt
+filenames after reviewing every release-build matrix and conditional producer.
+Each complete filename must be at most 200 ASCII characters, matching the release
+asset staging limit; longer names are rejected during policy validation.
+Include the final signature receipt when the publisher consumes one. For example,
+an ordinary package and a later signing job require:
+
+```json
+"required_build_receipts": [
+  "release-inputs-package.json",
+  "release-inputs-signature.json"
+]
+```
+
+Do not include `release-inputs-fuzz.json`: the authenticated RC validation receipt
+is checked and separated from package receipts before this inventory check.
+An intentionally smaller release scope needs its own reviewed policy; a skipped
+producer cannot silently reduce the declared set.
+
+For runtimes that already have package producer identity checks, apply only the
+reviewed inventory delta with:
+
+```sh
+python3 scripts/install_release.py /path/to/consumer --release-inventory-only --check
+python3 scripts/install_release.py /path/to/consumer --release-inventory-only
+```
+
+This mode changes only the known version-plan validator, receipt validator and
+publisher. It does not infer or rewrite policy, workflow pins or signing code.
+Unknown or partially migrated files fail before any changes are written.
+The final fresh publisher authenticates each receipt's repository, source, run
+and attempt, then rejects missing, duplicate or unexpected producer receipts.
+Pre-signing validation remains separate because signature receipts do not yet
+exist at that stage. Historical RC promotion retains its original source policy.
+
+Update the declared set whenever producer jobs or matrices change. Receipt-set
+completeness does not prove every package format inside a producer group; retain
+declared artifact metadata checks and release asset verification.

@@ -56,13 +56,13 @@ jobs:
       - name: Download this attempt's Service Worker evidence
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: browser-pwa-${{ github.run_attempt }}
+          name: browser-pwa-${{ github.run_attempt }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: .browser-qualification/pwa
       - name: Download this RC attempt's actual Safari smoke
         if: ${{ inputs.channel == 'rc' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: browser-native-safari-${{ github.run_attempt }}
+          name: browser-native-safari-${{ github.run_attempt }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: .browser-qualification/safari
       - name: Validate all required targets and exact scenario/candidate identities
         env:
