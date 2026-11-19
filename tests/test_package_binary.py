@@ -26,6 +26,7 @@ def checkout(tmp_path):
         "version_receipt.py",
         "version_plan.py",
         "release_control.py",
+        "async_process.py",
     ):
         shutil.copy2(REPO / "scripts" / name, root / "scripts" / name)
     (root / "VERSION").write_text("1.2.3-beta.4\n")

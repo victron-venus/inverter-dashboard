@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import release_control
 import version_plan
 import version_receipt
 
@@ -106,6 +107,20 @@ class CurrentBuildInputsTests(unittest.TestCase):
         )
         self.assertEqual(verified[0]["name"], self.output.name)
 
+    def test_presigning_checks_do_not_require_the_future_signature_receipt(self):
+        self.policy["versioning"]["required_build_receipts"] = [
+            "release-inputs-linux.json", "release-inputs-signature.json",
+        ]
+        self.create()
+        payloads = [{"name": p.name, "size": p.stat().st_size,
+                     "sha256": version_receipt.sha256(p.read_bytes())}
+                    for p in self.assets.iterdir()]
+        authenticated = version_receipt.verify_receipts(
+            self.assets, self.plan, payloads, self.policy)
+        self.assertEqual(len(authenticated), 1)
+        with self.assertRaisesRegex(ValueError, "missing=.*release-inputs-signature"):
+            version_receipt.verify_required_build_receipts(authenticated, self.policy)
+
     def test_invalid_package_name_fails_before_toolchain_or_receipt_write(self):
         (self.assets / "unsafe package.bin").write_bytes(b"not a safe asset name")
         with patch.object(version_receipt, "capture_toolchain") as toolchain:
@@ -113,7 +128,6 @@ class CurrentBuildInputsTests(unittest.TestCase):
                 self.create()
         toolchain.assert_not_called()
         self.assertFalse(self.output.exists())
-
 
     def test_actions_receipt_records_complete_producer_identity(self):
         with patch.dict(os.environ, {"GITHUB_ACTIONS": "true",
@@ -131,7 +145,6 @@ class CurrentBuildInputsTests(unittest.TestCase):
                     {**result, "producer": {**expected, **changed}},
                     self.plan, self.output.name, self.policy, expected)
 
-
     def test_expected_producer_rejects_missing_or_ambiguous_identity(self):
         result = self.create()
         expected = version_receipt.producer_identity("example/project", 123, 2, "a" * 40)
@@ -140,7 +153,6 @@ class CurrentBuildInputsTests(unittest.TestCase):
                 version_receipt.verify_receipt_evidence(
                     {**result, "producer": bad}, self.plan, self.output.name,
                     self.policy, expected)
-
 
     def test_actions_receipt_rejects_missing_or_invalid_environment(self):
         for changed in ({"GITHUB_RUN_ID": ""}, {"GITHUB_RUN_ATTEMPT": "0"},
@@ -325,22 +337,6 @@ class CurrentBuildInputsTests(unittest.TestCase):
             self.create()
         self.assertTrue(self.output.is_file())
 
-    def test_presigning_checks_do_not_require_the_future_signature_receipt(self):
-        self.policy["versioning"]["required_build_receipts"] = [
-            "release-inputs-linux.json", "release-inputs-signature.json",
-        ]
-        self.create()
-        payloads = [{"name": p.name, "size": p.stat().st_size,
-                     "sha256": version_receipt.sha256(p.read_bytes())}
-                    for p in self.assets.iterdir()]
-        authenticated = version_receipt.verify_receipts(
-            self.assets, self.plan, payloads, self.policy)
-        self.assertEqual(len(authenticated), 1)
-        with self.assertRaisesRegex(ValueError, "missing=.*release-inputs-signature"):
-            version_receipt.verify_required_build_receipts(authenticated, self.policy)
-
-
-
 
 class RequiredBuildReceiptsTests(unittest.TestCase):
     def test_legacy_policy_keeps_its_existing_contract(self):
@@ -359,6 +355,70 @@ class RequiredBuildReceiptsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate authenticated"):
             version_receipt.verify_required_build_receipts(receipts + receipts[:1], policy)
 
+    def test_policy_rejects_exact_and_case_colliding_receipt_names(self):
+        """Reject impossible inventories before case-insensitive asset staging."""
+        for names in (["release-inputs-linux.json"] * 2,
+                      ["release-inputs-linux.json", "release-inputs-Linux.json"],
+                      ["release-inputs-WINDOWS.json", "release-inputs-windows.json"]):
+            policy = {"versioning": {"schema": 1, "promotion": "final-build",
+                      "files": [{"path": "VERSION", "format": "text", "value": "package"}],
+                      "required_build_receipts": names}}
+            with self.subTest(names=names), self.assertRaisesRegex(
+                version_plan.VersionError, "duplicate"
+            ):
+                version_plan.validate_policy(policy)
+
+    def test_200_character_receipt_name_passes_policy_and_actual_staging(self):
+        name = "release-inputs-" + "x" * 180 + ".json"
+        self.assertEqual(len(name), 200)
+        policy = {"versioning": {"schema": 1, "promotion": "final-build",
+                  "files": [{"path": "VERSION", "format": "text", "value": "package"}],
+                  "required_build_receipts": [name]}}
+        self.assertEqual(version_plan.validate_policy(policy)["required_build_receipts"], [name])
+        version_receipt.verify_required_build_receipts([{"name": name}], policy)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, staged = root / "source", root / "staged"
+            source.mkdir()
+            staged.mkdir()
+            (source / name).write_bytes(b"{}")
+            assets = release_control.stage_assets(source, staged)
+            self.assertEqual([item["name"] for item in assets], [name])
+            self.assertEqual((staged / name).read_bytes(), b"{}")
+
+    def test_201_character_receipt_name_fails_policy_before_staging(self):
+        name = "release-inputs-" + "x" * 181 + ".json"
+        self.assertEqual(len(name), 201)
+        policy = {"versioning": {"schema": 1, "promotion": "final-build",
+                  "files": [{"path": "VERSION", "format": "text", "value": "package"}],
+                  "required_build_receipts": [name]}}
+        with self.assertRaisesRegex(version_plan.VersionError, "200"):
+            version_plan.validate_policy(policy)
+        with self.assertRaisesRegex(version_plan.VersionError, "200"):
+            version_receipt.verify_required_build_receipts([{"name": name}], policy)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, staged = root / "source", root / "staged"
+            source.mkdir()
+            staged.mkdir()
+            (source / name).write_bytes(b"{}")
+            with self.assertRaisesRegex(release_control.ReleaseError, "Unsafe"):
+                release_control.stage_assets(source, staged)
+            self.assertEqual(list(staged.iterdir()), [])
+
+    def test_noncolliding_policy_retains_exact_receipt_spelling(self):
+        """Casefold detects collisions without normalizing legitimate names."""
+        names = ["release-inputs-Linux.json", "release-inputs-Windows.json"]
+        policy = {"versioning": {"schema": 1, "promotion": "final-build",
+                  "files": [{"path": "VERSION", "format": "text", "value": "package"}],
+                  "required_build_receipts": names}}
+        self.assertEqual(version_plan.validate_policy(policy)["required_build_receipts"], names)
+        version_receipt.verify_required_build_receipts(
+            [{"name": name} for name in reversed(names)], policy)
+        with self.assertRaisesRegex(ValueError, "inventory differs"):
+            version_receipt.verify_required_build_receipts(
+                [{"name": name.lower()} for name in names], policy)
+
     def test_malformed_or_ambiguous_policy_names_are_rejected(self):
         invalid = (None, True, 1, "release-inputs-linux.json", {}, [],
                    [None], [True], [123], ["release-inputs-linux.json"] * 2,
@@ -370,6 +430,7 @@ class RequiredBuildReceiptsTests(unittest.TestCase):
             with self.subTest(names=names), self.assertRaises(ValueError):
                 version_receipt.verify_required_build_receipts(
                     [], {"versioning": {"required_build_receipts": names}})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import publish_verified as publisher
 import verified_images
 from release_control import ReleaseError
-from test_release_control import SHA, FakeGitHub, policy, policy_snapshot, rc
+from test_release_control import SHA, FakeGitHub, manifest as rc_manifest, policy, policy_snapshot, rc
 
 # pylint: enable=wrong-import-position
 
@@ -53,6 +53,18 @@ class StableAssetVerificationTests(unittest.TestCase):
         self.assertEqual(gh.policy_reads, [SHA])
         self.assertEqual(gh.writes, [])
 
+    def test_oversized_download_stops_before_registry_publication(self):
+        """Trusted manifest bytes bound the transfer, not only its final digest."""
+        gh = self.github()
+
+        def oversize(path, output):
+            output.write(gh.binary(path) + b"extra")
+
+        with mock.patch.object(gh, "download_asset", side_effect=oversize):
+            with self.assertRaisesRegex(ReleaseError, "exceeds expected size"):
+                self.verify(gh)
+        self.assertEqual(gh.writes, [])
+
     def test_claimed_clean_snapshot_cannot_qualify_blocked_source(self):
         """Claimed clean snapshot cannot qualify blocked source."""
         for field in ("release_blockers", "stable_blockers"):
@@ -78,6 +90,48 @@ class StableAssetVerificationTests(unittest.TestCase):
         gh.source_policies[SHA]["mode"] = "validation-only"
         with self.assertRaisesRegex(ReleaseError, "mode must be release"):
             self.verify(gh)
+
+    def test_legacy_stable_must_match_authenticated_parent_before_download(self):
+        """A legacy stable must match its authenticated RC parent before payload reads."""
+        gh = self.github()
+        manifest = rc_manifest()
+        manifest.update(
+            channel="stable",
+            tag="v1.2.3",
+            derived_from_rc={
+                "tag": "v1.2.3-rc.1",
+                "manifest_sha256": "b" * 64,
+                "source_sha": SHA,
+                "run_id": 16,
+            },
+        )
+        raw = rc.json_bytes(manifest)
+        release = {"id": 10, "draft": False, "prerelease": False}
+        ref = {"object": {"type": "commit", "sha": SHA}}
+        assets = [
+            {"id": 20, "name": "package.tar.gz"},
+            {"id": 21, "name": rc.MANIFEST},
+        ]
+        with (
+            mock.patch.object(
+                publisher, "_read_stable_release",
+                return_value=(release, ref, assets, raw, {"tag": "v1.2.3"}),
+            ),
+            mock.patch.object(publisher, "_read_versioned_stable_release", return_value=None),
+            mock.patch.object(publisher, "validate_manifest", return_value=manifest),
+            mock.patch.object(publisher, "verify_evidence"),
+            mock.patch.object(
+                publisher, "download_asset",
+            ) as download,
+            mock.patch("release_versioned.verified_rc", return_value=({}, {
+                **manifest["derived_from_rc"], "manifest_sha256": "c" * 64,
+            })),
+            self.assertRaisesRegex(ReleaseError, "Final package RC provenance mismatch"),
+        ):
+            with tempfile.TemporaryDirectory() as temp:
+                publisher.verified_assets(gh, "v1.2.3", Path(temp))
+        download.assert_not_called()
+        self.assertEqual(gh.writes, [])
 
     def test_legacy_manifest_without_source_policy_is_rejected(self):
         """Legacy manifest without source policy is rejected."""
@@ -594,6 +648,31 @@ class VerifiedImageOutputTests(unittest.TestCase):
             self.assertEqual(self.run_main(output_root=self.destination), 1)
         self.resolution.assert_not_called()
         self.assertFalse(self.output.exists())
+
+
+
+class CompactPublicationTests(unittest.TestCase):
+    def test_registry_admission_uses_authenticated_rc_policy_and_only_shipped_files(self):
+        from test_versioned_release import CompactConsumerTests
+        fixture = CompactConsumerTests()
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = publisher.verified_assets(fixture.gh, fixture.compact["tag"], Path(directory))
+            self.assertEqual(manifest["source_policy"], fixture.manifest["source_policy"])
+            self.assertEqual({path.name for path in Path(directory).iterdir()},
+                             {item["name"] for item in fixture.compact["assets"]})
+        self.assertEqual(fixture.gh.writes, [])
+
+    def test_registry_admission_rejects_retained_rc_loss(self):
+        from test_versioned_release import CompactConsumerTests, rc as fixture_rc
+        fixture = CompactConsumerTests()
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        fixture.gh.evidence_by_run[100][0]["expired"] = True
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises((ValueError, fixture_rc.ReleaseError)):
+            publisher.verified_assets(fixture.gh, fixture.compact["tag"], Path(directory))
+        self.assertEqual(fixture.gh.writes, [])
 
 
 if __name__ == "__main__":

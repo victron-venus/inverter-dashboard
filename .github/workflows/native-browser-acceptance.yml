@@ -57,7 +57,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: browser-pwa-${{ github.run_attempt }}
+          name: browser-pwa-${{ github.run_attempt }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: |
             .browser-pwa/identity/*.json
             .browser-pwa/result/*
@@ -108,7 +108,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: browser-native-safari-${{ github.run_attempt }}
+          name: browser-native-safari-${{ github.run_attempt }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: |
             .browser-native/identity/*.json
             .browser-native/result/*

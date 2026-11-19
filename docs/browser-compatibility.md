@@ -38,10 +38,12 @@ narrow layout, public read-only controls, and absence of browser errors or
 unexpected external traffic. All scenarios must pass; none are skipped to
 accommodate an older embedded bundle.
 
-Backend HTTP/WebSocket traffic is synthetic and isolated. These checks qualify
-the embedded frontend in real browsers; the existing backend unit/integration
-checks separately qualify the server implementation. Native Safari, Firefox ESR,
-iOS/Android devices, MQTT hardware and native webviews require separate evidence.
+Backend HTTP/WebSocket traffic is synthetic and isolated. These checks exercise
+the embedded frontend in the pinned Playwright Chromium, Firefox and WebKit
+engines. They do not establish compatibility with every branded browser or OS
+version. The existing backend unit/integration checks separately qualify the
+server implementation. Native Safari, Firefox ESR, iOS/Android devices, MQTT
+hardware and native webviews require separate evidence.
 
 For a local run, install an isolated toolchain and its browser, then point the
 adapter to that module:
