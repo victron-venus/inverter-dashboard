@@ -125,6 +125,8 @@ def _kill_owned_process(process: subprocess.Popen[bytes]) -> None:
             try:
                 process.kill()
             except ProcessLookupError:
+                # The owned leader exited between the observation and kill;
+                # the caller still waits for it and drains the owned pipes.
                 pass
     except PermissionError:
         # Fail closed below if descendants still hold capture pipes; always kill
@@ -132,6 +134,8 @@ def _kill_owned_process(process: subprocess.Popen[bytes]) -> None:
         try:
             process.kill()
         except ProcessLookupError:
+            # Leader exit may race this fallback; ownership/reaping is still
+            # checked by the caller, rather than inferred from kill alone.
             pass
 
 
@@ -177,10 +181,14 @@ def _close_registered_stream(
     try:
         selector.unregister(stream)
     except (KeyError, ValueError):
+        # Cleanup can revisit an unregistered or already-closed stream.
+        # Still attempt close below and let the process owner finish reaping.
         pass
     try:
         stream.close()  # type: ignore[attr-defined]
     except OSError:
+        # Do not abort cleanup of other pipes after a close error. The owner
+        # separately enforces process reaping and pipe-drain deadlines.
         pass
 
 
@@ -406,6 +414,8 @@ def _run_owned_process(
             try:
                 stream.close()
             except OSError:
+                # Attempt every owned pipe even if one close fails; process
+                # completion or cleanup failure was determined above.
                 pass
 
 
@@ -461,6 +471,8 @@ async def _drain_cancelled_worker(worker: asyncio.Future[ProcessResult]) -> None
     try:
         worker.result()
     except (ProcessOutputLimit, _ProcessCancelled):
+        # These outcomes are raised only after owned cleanup. The caller's
+        # cancellation wins; ProcessCleanupError must still propagate.
         pass
 
 

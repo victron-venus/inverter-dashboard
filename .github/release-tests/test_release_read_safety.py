@@ -2,6 +2,7 @@
 
 import gc
 import importlib.util
+import io
 import os
 import sys
 import unittest
@@ -66,6 +67,44 @@ class WholeReadRecoveryTests(unittest.TestCase):
     @staticmethod
     def failed(stderr=b"unexpected EOF", stdout=b"", code=1):
         return process_result([], code, stdout, stderr)
+
+    def test_capture_limit_fails_without_retry_or_untrusted_diagnostics(self):
+        for method, path in (
+            ("api", "releases/7"),
+            ("pages", "releases"),
+            ("binary", "releases/assets/7"),
+        ):
+            operation = getattr(self.gh, method)
+            failure = rc.ProcessOutputLimit("untrusted-capture-marker")
+            with (
+                self.subTest(method=method),
+                patch.object(rc, "run_process", side_effect=failure) as run,
+                patch.object(rc.time, "sleep") as sleep,
+            ):
+                with self.assertRaisesRegex(
+                    rc.GitHubError, "response exceeds capture limit"
+                ) as error:
+                    operation(path)
+                self.assertFalse(error.exception.not_found)
+                self.assertNotIn("untrusted-capture-marker", str(error.exception))
+                run.assert_called_once()
+                sleep.assert_not_called()
+
+    def test_capture_limit_is_reported_by_the_release_cli(self):
+        stderr = io.StringIO()
+        failure = rc.ProcessOutputLimit("untrusted-capture-marker")
+        with (
+            patch.object(rc, "run_process", side_effect=failure) as run,
+            patch.object(rc.time, "sleep") as sleep,
+            patch.object(rc.sys, "stderr", stderr),
+        ):
+            result = rc.main(["next", "--repo", REPO, "--channel", "beta", "--version", "1.2.3"])
+        self.assertEqual(result, 1)
+        self.assertIn("response exceeds capture limit", stderr.getvalue())
+        self.assertNotIn("untrusted-capture-marker", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+        run.assert_called_once()
+        sleep.assert_not_called()
 
     def test_retry_releases_failed_response_before_waiting_or_recapturing(self):
         def check_case(path, status, framed):

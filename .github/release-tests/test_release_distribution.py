@@ -58,6 +58,31 @@ class DistributionSchemaTests(unittest.TestCase):
         self.assertEqual(distribution.parse_distribution(encoded(self.compact), "OWNER/player", "v1.2.3"), self.compact)
         distribution.verify_distribution(self.compact, self.rc, self.raw)
 
+    def test_receipt_like_payload_is_retained_but_real_undeclared_receipt_rejects(self):
+        payload = {"name": "release-inputs-data+.json", "size": 2,
+                   "sha256": hashlib.sha256(b"{}").hexdigest()}
+        self.rc["assets"].append(payload)
+        raw = encoded(self.rc)
+        compact = distribution.stable_distribution(self.rc, raw)
+        self.assertIn(payload, compact["assets"])
+        distribution.verify_distribution(compact, self.rc, raw)
+
+        self.rc["assets"].append(dict(payload, name="release-inputs-undeclared.json"))
+        invalid_raw = encoded(self.rc)
+        with self.assertRaisesRegex(ValueError, "Undeclared release-inputs asset"):
+            distribution.stable_distribution(self.rc, invalid_raw)
+
+    def test_receipt_like_payload_cannot_be_declared_as_withheld_evidence(self):
+        payload = {"name": "release-inputs-data+.json", "size": 2,
+                   "sha256": hashlib.sha256(b"{}").hexdigest()}
+        self.rc["assets"].append(payload)
+        self.rc["validation_receipts"].append(
+            {"name": payload["name"], "sha256": payload["sha256"]}
+        )
+        invalid_raw = encoded(self.rc)
+        with self.assertRaisesRegex(ValueError, "Only declared release-inputs receipts"):
+            distribution.stable_distribution(self.rc, invalid_raw)
+
     def test_ordinary_report_filename_is_preserved_without_fuzz_declaration(self):
         self.rc.pop("fuzzing_profile")
         self.rc.pop("validation_receipts")

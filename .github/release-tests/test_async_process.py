@@ -45,6 +45,8 @@ class AsyncProcessTests(unittest.TestCase):
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
+            # The fixture can exit between the final probe and cleanup kill.
+            # The missed deadline still fails the test below.
             pass
         self.fail(f"descendant process {pid} remained after bounded cleanup")
 

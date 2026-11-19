@@ -446,6 +446,8 @@ def download_asset(gh: GitHub, asset_id: object, destination: Path, *,
             if (current.st_dev, current.st_ino) == (owned.st_dev, owned.st_ino):
                 destination.unlink()
         except FileNotFoundError:
+            # The failed transfer's owned staging path is already absent.
+            # Preserve the transfer error; never remove a replacement path.
             pass
         raise
 
@@ -998,6 +1000,10 @@ class GitHub:
                     raise GitHubError(
                         f"GET {endpoint}: read timed out after {attempt + 1} attempts"
                     ) from error
+            except ProcessOutputLimit as error:
+                # A truncated capture cannot authenticate a whole response.
+                # Fail without retries or including untrusted captured text.
+                raise GitHubError(f"GET {endpoint}: response exceeds capture limit") from error
             else:
                 content = self._completed_read(result, endpoint, paginated, final_attempt)
                 if content is not None:
