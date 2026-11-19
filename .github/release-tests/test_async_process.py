@@ -588,6 +588,7 @@ class AsyncProcessTests(unittest.TestCase):
                         try:
                             os.kill(int(pid_file.read_text()), signal.SIGKILL)
                         except ProcessLookupError:
+                            # The child exited after the assertion and before cleanup.
                             pass
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
@@ -629,6 +630,7 @@ class AsyncProcessTests(unittest.TestCase):
                     try:
                         os.kill(int(pid_file.read_text()), signal.SIGKILL)
                     except ProcessLookupError:
+                        # The expected escaped child may have exited between checks.
                         pass
 
     def test_requires_absolute_executable_and_positive_bounds(self):
@@ -1005,6 +1007,7 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                     try:
                         await asyncio.wait_for(task, timeout=8)
                     except asyncio.CancelledError:
+                        # Cancellation completed its cleanup; other failures propagate.
                         pass
 
     async def test_cancellation_reaps_wrapper_and_stops_owned_target(self):
@@ -1048,11 +1051,13 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                         try:
                             await asyncio.wait_for(task, timeout=8)
                         except asyncio.CancelledError:
+                            # Cancellation completed its cleanup; other failures propagate.
                             pass
                 if pid_file.exists():
                     try:
                         os.kill(int(pid_file.read_text()), signal.SIGKILL)
                     except ProcessLookupError:
+                        # The target exited after the prior assertion and before cleanup.
                         pass
             AsyncProcessTests.assert_process_stopped(self, pid_file)
 
