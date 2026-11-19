@@ -76,7 +76,8 @@ class AsyncProcessTests(unittest.TestCase):
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
-            pass
+            # The process exited between the bounded liveness check and kill.
+            return
         self.fail(f"descendant process {pid} remained after bounded cleanup")
 
     def test_captures_both_streams_and_preserves_nonzero_status(self):
@@ -1003,7 +1004,7 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                     task.cancel()
                     try:
                         await asyncio.wait_for(task, timeout=8)
-                    except (asyncio.CancelledError, async_process.ProcessCleanupError):
+                    except asyncio.CancelledError:
                         pass
 
     async def test_cancellation_reaps_wrapper_and_stops_owned_target(self):
@@ -1046,7 +1047,7 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                         task.cancel()
                         try:
                             await asyncio.wait_for(task, timeout=8)
-                        except (asyncio.CancelledError, async_process.ProcessCleanupError):
+                        except asyncio.CancelledError:
                             pass
                 if pid_file.exists():
                     try:
