@@ -85,7 +85,7 @@
     ]
   },
   "release_notes": "CHANGELOG.md",
-  "toolkit_revision": "743fa3aef03ce25bb98d21e442477c1d60b08176",
+  "toolkit_revision": "c9b82eec68fbdf53c9aab3ea8211759acbf0abe5",
   "fuzzing": {
     "toolkit_ref": "743fa3aef03ce25bb98d21e442477c1d60b08176"
   },
