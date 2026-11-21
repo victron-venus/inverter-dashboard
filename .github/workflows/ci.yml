@@ -73,6 +73,7 @@ jobs:
       browser-test-command: node scripts/browser-acceptance.cjs
       browser-prepare-command: node --check scripts/browser-acceptance.cjs
       browser-extended: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.channel == '' || github.event.inputs.channel == 'rc')) }}
+      browser-evidence-upload-retry: true
   tls-macos-intel:
     name: Native TLS (macOS Intel)
     runs-on: macos-15-intel
