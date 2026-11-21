@@ -242,6 +242,7 @@ jobs:
       browser-release-channel: ${{ inputs.channel }}
       browser-extended: ${{ inputs.channel == 'rc' }}
       browser-evidence-prefix: browser-release
+      browser-evidence-upload-retry: true
       browser-prepare-command: |
         PYTHON=python3
         if ! "$PYTHON" -c 'import sys; assert sys.version_info >= (3, 12)' 2>/dev/null; then PYTHON=python; fi
