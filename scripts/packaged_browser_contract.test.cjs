@@ -4,6 +4,7 @@ const http = require('node:http')
 const { spawn } = require('node:child_process')
 const { once } = require('node:events')
 const test = require('node:test')
+const { setTimeout: delay } = require('node:timers/promises')
 const { expectedCommandJournal, verifyFinalCommandJournal, assertPackagedTelemetry,
   seedIdentity, eventEpochFromTime, nativeAlarmEpoch, waitForSeedEvent,
   failureState, failureFixture, boundedDiagnostic, visibleFailureDom, failureMessage, withStartupDiagnostics,
@@ -115,9 +116,14 @@ test('seed consumption does not start an epoch read when a held fixture response
   let releaseFixture
   const heldFixture = new Promise(resolve => { releaseFixture = resolve })
   let epochReads = 0
+  const deadline = Date.now() + 30
   await assert.rejects(waitForSeedEvent(async () => { epochReads++; return seededEvent.eventEpoch },
-    () => heldFixture, seededEvent, Date.now() + 30), /work deadline exceeded/)
+    () => heldFixture, seededEvent, deadline), /work deadline exceeded/)
   assert.equal(epochReads, 0)
+  // A timer that fired is not proof the clock passed the deadline: the poll only
+  // sees an expired deadline once Date.now() reaches it. Let the clock arrive
+  // before the held response resolves, so the continuation cannot race it.
+  while (Date.now() < deadline) await delay(1)
   releaseFixture(seededEvent)
   // Drain the deferred continuation, rather than assuming an elapsed sleep is proof.
   await new Promise(resolve => setImmediate(resolve))
