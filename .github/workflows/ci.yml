@@ -62,7 +62,7 @@ jobs:
         run: node --test scripts/browser-scenarios-contract.test.cjs scripts/pwa_acceptance.test.cjs scripts/packaged_browser_contract.test.cjs
   browser-compatibility:
     name: Embedded frontend browser acceptance
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@c9b82eec68fbdf53c9aab3ea8211759acbf0abe5 # main
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@452673b420ad500c9876975e7d99900dda660140 # main
     permissions:
       contents: read
     with:
